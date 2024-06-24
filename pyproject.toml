@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "acestor"
+version = "0.1.0"
+description = "Package to run different disease models"
+authors = ["Sai Sneha <sneha@artpark.in>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.9"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "FLY", "RUF", "B", "ICN"]
+
+[tool.ruff]
+line-length = 140
