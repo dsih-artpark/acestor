@@ -1,0 +1,7 @@
+root_dir: /Users/akhil/workspace/acestor
+debug: false  # Set to true to process only last year of data for testing
+region_name: Chhattisgarh  # Name of the region for weather data downloads
+weather_data_path: /Users/akhil/workspace/acestor/weather_data_from_s3
+geojson_folder: /Users/akhil/workspace/acestor/geojsons  # Path to geojson folder (relative to root_dir)
+# raw_linelist_path: /Users/akhil/workspace/acestor/datasets/raw_linelist_data/KA_linelist
+granularity: district

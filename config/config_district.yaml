@@ -1,0 +1,17 @@
+data_features : ['recordYear','ISOWeek', '2mTemperature','totalPrecipitation','2mDewpointTemperature', 'case']
+
+years_to_exclude : [2015, 2016, 2020, 2021]
+years_to_include : [2017, 2018, 2019, 2022, 2023, 2024, 2025]
+lag:
+  lag_temp: [12]
+  lag_rf: [4]
+prediction_window: '4W'
+spatial_res: 'district'
+tempo_res: 'W-MON'
+linelist_data_ihip: "datasets/ka-ihip-ll.csv"
+linelist_data: "datasets/linelist_data.csv"
+weather_data: "datasets/processed_aggregated_era5_Karnataka_District.csv"
+listAlpha: [1.0, 2.0]
+geography: 'KARNATAKA'
+available_era5_variables : ['2mTemperature', '2mDewpointTemperature', 'totalPrecipitation']
+

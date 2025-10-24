@@ -1,0 +1,14 @@
+data_folder_path:
+logs_folder_path:
+path:
+hierarchy_col: "location.admin.hierarchy"
+accepted_hierarchies: ["Revenue", "admin_0"]
+data_start_date: "2016-01-01"
+data_end_date: null
+best_granularity: "subdistrict"
+fields:
+  date: "metadata.primaryDate"
+  hierarchy: "location.admin.hierarchy"
+  state: "location.admin1.ID"
+  district: "location.admin2.ID"
+  subdistrict: "location.admin3.ID"
