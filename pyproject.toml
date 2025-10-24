@@ -5,6 +5,7 @@ description = "Package to run different disease models"
 authors = [
     {name = "Tarun Khandelwal", email = "tarun@artpark.in"},
     {name = "Sai Sneha", email = "sneha@artpark.in"},
+    {name = "Akhil Babu", email = "akhil@artpark.in"}
 ]
 readme = "README.md"
 requires-python = ">=3.11"
@@ -34,7 +35,7 @@ dependencies = [
     "shapely>=2.1.1",
     "statsmodels>=0.14.5",
     "tqdm>=4.67.1",
-    "typer[standard]>=0.16.0",
+    "typer>=0.16.0",
     "typing>=3.10.0.0",
     "xarray>=2025.6.1",
     "xlwings>=0.33.16",
@@ -62,3 +63,10 @@ build-backend = "hatchling.build"
 dev = [
     "ipython>=9.3.0",
 ]
+docs = [
+    "sphinx>=8.0.0",
+    "furo>=2024.0.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/acestor-prod"]
