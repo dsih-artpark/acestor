@@ -158,8 +158,8 @@ def main():
             parse_subdistrict_level=parse_subdistrict,
         )
 
-    # if args.use_weather_data_from_s3:
-    if False:
+    if args.use_weather_data_from_s3:
+        # if False:
         case_start_date = datetime.strptime(case_start_date, "%Y-%m-%d") - timedelta(days=100)
         case_end_date = datetime.strptime(case_end_date, "%Y-%m-%d") + timedelta(days=100)
 

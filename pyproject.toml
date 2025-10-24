@@ -13,13 +13,12 @@ license = {text = "GPL-3.0"}
 
 dependencies = [
     "anthropic>=0.68.0",
-    "appscript>=1.4.0",
     "boto3>=1.39.17",
     "cdsapi>=0.7.6",
     "geopandas>=1.1.1",
-    "gstk",
     "ipykernel>=7.0.0",
     "matplotlib>=3.10.3",
+    "netcdf4>=1.7.3",
     "numpy>=2.3.0",
     "openpyxl>=3.1.5",
     "pandas>=2.3.0",
@@ -50,9 +49,6 @@ unfixable = []
 
 [tool.ruff.isort]
 known-first-party = ["patchsim"]
-
-[tool.uv.sources]
-gstk = { git = "https://github.com/dsih-artpark/gstk" }
 
 
 [build-system]
