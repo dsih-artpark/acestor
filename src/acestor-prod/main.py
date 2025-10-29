@@ -16,6 +16,7 @@ from ParseAndExtractWeatherData import parse_and_extract_weather_data
 from ParseS3WeatherData import parse_s3_weather_data
 from IdentifyCutoffDates import identify_cutoff_dates
 from run_district import run_district_predictions
+from GenerateMap import generate_map
 
 
 def parse_args():
@@ -47,6 +48,8 @@ def parse_args():
     parser.add_argument(
         "-ws", "--use-weather-data-from-s3", action="store_true", default=False, help="Use weather data from S3(default: False)"
     )
+
+    parser.add_argument("-gm", "--generate-maps", action="store_true", default=False, help="Plot the results on a map")
 
     return parser.parse_args()
 
@@ -187,7 +190,11 @@ def main():
     # Step 6: Run District Predictions
     if parse_district:
         logger.info("Run district predictions")
-        run_district_predictions(root_dir, pred_upto, cutoff_case, sampling_day)
+        df_district, df_state = run_district_predictions(root_dir, pred_upto, cutoff_case, sampling_day)
+
+    if args.generate_maps:
+        # generate_map(df_district, "district", region_name, geojson_folder_path / Path("districts"))
+        generate_map(df_state, "state", region_name, geojson_folder_path / Path("districts"))
 
     logger.info("Production pipeline completed")
 

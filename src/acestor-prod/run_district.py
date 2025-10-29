@@ -160,3 +160,5 @@ def run_district_predictions(root_dir: Path, pred_upto, cutoff_case, sampling_da
         predictions_df_state = predictions_df_state[cols_of_interest]
         predictions_df_state.drop_duplicates(inplace=True)
         predictions_df_state.to_csv(f"results/Predictions_{monthstring}_Karnataka_{endString}.csv", index=False)
+
+    return predictions_df, predictions_df_state

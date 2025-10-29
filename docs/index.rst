@@ -13,6 +13,8 @@ Acestor is a comprehensive package designed to run different disease models, wit
    :caption: Contents:
 
    data_specification
+   usage
+   output_format
 
 Indices and tables
 ==================
