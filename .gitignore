@@ -146,6 +146,7 @@ dmypy.json
 *.csv
 *.nc
 *.png
+!docs/_static/logo.png
 *.aux
 *.bbl
 *.blg
