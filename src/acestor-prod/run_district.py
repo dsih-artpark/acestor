@@ -128,6 +128,7 @@ def run_district_predictions(root_dir: Path, pred_upto, cutoff_case, sampling_da
     predictions_df.loc[:, "dateOfComputingPrediction"] = datetime.now().strftime("%Y-%m-%d")
     predictions_df.sort_values(by=["regionID", "startDatePredictedWeek"], ascending=[True, True], inplace=True)
     predictions_df["predictionZone"] = predictions_df["predictionZone"].fillna(0)
+    predictions_df["prediction"] = predictions_df["prediction"].fillna(0)
 
     listPredDates = list(predictions_df["startDatePredictedWeek"].unique())
     listPredDates = [val for val in listPredDates if val >= pd.Timestamp.today().normalize()]

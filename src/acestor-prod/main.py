@@ -4,19 +4,33 @@ import argparse
 import logging
 import os
 import sys
-import yaml
 import time
+import yaml
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import geopandas as gpd
+import pandas as pd
+import xarray as xr
+
+import utils
+
+from DataIOWeatherData import download_weather_data, initialize_dataio_client, parse_dataio_weather_to_csv
 from DownloadCaseData import download_all_linelist_data
-from ParseCaseData import parse_linelist_to_no_of_cases, aggregate_and_sample_case_data
-from DownloadWeatherData import download_weather_data
-from ParseAndExtractWeatherData import parse_and_extract_weather_data
-from ParseS3WeatherData import parse_s3_weather_data
-from IdentifyCutoffDates import identify_cutoff_dates
-from run_district import run_district_predictions
+from DownloadWeatherData import download_weather_data as download_weather_data_cds
 from GenerateMap import generate_map
+from IdentifyCutoffDates import identify_cutoff_dates
+from ParseAndExtractWeatherData import parse_and_extract_weather_data
+from ParseCaseData import aggregate_and_sample_case_data, parse_linelist_to_no_of_cases
+from GenerateThresholds import generate_thresholds
+from run_district import run_district_predictions
+
+
+def valid_date(s: str) -> datetime:
+    try:
+        return datetime.strptime(s, "%Y-%m-%d")
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not a valid date: {s!r}")
 
 
 def parse_args():
@@ -29,6 +43,14 @@ def parse_args():
         type=str,
         default="config/dengue_pipeline.yaml",
         help="Path to the configuration file (default: config/dengue_pipeline.yaml)",
+    )
+
+    parser.add_argument(
+        "-d",
+        "--date",
+        type=valid_date,
+        default=datetime.now().strftime("%Y-%m-%d"),
+        help="Date to run the predictions for (in YYYY-MM-DD format) - default is today",
     )
 
     parser.add_argument(
@@ -46,8 +68,22 @@ def parse_args():
     )
 
     parser.add_argument(
-        "-ws", "--use-weather-data-from-s3", action="store_true", default=False, help="Use weather data from S3(default: False)"
+        "-ws",
+        "--download-and-use-weather-data-from-s3",
+        action="store_true",
+        default=False,
+        help="Use weather data from S3(default: False)",
     )
+
+    parser.add_argument(
+        "-rws",
+        "--use-previously-downloaded-weather-data-from-s3",
+        action="store_true",
+        default=False,
+        help="Use weather data from S3(default: False)",
+    )
+
+    parser.add_argument("-t", "--generate-thresholds", action="store_true", default=False, help="Generate thresholds(default: False)")
 
     parser.add_argument("-gm", "--generate-maps", action="store_true", default=False, help="Plot the results on a map")
 
@@ -97,7 +133,10 @@ def main():
     parse_district = granularity == "district" or granularity == "subdistrict"
     parse_subdistrict = granularity == "subdistrict"
 
+    run_date = args.date
+
     # Setup logging
+
     logger = setup_logging(root_dir)
     logger.info("Starting production pipeline")
     logger.info(f"Using configuration file: {args.config}")
@@ -105,6 +144,7 @@ def main():
     logger.info(f"Region: {region_name}")
     logger.info(f"Download linelist: {args.download_linelist}")
     logger.info(f"Process linelist: {args.process_linelist}")
+    logger.info(f"Run date: {run_date}")
 
     # Timer Start
 
@@ -135,6 +175,7 @@ def main():
     logger.info("Parsing case data")
     sampling_day, case_start_date, case_end_date = aggregate_and_sample_case_data(
         root_dir=root_dir,
+        run_date=run_date,
         debug=debug,
         parse_district_level=parse_district,
         parse_subdistrict_level=parse_subdistrict,
@@ -147,7 +188,7 @@ def main():
     if args.download_weather_data_from_cds_api:
         # if False:
         # logger.info("Downloading weather data")
-        # download_weather_data(root_dir, case_start_date, case_end_date, region_name, geojson_folder_path)
+        # download_weather_data_cds(root_dir, case_start_date, case_end_date, region_name, geojson_folder_path)
 
         # Step 4: Parse weather data
         logger.info("Parsing weather data")
@@ -161,20 +202,128 @@ def main():
             parse_subdistrict_level=parse_subdistrict,
         )
 
-    if args.use_weather_data_from_s3:
+    if args.download_and_use_weather_data_from_s3:
         # if False:
-        case_start_date = datetime.strptime(case_start_date, "%Y-%m-%d") - timedelta(days=100)
-        case_end_date = datetime.strptime(case_end_date, "%Y-%m-%d") + timedelta(days=100)
+        case_start_date_dt = datetime.strptime(case_start_date, "%Y-%m-%d") - timedelta(days=100)
+        case_end_date_dt = datetime.strptime(case_end_date, "%Y-%m-%d") + timedelta(days=100)
 
-        logging.info(f"After shift Case start date: {case_start_date}, Case end date: {case_end_date}")
+        logging.info(f"After shift Case start date: {case_start_date_dt}, Case end date: {case_end_date_dt}")
 
-        logger.info("Using weather data from S3")
-        parse_s3_weather_data(
-            weather_data_path=weather_data_path,
+        logger.info("Downloading weather data from DataIO")
+
+        # Initialize DataIO client (loads credentials from .env)
+        client = initialize_dataio_client()
+
+        # Get DataIO settings from environment
+        dataset_name = os.getenv("DATAIO_DATASET_NAME", "era5_sfc")
+        variables = os.getenv("DATAIO_WEATHER_VARIABLES", "t2m,tp,d2m").split(",")
+
+        # Read all district GeoJSONs and create union
+        districts_path = geojson_folder_path / "districts"
+        logger.info(f"Reading GeoJSON files from: {districts_path}")
+
+        # Read all GeoJSON files in the districts folder
+        geojson_files = list(districts_path.glob("*.geojson")) + list(districts_path.glob("*.json"))
+        if not geojson_files:
+            raise FileNotFoundError(f"No GeoJSON files found in {districts_path}")
+
+        logger.info(f"Found {len(geojson_files)} GeoJSON files")
+
+        # Read and union all geometries
+        gdfs = [gpd.read_file(file) for file in geojson_files]
+        combined_gdf = gpd.GeoDataFrame(pd.concat(gdfs, ignore_index=True))
+        union_geometry = combined_gdf.unary_union
+
+        # Convert to GeoJSON format for DataIO
+        region_geojson = gpd.GeoSeries([union_geometry]).__geo_interface__
+
+        # Get bbox from union geometry
+        minx, miny, maxx, maxy = union_geometry.bounds
+        bbox = ((miny, maxy), (minx, maxx))  # ((lat_min, lat_max), (lon_min, lon_max))
+
+        logger.info(f"DataIO settings - Dataset: {dataset_name}, Variables: {variables}")
+        logger.info(f"Using union of {len(geojson_files)} district GeoJSONs")
+        logger.info(f"Calculated bbox from union geometry: {bbox}")
+
+        # Download weather data from DataIO
+        dataset = download_weather_data(
+            client=client,
+            dataset_name=dataset_name,
+            variables=variables,
+            start_date=case_start_date_dt.strftime("%Y-%m-%d"),
+            end_date=case_end_date_dt.strftime("%Y-%m-%d"),
+            geojson=region_geojson,
+        )
+
+        # log size of xarray dataset : no of rows in each variable
+        logger.info(f"Size of xarray dataset: {dataset.to_dataframe().shape}")
+
+        # Parse and save weather data
+        logger.info("Parsing DataIO weather data")
+        parse_dataio_weather_to_csv(
+            dataset=dataset,
+            output_csv_path="datasets/weather_district_sampled.csv",
             geojson_folder_path=geojson_folder_path,
-            start_date=case_start_date,
-            end_date=case_end_date,
+            start_date=case_start_date_dt.strftime("%Y-%m-%d"),
+            end_date=case_end_date_dt.strftime("%Y-%m-%d"),
             sampling_day=sampling_day,
+            bbox=bbox,
+        )
+
+    if args.use_previously_downloaded_weather_data_from_s3:
+        case_start_date_dt = datetime.strptime(case_start_date, "%Y-%m-%d") - timedelta(days=100)
+        case_end_date_dt = datetime.strptime(case_end_date, "%Y-%m-%d") + timedelta(days=100)
+
+        logger.info("Reusing weather data which was previously downloaded.")
+
+        # Get DataIO settings from environment
+        dataset_name = os.getenv("DATAIO_DATASET_NAME", "era5_sfc")
+        variables = os.getenv("DATAIO_WEATHER_VARIABLES", "t2m,tp,d2m").split(",")
+
+        # Read all district GeoJSONs and create union
+        districts_path = geojson_folder_path / "districts"
+        logger.info(f"Reading GeoJSON files from: {districts_path}")
+
+        # Read all GeoJSON files in the districts folder
+        geojson_files = list(districts_path.glob("*.geojson")) + list(districts_path.glob("*.json"))
+        if not geojson_files:
+            raise FileNotFoundError(f"No GeoJSON files found in {districts_path}")
+
+        logger.info(f"Found {len(geojson_files)} GeoJSON files")
+
+        # Read and union all geometries
+        gdfs = [gpd.read_file(file) for file in geojson_files]
+        combined_gdf = gpd.GeoDataFrame(pd.concat(gdfs, ignore_index=True))
+        union_geometry = combined_gdf.unary_union
+
+        # Convert to GeoJSON format for DataIO
+        region_geojson = gpd.GeoSeries([union_geometry]).__geo_interface__
+
+        # Get bbox from union geometry
+        minx, miny, maxx, maxy = union_geometry.bounds
+        bbox = ((miny, maxy), (minx, maxx))  # ((lat_min, lat_max), (lon_min, lon_max))
+
+        logger.info(f"DataIO settings - Dataset: {dataset_name}, Variables: {variables}")
+        logger.info(f"Using union of {len(geojson_files)} district GeoJSONs")
+        logger.info(f"Calculated bbox from union geometry: {bbox}")
+
+        dataset = xr.open_dataset(
+            f"data/weather/{dataset_name}/{dataset_name}_{'_'.join(variables)}_{case_start_date_dt.strftime('%Y%m%d')}_{case_end_date_dt.strftime('%Y%m%d')}.nc"
+        )
+
+        # log size of xarray dataset : no of rows in each variable
+        logger.info(f"Size of xarray dataset: {dataset.to_dataframe().shape}")
+
+        # Parse and save weather data
+        logger.info("Parsing DataIO weather data")
+        parse_dataio_weather_to_csv(
+            dataset=dataset,
+            output_csv_path="datasets/weather_district_sampled.csv",
+            geojson_folder_path=geojson_folder_path,
+            start_date=case_start_date_dt.strftime("%Y-%m-%d"),
+            end_date=case_end_date_dt.strftime("%Y-%m-%d"),
+            sampling_day=sampling_day,
+            bbox=bbox,
         )
 
     # Step 5: Identify Cutoff Dates
@@ -187,13 +336,34 @@ def main():
     logging.info(f"cutoff_weather: {cutoff_weather}")
     logging.info(f"prediction_dates: {prediction_dates}")
 
+    # if args.generate_thresholds:
+    #     thresholds_df = generate_thresholds(granularity)
+
+    # thresholds_df.to_csv("datasets/thresholds_df.csv", index=False)
+
     # Step 6: Run District Predictions
     if parse_district:
-        logger.info("Run district predictions")
+        # logger.info("Run district predictions")
+        # with open(root_dir / "config/config_district.yaml", "r") as f:
+        #     config = yaml.safe_load(f)
+
+        # case_data = utils.process_case_data(config, root_dir)  # %% Load weather data
+        # weather_data = utils.process_weather_data(config, root_dir)
+        # merged_df = utils.merge(config, case_data, weather_data)
+        # listValidDates = pd.date_range(start=min(merged_df["recordDate"]), end=pred_upto, freq=sampling_day).tolist()
+        # merged_df = merged_df.sort_values([config["spatial_res"], "recordDate"]).reset_index(drop=True)
+        # merged_df = merged_df[merged_df["recordDate"].isin(listValidDates)].reset_index(drop=True)
+
+        # """ NEGATIVE BINOMIAL REGRESSION """
+        # pred_upto_date = pred_upto
+        # to_date = pred_upto_date - pd.Timedelta(days=28)
+        # logging.info(f"shape of merged_df: {merged_df.shape}")
+        # merged_df = utils.retNAfilledDF(config, merged_df, to_date=pred_upto_date)
+
         df_district, df_state = run_district_predictions(root_dir, pred_upto, cutoff_case, sampling_day)
 
     if args.generate_maps:
-        # generate_map(df_district, "district", region_name, geojson_folder_path / Path("districts"))
+        generate_map(df_district, "district", region_name, geojson_folder_path / Path("districts"))
         generate_map(df_state, "state", region_name, geojson_folder_path / Path("districts"))
 
     logger.info("Production pipeline completed")

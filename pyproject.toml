@@ -8,13 +8,14 @@ authors = [
     {name = "Akhil Babu", email = "akhil@artpark.in"}
 ]
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = {text = "GPL-3.0"}
 
 dependencies = [
     "anthropic>=0.68.0",
     "boto3>=1.39.17",
     "cdsapi>=0.7.6",
+    "dataio-artpark",
     "geopandas>=1.1.1",
     "ipykernel>=7.0.0",
     "matplotlib>=3.10.3",
@@ -42,7 +43,7 @@ dependencies = [
 
 [tool.ruff]
 line-length = 140
-target-version = "py311"
+target-version = "py312"
 select = ["E", "F", "W", "I", "FLY", "RUF", "B", "ICN"]
 fixable = ["ALL"]
 unfixable = []
@@ -66,3 +67,6 @@ docs = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/acestor-prod"]
+
+[tool.uv.sources]
+dataio-artpark = { git = "https://github.com/dsih-artpark/dataio.git", rev = "staging" }

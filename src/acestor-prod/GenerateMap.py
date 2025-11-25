@@ -11,6 +11,10 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import os
 import pickle
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 # with open("dumps/monthstring.pkl", "rb") as f:
 # monthstring = pickle.load(f)
@@ -37,6 +41,8 @@ def genPlot(
     # Create a GeoDataFrame to hold all district geometries
     gdf_list = []
 
+    print(list(color_df["regionID"]))
+
     # Read each GeoJSON file and assign the corresponding color
     listJsons = os.listdir(geojson_folder)
     for file in os.listdir(geojson_folder):
@@ -45,11 +51,13 @@ def genPlot(
             region_name = os.path.splitext(file)[0]  # Assume district name is the file name without extension
 
             # Find the corresponding color code from the CSV file
-            if region_name in list(color_df["regionID"]):
+            try:
                 color_code = color_df.loc[color_df["regionID"] == region_name, "predictionZone"].values[0]
                 color = color_mapping[color_code]
                 hatch = ""
-            else:
+                logger.info(f"Color code found for {region_name}")
+            except Exception as e:
+                logger.info(f"No color code found for {region_name}")
                 color = color_mapping[0]
                 hatch = "////"
 
@@ -64,7 +72,7 @@ def genPlot(
     gdf_all.loc[gdf_all["color"] == "w", "hatch"] = "////"
 
     # Dissolve boundaries between adjacent polygons
-    gdf_dissolved = gdf_all.dissolve(by="name")
+    gdf_dissolved = gdf_all.dissolve(by="regionName")
 
     # Plot the districts with the corresponding colors
     fig, ax = plt.subplots(1, 1, figsize=(8, 10), dpi=140)
@@ -89,7 +97,7 @@ def genPlot(
             centroid = row["geometry"].centroid
             # Annotate the map with the district name at the centroid location
             ax.annotate(
-                row["name"].title(),
+                row["regionName"].title(),
                 xy=(centroid.x, centroid.y),
                 xytext=(0, 0),
                 textcoords="offset points",

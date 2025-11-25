@@ -193,7 +193,7 @@ def aggregate_daily(*, folder_path, cols, disease, output_file_path):
 
 
 # %% Aggregate cases over N days for all regions
-def rolling_aggregate_Ndays(*, input_file_path, output_file_path, N=7):
+def filter_and_rolling_aggregate_Ndays(*, input_file_path, output_file_path, run_date, N=7):
     """
     Aggregate the data in a rolling manner (previous N data points including the given day) for each day.
 
@@ -225,6 +225,11 @@ def rolling_aggregate_Ndays(*, input_file_path, output_file_path, N=7):
     output_file_path = Path(output_file_path)
     df = pd.read_csv(input_file_path)
     df["date"] = pd.to_datetime(df["date"], format="%d/%m/%Y")
+
+    # filter out data before run date
+
+    df = df[df["date"] < run_date]
+
     listcols = ["region_id", "date", "case"]
     df_aggN = df.groupby("region_id")[listcols].apply(rolling_fn).reset_index(drop=True)
     df_aggN = df_aggN[listcols]
@@ -432,6 +437,7 @@ def parse_linelist_to_no_of_cases(root_dir, raw_linelist_path, parse_district_le
 
 def aggregate_and_sample_case_data(
     root_dir,
+    run_date,
     debug=False,
     parse_district_level=True,
     parse_subdistrict_level=True,
@@ -460,7 +466,9 @@ def aggregate_and_sample_case_data(
         logger.info("DEBUG MODE: Processing only last year of case data")
 
     # Get the abbreviation for the day on which we are doing predictions
-    sampling_day = get_day_abbreviation(thisdate=pd.Timestamp.today().normalize())
+    sampling_day = get_day_abbreviation(thisdate=run_date)
+
+    # Filter out data prior to run date
 
     logger.info(f"sampling day is {sampling_day}")
 
@@ -476,16 +484,17 @@ def aggregate_and_sample_case_data(
             )
 
         # Aggregate cases over N days for all regions
-        df_region_Ndays = rolling_aggregate_Ndays(
+        df_region_Ndays = filter_and_rolling_aggregate_Ndays(
             input_file_path=root_dir / f"datasets/cases_{region_type}_daily.csv",
             output_file_path=root_dir / f"datasets/cases_{region_type}.csv",
+            run_date=run_date,
             N=7,
         )
 
         # Identify the latest sampling day
         max_date_cases = pd.Timestamp(max(df_region_Ndays["date"]))
         latest_day = get_latest_sampling_day(day_given=max_date_cases, sampling_day_abbrev=sampling_day)
-        print(latest_day)
+
         # Sample the data
         df_case_region_sample = sample_data(
             filepath=root_dir / f"datasets/cases_{region_type}.csv",
@@ -499,6 +508,7 @@ def aggregate_and_sample_case_data(
         # Process SUBDISTRICT level
         region_type = "subdistrict"
         logger.info(f"Processing {region_type} level data")
+
         # Filter to last year only if debug mode
         if debug:
             logger.info(f"Filtering {region_type} daily data to last year only (debug mode)")
@@ -508,9 +518,10 @@ def aggregate_and_sample_case_data(
             )
 
         # Aggregate cases over N days for all regions
-        df_region_Ndays = rolling_aggregate_Ndays(
+        df_region_Ndays = filter_and_rolling_aggregate_Ndays(
             input_file_path=root_dir / f"datasets/cases_{region_type}_daily.csv",
             output_file_path=root_dir / f"datasets/cases_{region_type}.csv",
+            run_date=run_date,
             N=7,
         )
 

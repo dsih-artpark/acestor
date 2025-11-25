@@ -73,8 +73,6 @@ def negative_binomial_regression(config, merged_df, predict_upto_date=None):
     else:
         to_date = predict_upto_date - pd.Timedelta(days=28)
 
-    merged_df.to_csv("datasets/merged_df_debug.csv", index=False)
-
     merged_df0 = retNAfilledDF(config, merged_df, to_date=predict_upto_date)
 
     merged_df0.to_csv("datasets/debug/return_nafilled_df.csv", index=False)

@@ -217,7 +217,7 @@ def filter_far_points_km(*, gdf_points, gdf_map, threshold_km=50):
     # Reproject back to the original CRS if needed
     filtered_gdf_points = filtered_gdf_points.to_crs(gdf_points.crs)
     # Add the polygon name to the points
-    filtered_gdf_points["name"] = gdf_map.loc[0, "name"]
+    filtered_gdf_points["name"] = gdf_map.loc[0, "regionName"]
     return filtered_gdf_points
 
 
