@@ -15,7 +15,7 @@ class NBR:
         self.predict_upto_date = predict_upto_date
         self.to_date = predict_upto_date - pd.Timedelta(days=28)
 
-    def lag(config, data_features):
+    def lag(self, config, data_features):
         for lag in config["lag"]["lag_temp"]:
             col_name_temp = f"temp_lag_{lag}"
             data_features[[col_name_temp]] = data_features.groupby(config["spatial_res"])[["2mTemperature"]].shift(lag)
@@ -27,7 +27,7 @@ class NBR:
             ].shift(lag)
         return data_features
 
-    def filter(config, data):
+    def filter(self, config, data):
         data_features = data[
             config["data_features"] + ["rainfall_lag_4", "relative_humidity_lag_4", "temp_lag_12"] + [config["spatial_res"]]
         ]
@@ -39,13 +39,13 @@ class NBR:
         data_features_filtered = data_features_filtered.dropna().reset_index(drop=True)
         return data_features_filtered
 
-    def one_hot_encode(filtered_data, categorical_columns=["ISOWeek"]):
+    def one_hot_encode(self, filtered_data, categorical_columns=["ISOWeek"]):
         encoder = OneHotEncoder(sparse_output=False)
         encoded_features = encoder.fit_transform(filtered_data[categorical_columns])
         encoded_df = pd.DataFrame(encoded_features, columns=encoder.get_feature_names_out(categorical_columns))
         return encoded_df
 
-    def rescale(filtered_data, scaler=None):  # There are issues with this aspect
+    def rescale(self, filtered_data, scaler=None):  # There are issues with this aspect
         input_features = filtered_data[
             [
                 "rainfall_lag_4",
@@ -70,7 +70,7 @@ class NBR:
             )
         return scaled_features, scaler  # Why did we not return scaler before?
 
-    def negative_binomial_regression(config, merged_df, predict_upto_date=None):
+    def negative_binomial_regression(self, config, merged_df, predict_upto_date=None):
         if predict_upto_date is None:
             # predict_upto_date = datetime.now().date()
             predict_upto_date = datetime(2025, 6, 2)
@@ -90,7 +90,7 @@ class NBR:
         merged_df0.to_csv("datasets/debug/merged_before_lag.csv")
 
         # Apply lag
-        merged_df0 = lag(config, data_features=merged_df0)
+        merged_df0 = self.lag(config, data_features=merged_df0)
 
         merged_df0.to_csv("datasets/debug/merged_after_lag.csv")
 
@@ -104,9 +104,9 @@ class NBR:
         train_data.to_csv("datasets/train_data_debug.csv", index=False)
         filtered_train_data = filter(config, train_data)
         print(f"shape of filtered_train_data: {filtered_train_data.shape}")
-        encoded_train_data = one_hot_encode(filtered_train_data)
+        encoded_train_data = self.one_hot_encode(filtered_train_data)
         scaler = None
-        scaled_train_features, scaler = rescale(filtered_train_data, scaler)
+        scaled_train_features, scaler = self.rescale(filtered_train_data, scaler)
         train_features = pd.concat([scaled_train_features, encoded_train_data], axis=1)
         X_train = sm.add_constant(train_features)
         y_train = filtered_train_data["case"]
@@ -134,9 +134,9 @@ class NBR:
 
         test_data = merged_df0[merged_df0["recordDate"].isin(last_4_week_dates)].copy().reset_index(drop=True)
         test_data.to_csv("datasets/debug/test_data.csv", index=False)
-        encoded_test_data = one_hot_encode(test_data)
+        encoded_test_data = self.one_hot_encode(test_data)
         # DOUBT ON THE FOLLOWING: How do we ensure that the scaling here is same as in the train data?
-        scaled_test_features, scaler = rescale(test_data, scaler)
+        scaled_test_features, scaler = self.rescale(test_data, scaler)
         test_features = pd.concat([scaled_test_features, encoded_test_data], axis=1)
         X_test = sm.add_constant(test_features)
 
