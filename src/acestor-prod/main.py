@@ -23,7 +23,7 @@ from IdentifyCutoffDates import identify_cutoff_dates
 from ParseAndExtractWeatherData import parse_and_extract_weather_data
 from ParseCaseData import aggregate_and_sample_case_data, parse_linelist_to_no_of_cases
 from GenerateThresholds import generate_thresholds
-from run_district import run_district_predictions
+from run_district_refactored import run_district_predictions
 
 
 def valid_date(s: str) -> datetime:
@@ -59,13 +59,13 @@ def parse_args():
 
     parser.add_argument("-pl", "--process-linelist", action="store_true", default=False, help="Process linelist data (default: False)")
 
-    parser.add_argument(
-        "-dw",
-        "--download-weather-data-from-cds-api",
-        action="store_true",
-        default=False,
-        help="Download weather data from CDS API(default: False)",
-    )
+    # parser.add_argument(
+    #     "-dw",
+    #     "--download-weather-data-from-cds-api",
+    #     action="store_true",
+    #     default=False,
+    #     help="Download weather data from CDS API(default: False)",
+    # )
 
     parser.add_argument(
         "-ws",
@@ -336,10 +336,10 @@ def main():
     logging.info(f"cutoff_weather: {cutoff_weather}")
     logging.info(f"prediction_dates: {prediction_dates}")
 
-    # if args.generate_thresholds:
-    #     thresholds_df = generate_thresholds(granularity)
+    if args.generate_thresholds:
+        thresholds_df = generate_thresholds(granularity, [(1, 0), (1, 1), (1, 2)])
 
-    # thresholds_df.to_csv("datasets/thresholds_df.csv", index=False)
+    thresholds_df.to_csv("datasets/thresholds_df.csv", index=False)
 
     # Step 6: Run District Predictions
     if parse_district:
@@ -360,11 +360,13 @@ def main():
         # logging.info(f"shape of merged_df: {merged_df.shape}")
         # merged_df = utils.retNAfilledDF(config, merged_df, to_date=pred_upto_date)
 
-        df_district, df_state = run_district_predictions(root_dir, pred_upto, cutoff_case, sampling_day)
+        df_district, df_state = run_district_predictions(root_dir, pred_upto, cutoff_case, sampling_day, thresholds_df)
 
     if args.generate_maps:
         generate_map(df_district, "district", region_name, geojson_folder_path / Path("districts"))
         generate_map(df_state, "state", region_name, geojson_folder_path / Path("districts"))
+
+    # generate report
 
     logger.info("Production pipeline completed")
 

@@ -548,34 +548,34 @@ def AssignZone(df, ThresholdPairs):
     return dfZone
 
 
-def mergePredictionsThresholds(config, case_data, model_pred, to_date=None, noOfDays=28):
-    thresholds_df = compute_thresholds(config, case_data, to_date)
-    thresholds_df.to_csv("datasets/debug/thresholds.csv", index=False)
-    thresholds_df = thresholds_df[thresholds_df["recordDate"] == to_date]
-    # Add the number of days so that thresholds can be compared with predictions
-    # thresholds_df.loc[:, 'recordDate'] = thresholds_df['recordDate'].apply(lambda x: x + timedelta(days=noOfDays))
-    # thresholds_df["recordDate"] = pd.to_datetime(thresholds_df["recordDate"])
-    df_columns = [config["spatial_res"], "recordDate", "prediction", "model"]
-    thresholds_columns = [config["spatial_res"], "ISOWeek", "thresholdMethod", "Mean", "StdDev", "Zero", "Inf"]
-    thresholds_columns += [f"T{val:.2f}" for val in [0.0] + config["listAlpha"]]
-    df_predictions = pd.merge(model_pred[df_columns], thresholds_df[thresholds_columns], on=[config["spatial_res"]], how="left")
+# def mergePredictionsThresholds(config, case_data, model_pred, to_date=None, noOfDays=28, thresholds_df=None):
+#     # thresholds_df = compute_thresholds(config, case_data, to_date)
+#     # thresholds_df.to_csv("datasets/debug/thresholds.csv", index=False)
+#     # thresholds_df = thresholds_df[thresholds_df["recordDate"] == to_date]
+#     # Add the number of days so that thresholds can be compared with predictions
+#     # thresholds_df.loc[:, 'recordDate'] = thresholds_df['recordDate'].apply(lambda x: x + timedelta(days=noOfDays))
+#     # thresholds_df["recordDate"] = pd.to_datetime(thresholds_df["recordDate"])
+#     df_columns = [config["spatial_res"], "recordDate", "prediction", "model"]
+#     thresholds_columns = [config["spatial_res"], "ISOWeek", "thresholdMethod", "Mean", "StdDev", "Zero", "Inf"]
+#     thresholds_columns += [f"T{val:.2f}" for val in [0.0] + config["listAlpha"]]
+#     df_predictions = pd.merge(model_pred[df_columns], thresholds_df[thresholds_columns], on=[config["spatial_res"]], how="left")
 
-    df_predictions["startDatePredictedWeek"] = df_predictions["recordDate"]
-    current_date = datetime.now().strftime("%Y-%m-%d")
-    df_predictions["dateOfComputingPrediction"] = current_date
-    df_predictions["regionID"] = df_predictions[config["spatial_res"]]
+#     df_predictions["startDatePredictedWeek"] = df_predictions["recordDate"]
+#     current_date = datetime.now().strftime("%Y-%m-%d")
+#     df_predictions["dateOfComputingPrediction"] = current_date
+#     df_predictions["regionID"] = df_predictions[config["spatial_res"]]
 
-    # Sort data by Subdistrict and Record_Date
-    df_predictions.sort_values(by=[config["spatial_res"], "recordDate"], inplace=True)
-    df_predictions.reset_index(drop=True, inplace=True)
-    df_predictions[
-        ["dateOfComputingPrediction", "startDatePredictedWeek", "regionID", "prediction", "Mean", "StdDev", "thresholdMethod", "model"]
-        + thresholds_columns
-    ]
+#     # Sort data by Subdistrict and Record_Date
+#     df_predictions.sort_values(by=[config["spatial_res"], "recordDate"], inplace=True)
+#     df_predictions.reset_index(drop=True, inplace=True)
+#     df_predictions[
+#         ["dateOfComputingPrediction", "startDatePredictedWeek", "regionID", "prediction", "Mean", "StdDev", "thresholdMethod", "model"]
+#         + thresholds_columns
+#     ]
 
-    df_predictions.to_csv("datasets/debug/thresholds_return_df.csv", index=False)
+#     df_predictions.to_csv("datasets/debug/thresholds_return_df.csv", index=False)
 
-    return df_predictions
+#     return df_predictions
 
 
 def assignCommonThreshold(df):

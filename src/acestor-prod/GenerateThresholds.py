@@ -237,7 +237,7 @@ def combined_thresholds(*, list_df, output_path, cols, sort_by_cols, sort_order)
     return df_thresh
 
 
-def generate_thresholds(region_type: str):
+def generate_thresholds(region_type: str, threshold_combinations):
     df_align = align_dates_all_regions(input_file_path=f"./datasets/cases_{region_type}.csv")
 
     os.makedirs(Path("datasets/thresholds"), exist_ok=True)
@@ -256,5 +256,17 @@ def generate_thresholds(region_type: str):
         sort_by_cols=["region_id", "date", "threshold_method"],
         sort_order=[True, True, True],
     )
+
+    df_thresholds["Zero"] = 0
+
+    df_thresholds["T0.00"] = threshold_combinations[0][1] * df_thresholds["Mean"] + threshold_combinations[0][1] * df_thresholds["StdDev"]
+    df_thresholds["T1.00"] = threshold_combinations[1][1] * df_thresholds["Mean"] + threshold_combinations[1][1] * df_thresholds["StdDev"]
+    df_thresholds["T2.00"] = threshold_combinations[2][1] * df_thresholds["Mean"] + threshold_combinations[2][1] * df_thresholds["StdDev"]
+
+    df_thresholds["Inf"] = np.inf
+    df_thresholds["thresholdMethod"] = "combined"
+    df_thresholds = df_thresholds.rename(columns={"region_id": "district"})
+
+    df_thresholds["ISOWeek"] = df_thresholds["date"].dt.isocalendar().week
 
     return df_thresholds
