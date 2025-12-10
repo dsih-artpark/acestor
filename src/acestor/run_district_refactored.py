@@ -1,7 +1,7 @@
 import pandas as pd
 import utils
-import models.tse as tse
-import models.nbr as nbr
+from models.tse import TSE
+from models.nbr import NBR
 import yaml
 import logging
 import os
@@ -129,7 +129,7 @@ def run_district_predictions(root_dir: Path, pred_upto, cutoff_case, sampling_da
     pred_upto_date = pred_upto
     to_date = pred_upto_date - pd.Timedelta(days=28)
 
-    nbr_pred = nbr.negative_binomial_regression(config, merged_df, predict_upto_date=pred_upto_date)
+    nbr_pred = NBR(config, merged_df, pred_upto_date).run_predictions()
     output_nbr = mergePredictionsThresholds(config, nbr_pred, thresholds_df=thresholds_df)
     output_nbr[output_nbr["startDatePredictedWeek"] <= pred_upto]
 
@@ -140,7 +140,7 @@ def run_district_predictions(root_dir: Path, pred_upto, cutoff_case, sampling_da
     if config["spatial_res"] != "district":
         logging.error("config['spatial_res'] should match 'district' column for time series extrapolation model to run.")
     else:
-        tse_pred = tse.linear_extrapolation(config, case_data, predict_upto_date=pred_upto_date)
+        tse_pred = TSE(config, case_data, pred_upto_date).run_predictions()
         output_tse = mergePredictionsThresholds(config, case_data, tse_pred, to_date, noOfDays=14, thresholds_df=thresholds_df)
         output_tse[output_tse["startDatePredictedWeek"] <= pd.Timestamp(pred_upto_date)]
         logging.info(output_tse)

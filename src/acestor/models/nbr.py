@@ -70,18 +70,18 @@ class NBR:
             )
         return scaled_features, scaler  # Why did we not return scaler before?
 
-    def negative_binomial_regression(self, config, merged_df, predict_upto_date=None):
-        if predict_upto_date is None:
+    def run_predictions(self):
+        if self.predict_upto_date is None:
             # predict_upto_date = datetime.now().date()
-            predict_upto_date = datetime(2025, 6, 2)
-            to_date = predict_upto_date - pd.Timedelta(days=28)
+            self.predict_upto_date = datetime(2025, 6, 2)
+            to_date = self.predict_upto_date - pd.Timedelta(days=28)
         else:
-            to_date = predict_upto_date - pd.Timedelta(days=28)
+            to_date = self.predict_upto_date - pd.Timedelta(days=28)
 
-        merged_df0 = retNAfilledDF(config, merged_df, to_date=predict_upto_date)
+        merged_df0 = retNAfilledDF(self.config, self.data, to_date=self.predict_upto_date)
 
         merged_df0.to_csv("datasets/debug/return_nafilled_df.csv", index=False)
-        merged_df0 = merged_df0[merged_df0["recordDate"] <= predict_upto_date].reset_index(drop=True)
+        merged_df0 = merged_df0[merged_df0["recordDate"] <= self.predict_upto_date].reset_index(drop=True)
         last_4_week_dates = merged_df0["recordDate"].sort_values().unique()[-4:]
         merged_df0.loc[merged_df0["recordDate"].isin(list(last_4_week_dates)), "ISOWeek"] = merged_df0[
             merged_df0["recordDate"].isin(list(last_4_week_dates))
@@ -90,7 +90,7 @@ class NBR:
         merged_df0.to_csv("datasets/debug/merged_before_lag.csv")
 
         # Apply lag
-        merged_df0 = self.lag(config, data_features=merged_df0)
+        merged_df0 = self.lag(self.config, data_features=merged_df0)
 
         merged_df0.to_csv("datasets/debug/merged_after_lag.csv")
 
@@ -102,7 +102,7 @@ class NBR:
         print(f"shape of train_data: {train_data.shape}")
         # Apply one-hot encoding and rescaling to the training data
         train_data.to_csv("datasets/train_data_debug.csv", index=False)
-        filtered_train_data = filter(config, train_data)
+        filtered_train_data = filter(self.config, train_data)
         print(f"shape of filtered_train_data: {filtered_train_data.shape}")
         encoded_train_data = self.one_hot_encode(filtered_train_data)
         scaler = None

@@ -66,7 +66,7 @@ docs = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/acestor-prod"]
+packages = ["src/acestor"]
 
 [tool.uv.sources]
 dataio-artpark = { git = "https://github.com/dsih-artpark/dataio.git", rev = "staging" }

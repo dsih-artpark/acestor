@@ -184,24 +184,6 @@ def main():
     logging.info(f"sampling day: {sampling_day}")
     logging.info(f"Case start date: {case_start_date}, Case end date: {case_end_date}")
 
-    # Step 3: Download weather data
-    if args.download_weather_data_from_cds_api:
-        # if False:
-        # logger.info("Downloading weather data")
-        # download_weather_data_cds(root_dir, case_start_date, case_end_date, region_name, geojson_folder_path)
-
-        # Step 4: Parse weather data
-        logger.info("Parsing weather data")
-        parse_and_extract_weather_data(
-            root_dir,
-            geojson_folder_path,
-            case_data_start_date=case_start_date,
-            case_data_end_date=case_end_date,
-            sampling_day=sampling_day,
-            parse_district_level=parse_district,
-            parse_subdistrict_level=parse_subdistrict,
-        )
-
     if args.download_and_use_weather_data_from_s3:
         # if False:
         case_start_date_dt = datetime.strptime(case_start_date, "%Y-%m-%d") - timedelta(days=100)
