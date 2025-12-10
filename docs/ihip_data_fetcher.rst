@@ -386,27 +386,3 @@ Common Errors
     WARNING: Could not match N districts to region IDs: ['DISTRICT1', 'DISTRICT2', ...]
 
 **Solution**: Add missing district name corrections to the ``district_name_fixes`` dictionary in the script.
-
-Performance Considerations
---------------------------
-
-- **Download time**: Depends on number and size of XLSX files in S3 bucket
-- **Memory usage**: Peak memory usage during XLSX to CSV conversion (~2-3x file size)
-- **Processing time**: Typically 5-15 minutes for full Karnataka IHIP dataset
-- **Disk space**: Requires ~3x the size of downloaded data (original + CSV + merged)
-
-Best Practices
---------------
-
-1. **Run in scheduled pipeline**: Automate execution via cron or CI/CD
-2. **Monitor logs**: Check warnings for data quality issues
-3. **Validate region IDs**: Ensure all districts are matched (no warnings)
-4. **Archive outputs**: Keep timestamped versions of generated files
-5. **Test with small datasets**: Use ``debug: true`` in config for initial testing
-
-See Also
---------
-
-- :doc:`data_specification` - Complete data schema documentation
-- :doc:`usage` - Main pipeline usage guide
-- :doc:`output_format` - Output format specifications
