@@ -19,6 +19,7 @@ jobs:
           key: ${{ secrets.KEY }}
           script: |
             cd /home/ubuntu/acestor
+            pwd
             git pull
             uv sync --group docs
             cd docs
