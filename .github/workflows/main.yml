@@ -22,5 +22,6 @@ jobs:
             pwd
             git pull
             uv sync --group docs
+            source .venv/bin/activate
             cd docs
             make html
