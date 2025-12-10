@@ -105,7 +105,6 @@ def preprocess_case_and_weather_data(config, root_dir, pred_upto, sampling_day):
     case_data.to_csv("datasets/debug/processed_case_data.csv", index=False)
     weather_data.to_csv("datasets/debug/processed_weather_data.csv", index=False)
 
-    # %% Merge cases and weather data
     merged_df = utils.merge(config, case_data, weather_data)
     merged_df.to_csv("datasets/debug/merged_df.csv", index=False)
     listValidDates = get_days(min(merged_df["recordDate"]), pred_upto, sampling_day=sampling_day)
