@@ -1,0 +1,25 @@
+name: dataio CI
+
+on:
+  push:
+    branches: [production]
+
+jobs:
+  deploy_api:
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ github.ref_name }}_api
+
+    steps:
+      - name: Deploy Docs
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.IP }}
+          username: ${{ secrets.USER }}
+          key: ${{ secrets.KEY }}
+          script: |
+            cd /home/ubuntu/acestor
+            git pull
+            uv sync --group docs
+            cd docs
+            make html
