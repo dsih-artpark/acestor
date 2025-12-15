@@ -28,12 +28,12 @@ def estimate_cutoff_date(*, df, p=10):
     return cutoff
 
 
-def identify_cutoff_dates(root_dir: Path):
+def identify_cutoff_dates(root_dir: Path, granularity, region_name):
     with open(root_dir / "config/config_district.yaml", "r") as f:
         config = yaml.safe_load(f)
 
-    case_data = utils.process_case_data(config, root_dir)
-    weather_data = utils.process_weather_data(config, root_dir)
+    case_data = utils.process_case_data(config, root_dir, granularity)
+    weather_data = utils.process_weather_data(config, root_dir, granularity, region_name)
 
     cutoff_case = estimate_cutoff_date(df=case_data, p=10)
     cutoff_weather = estimate_cutoff_date(df=weather_data, p=25)

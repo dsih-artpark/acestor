@@ -104,7 +104,7 @@ def fetch_ihip_data_from_s3(s3_location, destination_folder):
 
         # Create S3 client
         aws_access_key = os.getenv("AWS_ACCESS_KEY")
-        aws_secret_key = os.getenv("AWS_SECRET_KEY")
+        aws_secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
 
         if not aws_access_key or not aws_secret_key:
             raise ValueError(

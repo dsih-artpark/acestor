@@ -18,6 +18,7 @@ from dataio import DataIOAPI
 from ParseAndExtractWeatherData import (
     deepcopy,
     estimate_values_at_centroids,
+    rename_relevant_columns_and_save,
     filter_far_points_km,
     get_gridpoints,
     get_region_centroids,
@@ -270,6 +271,7 @@ def netcdf_to_csv(
 
 
 def parse_dataio_weather_to_csv(
+    root_dir,
     dataset: xr.Dataset,
     output_csv_path: str,
     geojson_folder_path: str,
@@ -278,6 +280,7 @@ def parse_dataio_weather_to_csv(
     sampling_day: str,
     bbox: tuple = ((17, 24), (80, 85)),
     region_type: str = "district",
+    config=None,
 ) -> pd.DataFrame:
     """
     Parse DataIO weather dataset and save aggregated data to CSV.
@@ -425,6 +428,22 @@ def parse_dataio_weather_to_csv(
     # Save final output
     df_sample.to_csv(output_csv_path, index=False)
     logger.info(f"Successfully saved processed data to: {output_csv_path}")
+
+    listcols = ["region_id", "date", "name", "t2m_mean", "d2m_mean", "tp_sum"]
+    col_names = {
+        "date": "metadata.primaryDate",
+        "t2m_mean": "2mTemperature",
+        "d2m_mean": "2mDewpointTemperature",
+        "tp_sum": "totalPrecipitation",
+    }
+
+    rename_relevant_columns_and_save(
+        input_path=root_dir / "datasets/weather_district_sampled.csv",
+        listcols=listcols,
+        col_names=col_names,
+        output_path=root_dir
+        / f"datasets/processed_aggregated_era5_{config['region_name'].capitalize()}_{config['granularity'].capitalize()}.csv",
+    )
 
     return df_sample
 

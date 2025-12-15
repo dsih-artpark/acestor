@@ -125,10 +125,30 @@ def merge_filter_data(*, folder_path, cols_of_interest, output_file_path):
 
     logger.info(f"{len(file_list)} files found")
 
-    list_df = [pd.read_csv(thisfile)[cols_of_interest] for thisfile in file_list]
+    list_df = []
+
+    for thisfile in file_list:
+        try:
+            df = pd.read_csv(thisfile)[cols_of_interest]
+        except KeyError as e:
+            new_cols_of_interest = [
+                "metadata.primaryDate",
+                "location.state.ID",
+                "location.district.ID",
+                "location.subdistrict.ID",
+                "location.village.ID",
+            ]
+            df = pd.read_csv(thisfile)[new_cols_of_interest]
+        finally:
+            list_df.append(df)
+
+    # list_df = [pd.read_csv(thisfile)[cols_of_interest]]
     merged_df = pd.concat(list_df).reset_index(drop=True)
+    # merged_df.to_csv("debug_merged_df_dates.csv", index=False)
     merged_df["metadata.primaryDate"] = merged_df["metadata.primaryDate"].str.replace("Z", "", regex=False)
-    merged_df["metadata.primaryDate"] = pd.to_datetime(merged_df["metadata.primaryDate"], errors="coerce").dt.tz_localize(None)
+    merged_df["metadata.primaryDate"] = pd.to_datetime(
+        merged_df["metadata.primaryDate"],
+    ).dt.tz_localize(None)
     merged_df["metadata.primaryDate"] = pd.to_datetime(merged_df["metadata.primaryDate"]).dt.date.astype("datetime64[ns]")
 
     merged_df.to_csv(output_file_path, index=False)
@@ -224,7 +244,7 @@ def filter_and_rolling_aggregate_Ndays(*, input_file_path, output_file_path, run
     input_file_path = Path(input_file_path)
     output_file_path = Path(output_file_path)
     df = pd.read_csv(input_file_path)
-    df["date"] = pd.to_datetime(df["date"], format="%d/%m/%Y")
+    df["date"] = pd.to_datetime(df["date"], format="%Y-%m-%d")
 
     # filter out data before run date
 
@@ -338,7 +358,7 @@ def rename_relevant_columns_and_save(*, input_path, listcols, col_names, output_
     return df
 
 
-def filter_last_year_data(*, input_path, output_path):
+def filter_last_year_data(*, input_path, output_path, years=1):
     """
     Filter data to keep only the last year for debugging purposes.
 
@@ -359,7 +379,7 @@ def filter_last_year_data(*, input_path, output_path):
 
     # Get data from last year only
     max_date = df["date"].max()
-    one_year_ago = max_date - pd.DateOffset(years=1)
+    one_year_ago = max_date - pd.DateOffset(years=years)
 
     df_filtered = df[df["date"] >= one_year_ago].reset_index(drop=True)
 
@@ -435,13 +455,66 @@ def parse_linelist_to_no_of_cases(root_dir, raw_linelist_path, parse_district_le
         )
 
 
-def aggregate_and_sample_case_data(
-    root_dir,
-    run_date,
-    debug=False,
-    parse_district_level=True,
-    parse_subdistrict_level=True,
-):
+# For each region, find the longest continuous period where each ISO week has at least 4 days of data
+def find_continuous_data_range(group):
+    """Find the date range with continuous weekly data (at least 4 days per week)."""
+    group = group.sort_values("date")
+    group["iso_year"] = group["date"].dt.isocalendar().year
+    group["iso_week"] = group["date"].dt.isocalendar().week
+
+    # Count days per ISO week
+    week_counts = group.groupby(["iso_year", "iso_week"]).size().reset_index(name="days_count")
+
+    # Identify weeks with at least 4 days
+    valid_weeks = week_counts[week_counts["days_count"] >= 4].copy()
+
+    if valid_weeks.empty:
+        return pd.Series({"min_date": pd.NaT, "max_date": pd.NaT})
+
+    # Find the longest continuous sequence of valid weeks ending at or before run_date
+    valid_weeks = valid_weeks.sort_values(["iso_year", "iso_week"])
+    valid_weeks["week_id"] = valid_weeks["iso_year"].astype(str) + "_" + valid_weeks["iso_week"].astype(str)
+
+    # Check for continuity by comparing consecutive week numbers
+    valid_weeks["prev_year"] = valid_weeks["iso_year"].shift(1)
+    valid_weeks["prev_week"] = valid_weeks["iso_week"].shift(1)
+
+    # A week is continuous if it's either:
+    # 1. Week number is prev_week + 1 in same year, OR
+    # 2. Week 1 of new year following week 52/53 of previous year
+    valid_weeks["is_continuous"] = (
+        (valid_weeks["iso_week"] == valid_weeks["prev_week"] + 1) & (valid_weeks["iso_year"] == valid_weeks["prev_year"])
+    ) | ((valid_weeks["iso_week"] == 1) & (valid_weeks["iso_year"] == valid_weeks["prev_year"] + 1) & (valid_weeks["prev_week"] >= 52))
+
+    # First week is always start of a sequence
+    valid_weeks.loc[valid_weeks.index[0], "is_continuous"] = True
+
+    # Find the longest continuous sequence ending at the last valid week
+    # Start from the end and work backwards
+    continuous_length = 1
+    for i in range(len(valid_weeks) - 2, -1, -1):
+        if valid_weeks.iloc[i + 1]["is_continuous"]:
+            continuous_length += 1
+        else:
+            break
+
+    # Get the continuous range
+    continuous_weeks = valid_weeks.iloc[-continuous_length:]
+
+    # Get actual min and max dates from the original data for these weeks
+    min_week = continuous_weeks.iloc[0]
+    max_week = continuous_weeks.iloc[-1]
+
+    dates_in_range = group[
+        ((group["iso_year"] == min_week["iso_year"]) & (group["iso_week"] >= min_week["iso_week"]))
+        | ((group["iso_year"] > min_week["iso_year"]) & (group["iso_year"] < max_week["iso_year"]))
+        | ((group["iso_year"] == max_week["iso_year"]) & (group["iso_week"] <= max_week["iso_week"]))
+    ]
+
+    return pd.Series({"min_date": dates_in_range["date"].min(), "max_date": dates_in_range["date"].max()})
+
+
+def aggregate_and_sample_case_data(root_dir, run_date, granularity, debug=False):
     """
     Main function to parse and process case data.
 
@@ -458,12 +531,80 @@ def aggregate_and_sample_case_data(
         Root directory for the pipeline (from config).
     debug : bool, optional
         If True, only process data from the last year for testing purposes. Default is False.
+
+    Returns
+    -------
+    sampling_day : str
+        The day abbreviation for sampling.
+    case_start_date : str
+        The start date of the case data.
+    case_end_date : str
+        The end date of the case data.
+    can_generate_thresholds : bool
+        True if there's at least 4 months of continuous data.
+    can_run_predictions : bool
+        True if there's at least 1 year of continuous data.
     """
+    logger.info("--- Data checks ---")
+
+    df = pd.read_csv(root_dir / f"datasets/cases_{granularity}_daily.csv")
+
+    # check if there is continuous data for at least 4 months upto run_date
+    # if not, log a error message stating the lack of data and exit
+    df["date"] = pd.to_datetime(df["date"], format="mixed")
+    run_date_ts = pd.Timestamp(run_date)
+
+    # Filter data up to run_date
+    df_filtered = df[df["date"] <= run_date_ts].copy()
+
+    if df_filtered.empty:
+        logger.error(f"No data found up to {run_date_ts.date()}")
+        raise ValueError(f"No data available up to {run_date_ts.date()}")
+
+    # Find continuous range for each region
+    region_ranges = df_filtered.groupby("region_id").apply(find_continuous_data_range).reset_index()
+
+    # Find the most restrictive range (latest min_date, earliest max_date that still gives us data)
+    valid_ranges = region_ranges[region_ranges["min_date"].notna() & region_ranges["max_date"].notna()]
+
+    if valid_ranges.empty:
+        logger.error("No regions have continuous weekly data (at least 4 days per ISO week)")
+        raise ValueError("Insufficient data quality: No continuous weekly data available")
+
+    # Use the most conservative range
+    effective_min_date = valid_ranges["min_date"].max()  # Latest min date
+    effective_max_date = valid_ranges["max_date"].min()  # Earliest max date
+
+    if effective_min_date > effective_max_date:
+        logger.error("No overlapping continuous data range across all regions")
+        raise ValueError("No common continuous data period across regions")
+
+    # Calculate data span
+    data_span_days = (effective_max_date - effective_min_date).days
+    data_span_months = data_span_days / 30.44  # Average days per month
+
+    logger.info(f"Continuous data available from {effective_min_date.date()} to {effective_max_date.date()}")
+    logger.info(f"Data span: {data_span_days} days ({data_span_months:.1f} months)")
+
+    # Determine capabilities
+    can_generate_thresholds = data_span_months >= 4
+    can_run_predictions = data_span_months >= 12
+
+    if not can_generate_thresholds:
+        logger.error(f"Insufficient data: Only {data_span_months:.1f} months of continuous data available")
+        logger.error("Required: At least 4 months to generate thresholds, 12 months to run predictions")
+        raise ValueError(f"Insufficient data: Need at least 4 months, have {data_span_months:.1f} months")
+
+    if can_run_predictions:
+        logger.info("✓ Sufficient data to run predictions (>= 12 months)")
+    else:
+        logger.warning(f"⚠ Only {data_span_months:.1f} months of data available")
+        logger.warning("Can generate thresholds but cannot run predictions (need >= 12 months)")
 
     logger.info(f"Using root directory: {root_dir}")
 
     if debug:
-        logger.info("DEBUG MODE: Processing only last year of case data")
+        logger.info("DEBUG MODE: Processing only 3 years of case data")
 
     # Get the abbreviation for the day on which we are doing predictions
     sampling_day = get_day_abbreviation(thisdate=run_date)
@@ -472,101 +613,54 @@ def aggregate_and_sample_case_data(
 
     logger.info(f"sampling day is {sampling_day}")
 
-    if parse_district_level:
-        region_type = "district"
-
-        # Filter to last year only if debug mode
-        if debug:
-            logger.info(f"Filtering {region_type} daily data to last year only (debug mode)")
-            df_region_daily = filter_last_year_data(
-                input_path=root_dir / f"datasets/cases_{region_type}_daily.csv",
-                output_path=root_dir / f"datasets/cases_{region_type}_daily.csv",
-            )
-
-        # Aggregate cases over N days for all regions
-        df_region_Ndays = filter_and_rolling_aggregate_Ndays(
-            input_file_path=root_dir / f"datasets/cases_{region_type}_daily.csv",
-            output_file_path=root_dir / f"datasets/cases_{region_type}.csv",
-            run_date=run_date,
-            N=7,
+    # Filter to last year only if debug mode
+    if debug:
+        logger.info(f"Filtering {granularity} daily data to last year only (debug mode)")
+        df_region_daily = filter_last_year_data(
+            input_path=root_dir / f"datasets/cases_{granularity}_daily.csv",
+            output_path=root_dir / f"datasets/cases_{granularity}_daily.csv",
+            years=3,
         )
 
-        # Identify the latest sampling day
-        max_date_cases = pd.Timestamp(max(df_region_Ndays["date"]))
-        latest_day = get_latest_sampling_day(day_given=max_date_cases, sampling_day_abbrev=sampling_day)
+    # Aggregate cases over N days for all regions
+    df_region_Ndays = filter_and_rolling_aggregate_Ndays(
+        input_file_path=root_dir / f"datasets/cases_{granularity}_daily.csv",
+        output_file_path=root_dir / f"datasets/cases_{granularity}.csv",
+        run_date=run_date,
+        N=7,
+    )
 
-        # Sample the data
-        df_case_region_sample = sample_data(
-            filepath=root_dir / f"datasets/cases_{region_type}.csv",
-            sample_filepath=root_dir / f"datasets/cases_{region_type}_sampled.csv",
-            end_date=latest_day,
-            sample_from="end",
-            sampling_rate=7,
-        )
+    # Identify the latest sampling day
+    max_date_cases = pd.Timestamp(max(df_region_Ndays["date"]))
+    latest_day = get_latest_sampling_day(day_given=max_date_cases, sampling_day_abbrev=sampling_day)
 
-    if parse_subdistrict_level:
-        # Process SUBDISTRICT level
-        region_type = "subdistrict"
-        logger.info(f"Processing {region_type} level data")
-
-        # Filter to last year only if debug mode
-        if debug:
-            logger.info(f"Filtering {region_type} daily data to last year only (debug mode)")
-            df_region_daily = filter_last_year_data(
-                input_path=root_dir / f"datasets/cases_{region_type}_daily.csv",
-                output_path=root_dir / f"datasets/cases_{region_type}_daily.csv",
-            )
-
-        # Aggregate cases over N days for all regions
-        df_region_Ndays = filter_and_rolling_aggregate_Ndays(
-            input_file_path=root_dir / f"datasets/cases_{region_type}_daily.csv",
-            output_file_path=root_dir / f"datasets/cases_{region_type}.csv",
-            run_date=run_date,
-            N=7,
-        )
-
-        # Identify the latest sampling day
-        max_date_cases = pd.Timestamp(max(df_region_Ndays["date"]))
-        latest_day = get_latest_sampling_day(day_given=max_date_cases, sampling_day_abbrev=sampling_day)
-
-        # Sample the data
-        df_case_region_sample = sample_data(
-            filepath=root_dir / f"datasets/cases_{region_type}.csv",
-            sample_filepath=root_dir / f"datasets/cases_{region_type}_sampled.csv",
-            end_date=latest_day,
-            sample_from="end",
-            sampling_rate=7,
-        )
+    # Sample the data
+    df_case_region_sample = sample_data(
+        filepath=root_dir / f"datasets/cases_{granularity}.csv",
+        sample_filepath=root_dir / f"datasets/cases_{granularity}_sampled.csv",
+        end_date=latest_day,
+        sample_from="end",
+        sampling_rate=7,
+    )
 
     # Rename relevant columns and save
     logger.info("Renaming columns for final output")
     listcols = ["region_id", "date", "case"]
     col_names = {"date": "metadata.primaryDate"}
 
-    if parse_district_level:
-        col_names["region_id"] = "location.admin2.ID"
-        df_dist = rename_relevant_columns_and_save(
-            input_path=root_dir / "datasets/cases_district_sampled.csv",
-            listcols=listcols,
-            col_names=col_names,
-            output_path=root_dir / "datasets/cases_district_sampled.csv",
-        )
-
-    if parse_subdistrict_level:
-        col_names["region_id"] = "location.admin3.ID"
-        df_subdist = rename_relevant_columns_and_save(
-            input_path=root_dir / "datasets/cases_subdistrict_sampled.csv",
-            listcols=listcols,
-            col_names=col_names,
-            output_path=root_dir / "datasets/cases_subdistrict_sampled.csv",
-        )
+    df_dist = rename_relevant_columns_and_save(
+        input_path=root_dir / "datasets/cases_district_sampled.csv",
+        listcols=listcols,
+        col_names=col_names,
+        output_path=root_dir / "datasets/cases_district_sampled.csv",
+    )
 
     logger.info("Case data parsing completed successfully")
 
     case_start_date = df_dist["metadata.primaryDate"].min()
     case_end_date = df_dist["metadata.primaryDate"].max()
 
-    return sampling_day, case_start_date, case_end_date
+    return sampling_day, case_start_date, case_end_date, can_generate_thresholds, can_run_predictions
 
 
 if __name__ == "__main__":

@@ -75,18 +75,19 @@ def mergePredictionsThresholds(config, model_pred, thresholds_df=None):
     # Add the number of days so that thresholds can be compared with predictions
     # thresholds_df.loc[:, 'recordDate'] = thresholds_df['recordDate'].apply(lambda x: x + timedelta(days=noOfDays))
     # thresholds_df["recordDate"] = pd.to_datetime(thresholds_df["recordDate"])
-    df_columns = [config["spatial_res"], "recordDate", "prediction", "model"]
-    thresholds_columns = [config["spatial_res"], "ISOWeek", "thresholdMethod", "Mean", "StdDev", "Zero", "Inf"]
+    df_columns = ["region_id", "recordDate", "prediction", "model"]
+    thresholds_columns = ["region_id", "ISOWeek", "thresholdMethod", "Mean", "StdDev", "Zero", "Inf"]
     thresholds_columns += [f"T{val:.2f}" for val in [0.0] + config["listAlpha"]]
-    df_predictions = pd.merge(model_pred[df_columns], thresholds_df[thresholds_columns], on=[config["spatial_res"]], how="left")
+    print(thresholds_df.columns)
+    df_predictions = pd.merge(model_pred[df_columns], thresholds_df[thresholds_columns], on=["region_id"], how="left")
 
     df_predictions["startDatePredictedWeek"] = df_predictions["recordDate"]
     current_date = datetime.now().strftime("%Y-%m-%d")
     df_predictions["dateOfComputingPrediction"] = current_date
-    df_predictions["regionID"] = df_predictions[config["spatial_res"]]
+    df_predictions["regionID"] = df_predictions["region_id"]
 
     # Sort data by Subdistrict and Record_Date
-    df_predictions.sort_values(by=[config["spatial_res"], "recordDate"], inplace=True)
+    df_predictions.sort_values(by=["region_id", "recordDate"], inplace=True)
     df_predictions.reset_index(drop=True, inplace=True)
     df_predictions[
         ["dateOfComputingPrediction", "startDatePredictedWeek", "regionID", "prediction", "Mean", "StdDev", "thresholdMethod", "model"]
@@ -98,9 +99,9 @@ def mergePredictionsThresholds(config, model_pred, thresholds_df=None):
     return df_predictions
 
 
-def preprocess_case_and_weather_data(config, root_dir, pred_upto, sampling_day):
-    case_data = utils.process_case_data(config, root_dir)  # %% Load weather data
-    weather_data = utils.process_weather_data(config, root_dir)
+def preprocess_case_and_weather_data(config, root_dir, pred_upto, sampling_day, granularity, region_name):
+    case_data = utils.process_case_data(config, root_dir, granularity)  # %% Load weather data
+    weather_data = utils.process_weather_data(config, root_dir, granularity, region_name)
 
     case_data.to_csv("datasets/debug/processed_case_data.csv", index=False)
     weather_data.to_csv("datasets/debug/processed_weather_data.csv", index=False)
@@ -108,20 +109,20 @@ def preprocess_case_and_weather_data(config, root_dir, pred_upto, sampling_day):
     merged_df = utils.merge(config, case_data, weather_data)
     merged_df.to_csv("datasets/debug/merged_df.csv", index=False)
     listValidDates = get_days(min(merged_df["recordDate"]), pred_upto, sampling_day=sampling_day)
-    merged_df = merged_df.sort_values([config["spatial_res"], "recordDate"]).reset_index(drop=True)
+    merged_df = merged_df.sort_values(["region_id", "recordDate"]).reset_index(drop=True)
     merged_df = merged_df[merged_df["recordDate"].isin(listValidDates)].reset_index(drop=True)
 
     return merged_df, case_data
 
 
-def run_district_predictions(root_dir: Path, pred_upto, cutoff_case, sampling_day, thresholds_df):
+def run_district_predictions(root_dir: Path, pred_upto, cutoff_case, sampling_day, thresholds_df, granularity, region_name):
     with open(root_dir / "config/config_district.yaml", "r") as f:
         config = yaml.safe_load(f)
 
     (
         merged_df,
         case_data,
-    ) = preprocess_case_and_weather_data(config, root_dir, pred_upto, sampling_day)
+    ) = preprocess_case_and_weather_data(config, root_dir, pred_upto, sampling_day, granularity, region_name)
 
     # %% Model Estimation and Prediction
     """ NEGATIVE BINOMIAL REGRESSION """
@@ -140,7 +141,7 @@ def run_district_predictions(root_dir: Path, pred_upto, cutoff_case, sampling_da
         logging.error("config['spatial_res'] should match 'district' column for time series extrapolation model to run.")
     else:
         tse_pred = TSE(config, case_data, pred_upto_date).run_predictions()
-        output_tse = mergePredictionsThresholds(config, case_data, tse_pred, to_date, noOfDays=14, thresholds_df=thresholds_df)
+        output_tse = mergePredictionsThresholds(config, tse_pred, thresholds_df=thresholds_df)
         output_tse[output_tse["startDatePredictedWeek"] <= pd.Timestamp(pred_upto_date)]
         logging.info(output_tse)
 

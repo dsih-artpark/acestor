@@ -123,7 +123,7 @@ def process_linelist_data_ihip(config):
 
     # Aggregate linelist data by spatial resolution, temporal resolution, and year
     case_data = (
-        linelist_df.groupby([config["spatial_res"], pd.Grouper(key="recordDate", freq=config["tempo_res"])])
+        linelist_df.groupby(["region_id", pd.Grouper(key="recordDate", freq=config["tempo_res"])])
         .agg(case=("metadata.diseaseName", "count"))
         .reset_index()
     )
@@ -151,7 +151,7 @@ def process_linelist_data_ihip(config):
     # Check if ISO conventions are followed
     if not case_data["recordDate"].dt.weekday.eq(0).all():
         logging.warning("ISO conventions may not be followed in case_data.")
-    case_data.sort_values(by=[config["spatial_res"], "recordDate"], ascending=[True, True], inplace=True)
+    case_data.sort_values(by=["region_id", "recordDate"], ascending=[True, True], inplace=True)
 
     return case_data
 
@@ -172,7 +172,7 @@ def process_linelist_data(config):
 
     # Aggregate linelist data by spatial resolution, temporal resolution, and year
     case_data = (
-        linelist_df.groupby([config["spatial_res"], pd.Grouper(key="recordDate", freq=config["tempo_res"])])
+        linelist_df.groupby(["region_id", pd.Grouper(key="recordDate", freq=config["tempo_res"])])
         .agg(case=("metadata.diseaseName", "count"))
         .reset_index()
     )
@@ -200,12 +200,12 @@ def process_linelist_data(config):
     # Check if ISO conventions are followed
     if not case_data["recordDate"].dt.weekday.eq(0).all():
         logging.warning("ISO conventions may not be followed in case_data.")
-    case_data.sort_values(by=[config["spatial_res"], "recordDate"], ascending=[True, True], inplace=True)
+    case_data.sort_values(by=["region_id", "recordDate"], ascending=[True, True], inplace=True)
 
     return case_data
 
 
-def process_weather_data(config, root_dir):
+def process_weather_data(config, root_dir, granularity, region_name):
     # Load weather data
     # weather_data = pd.read_csv(config['weather_data'])
     weather_data = pd.read_csv(
@@ -214,7 +214,12 @@ def process_weather_data(config, root_dir):
             next(
                 file
                 for file in os.listdir("datasets")
-                if (("processed_aggregated_era5" in file) and (file.endswith(".csv")) and (config["spatial_res"].capitalize() in file))
+                if (
+                    ("processed_aggregated_era5" in file)
+                    and (file.endswith(".csv"))
+                    and (granularity.capitalize() in file)
+                    and (region_name.capitalize() in file)
+                )
             ),
         )
     )
@@ -222,9 +227,7 @@ def process_weather_data(config, root_dir):
     weather_data["recordDate"] = pd.to_datetime(weather_data["metadata.primaryDate"], format=date_fmt)
     weather_data["recordYear"] = weather_data["recordDate"].dt.year
     weather_data["ISOWeek"] = weather_data["recordDate"].dt.isocalendar().week
-    weather_data.rename(columns={"location.admin3.ID": "subdistrict"}, inplace=True)
-    weather_data.rename(columns={"location.admin2.ID": "district"}, inplace=True)
-    weather_data.sort_values(by=[config["spatial_res"], "recordDate"], ascending=True, inplace=True)
+    weather_data.sort_values(by=["region_id", "recordDate"], ascending=True, inplace=True)
 
     # Check if ISO conventions are followed
     if not weather_data["recordDate"].dt.weekday.eq(0).all():
@@ -249,10 +252,10 @@ def process_weather_data(config, root_dir):
     return weather_data
 
 
-def process_case_data(config, root_dir):
+def process_case_data(config, root_dir, granularity):
     # Load weather data
     # weather_data = pd.read_csv(config['weather_data'])
-    region_type = config["spatial_res"]
+    region_type = granularity
     case_data = pd.read_csv(
         os.path.join(root_dir / "datasets", next(file for file in os.listdir("datasets") if (file == f"cases_{region_type}_sampled.csv")))
     )
@@ -260,9 +263,7 @@ def process_case_data(config, root_dir):
     case_data["recordDate"] = pd.to_datetime(case_data["metadata.primaryDate"], format=date_fmt)
     case_data["recordYear"] = case_data["recordDate"].dt.year
     case_data["ISOWeek"] = case_data["recordDate"].dt.isocalendar().week
-    case_data.rename(columns={"location.admin3.ID": "subdistrict"}, inplace=True)
-    case_data.rename(columns={"location.admin2.ID": "district"}, inplace=True)
-    case_data.sort_values(by=[config["spatial_res"], "recordDate"], ascending=True, inplace=True)
+    case_data.sort_values(by=["region_id", "recordDate"], ascending=True, inplace=True)
 
     # Check if ISO conventions are followed
     if not case_data["recordDate"].dt.weekday.eq(0).all():
@@ -292,11 +293,11 @@ def merge(config, case_data, weather_data):
     merged_df = pd.merge(
         case_data,
         weather_data,
-        on=[config["spatial_res"], "metadata.primaryDate", "recordDate", "recordYear", "ISOWeek"],
+        on=["region_id", "metadata.primaryDate", "recordDate", "recordYear", "ISOWeek"],
         how="outer",
     )
     merged_df.to_csv("datasets/merged_in_utils_df_debug.csv", index=False)
-    merged_df.sort_values(by=[config["spatial_res"], "recordDate"], ascending=True, inplace=True)
+    merged_df.sort_values(by=["region_id", "recordDate"], ascending=True, inplace=True)
     merged_df.reset_index(drop=True, inplace=True)
     current_date = datetime.now().strftime("%Y-%m-%d")
     logging.info(f"Current Date: {current_date}")
@@ -371,7 +372,7 @@ def retNAfilledDF(config, df, to_date=None):
     """
     if not isinstance(to_date, date):
         to_date = datetime.now().date()
-    region = config["spatial_res"]
+    region = "region_id"
     # df = df[~df["recordDate"].isna()]
     df.to_csv("datasets/debug/retnafilleddff.csv", index=False)
     listdf = [GenMissingDateRows(df[df[region] == val], to_date) for val in list(df[region].unique())]
@@ -386,14 +387,12 @@ def retNAfilledDF(config, df, to_date=None):
 def retHistoricalStats(config, region_aggregated, to_date=None):
     # Compute historical mean and standard deviation
     region_aggregated = retNAfilledDF(config, region_aggregated, to_date)
-    historical_stats = region_aggregated.groupby([config["spatial_res"], "recordMonth"]).agg({"case": ["mean", "std"]})
+    historical_stats = region_aggregated.groupby(["region_id", "recordMonth"]).agg({"case": ["mean", "std"]})
     historical_stats.columns = ["Mean", "StdDev"]
     # merge region_aggregated with historical_stats
-    historical_stats = pd.merge(region_aggregated, historical_stats, on=["recordMonth", config["spatial_res"]], how="left")
+    historical_stats = pd.merge(region_aggregated, historical_stats, on=["recordMonth", "region_id"], how="left")
     historical_stats.loc[:, "ISOWeek"] = historical_stats["recordDate"].apply(lambda x: datetime.isocalendar(x).week)
-    historical_stats.sort_values(
-        by=[config["spatial_res"], "recordDate", "recordMonth", "ISOWeek"], ascending=[True, True, True, True], inplace=True
-    )
+    historical_stats.sort_values(by=["region_id", "recordDate", "recordMonth", "ISOWeek"], ascending=[True, True, True, True], inplace=True)
     historical_stats["thresholdMethod"] = "historical"
     historical_stats.reset_index(drop=True)
     return historical_stats
@@ -403,31 +402,27 @@ def retPrevNWeeksStats(config, region_aggregated, NoPreviousWeeks=4, to_date=Non
     # For each region: At week N, compute mean and std of previous 4 weeks (N-1 to N-4)
     region_aggregated = retNAfilledDF(config, region_aggregated, to_date)
     reg_agg = deepcopy(region_aggregated).reset_index(drop=True)
-    rolling_mean = (
-        reg_agg.groupby([config["spatial_res"]])["case"].rolling(window=NoPreviousWeeks, min_periods=1, closed="left").mean().reset_index()
-    )
-    rolling_std = rolling_mean.groupby([config["spatial_res"]])["case"].rolling(window=NoPreviousWeeks, min_periods=1).std().reset_index()
-    mean_rolling_mean = rolling_mean.groupby([config["spatial_res"]])["case"].rolling(window=3, min_periods=1).mean().reset_index()
+    rolling_mean = reg_agg.groupby(["region_id"])["case"].rolling(window=NoPreviousWeeks, min_periods=1, closed="left").mean().reset_index()
+    rolling_std = rolling_mean.groupby(["region_id"])["case"].rolling(window=NoPreviousWeeks, min_periods=1).std().reset_index()
+    mean_rolling_mean = rolling_mean.groupby(["region_id"])["case"].rolling(window=3, min_periods=1).mean().reset_index()
 
     reg_agg.loc[:, "Mean_4week"] = rolling_mean["case"]
     reg_agg.loc[:, "Mean_3_Mean_4week"] = mean_rolling_mean["case"]
     reg_agg.loc[:, "StdDev_4week"] = rolling_std["case"]
 
     # Take only unique combinations of spatial_res, ISO_Week, and previously computed values
-    previous_stats = reg_agg.drop_duplicates(subset=[config["spatial_res"], "ISOWeek", "Mean_4week", "StdDev_4week", "Mean_3_Mean_4week"])
+    previous_stats = reg_agg.drop_duplicates(subset=["region_id", "ISOWeek", "Mean_4week", "StdDev_4week", "Mean_3_Mean_4week"])
     previous_stats = previous_stats.rename(columns={"Mean_3_Mean_4week": "Mean", "StdDev_4week": "StdDev"})
 
     # merge region_aggregated with previous_stats
     previous_stats = pd.merge(
-        reg_agg[[config["spatial_res"], "recordDate", "recordMonth", "ISOWeek"]],
+        reg_agg[["region_id", "recordDate", "recordMonth", "ISOWeek"]],
         previous_stats,
-        on=[config["spatial_res"], "recordDate", "recordMonth", "ISOWeek"],
+        on=["region_id", "recordDate", "recordMonth", "ISOWeek"],
         how="left",
     )
     previous_stats.loc[:, "ISOWeek"] = previous_stats["recordDate"].apply(lambda x: datetime.isocalendar(x).week)
-    previous_stats.sort_values(
-        by=[config["spatial_res"], "recordDate", "recordMonth", "ISOWeek"], ascending=[True, True, True, True], inplace=True
-    )
+    previous_stats.sort_values(by=["region_id", "recordDate", "recordMonth", "ISOWeek"], ascending=[True, True, True, True], inplace=True)
     previous_stats["thresholdMethod"] = "previousNweeks"
     previous_stats.reset_index(drop=True)
     return previous_stats
@@ -454,7 +449,7 @@ def mu_sigma(config, case_data, to_date=None):
     logging.info(f"Length of case data after filling missing dates: {len(case_data0)}")
 
     # Sort
-    region_aggregated = case_data0.sort_values(by=[config["spatial_res"], "recordDate"], ascending=[True, True]).reset_index(drop=True)
+    region_aggregated = case_data0.sort_values(by=["region_id", "recordDate"], ascending=[True, True]).reset_index(drop=True)
     historical_stats = retHistoricalStats(config, region_aggregated, to_date)
     region_aggregated.to_csv("datasets/debug/region_aggregated.csv", index=False)
     previous_stats = retPrevNWeeksStats(config, region_aggregated, NoPreviousWeeks=4, to_date=to_date)
@@ -555,18 +550,18 @@ def AssignZone(df, ThresholdPairs):
 #     # Add the number of days so that thresholds can be compared with predictions
 #     # thresholds_df.loc[:, 'recordDate'] = thresholds_df['recordDate'].apply(lambda x: x + timedelta(days=noOfDays))
 #     # thresholds_df["recordDate"] = pd.to_datetime(thresholds_df["recordDate"])
-#     df_columns = [config["spatial_res"], "recordDate", "prediction", "model"]
-#     thresholds_columns = [config["spatial_res"], "ISOWeek", "thresholdMethod", "Mean", "StdDev", "Zero", "Inf"]
+#     df_columns = ["region_id", "recordDate", "prediction", "model"]
+#     thresholds_columns = ["region_id", "ISOWeek", "thresholdMethod", "Mean", "StdDev", "Zero", "Inf"]
 #     thresholds_columns += [f"T{val:.2f}" for val in [0.0] + config["listAlpha"]]
-#     df_predictions = pd.merge(model_pred[df_columns], thresholds_df[thresholds_columns], on=[config["spatial_res"]], how="left")
+#     df_predictions = pd.merge(model_pred[df_columns], thresholds_df[thresholds_columns], on=["region_id"], how="left")
 
 #     df_predictions["startDatePredictedWeek"] = df_predictions["recordDate"]
 #     current_date = datetime.now().strftime("%Y-%m-%d")
 #     df_predictions["dateOfComputingPrediction"] = current_date
-#     df_predictions["regionID"] = df_predictions[config["spatial_res"]]
+#     df_predictions["regionID"] = df_predictions["region_id"]
 
 #     # Sort data by Subdistrict and Record_Date
-#     df_predictions.sort_values(by=[config["spatial_res"], "recordDate"], inplace=True)
+#     df_predictions.sort_values(by=["region_id", "recordDate"], inplace=True)
 #     df_predictions.reset_index(drop=True, inplace=True)
 #     df_predictions[
 #         ["dateOfComputingPrediction", "startDatePredictedWeek", "regionID", "prediction", "Mean", "StdDev", "thresholdMethod", "model"]
@@ -607,7 +602,7 @@ def classifyIntoZones(config, df_predictions):
     # Add Prediction dates
     current_date = datetime.now().strftime("%Y-%m-%d")
     dfZones["dateOfComputingPrediction"] = current_date
-    dfZones["regionID"] = dfZones[config["spatial_res"]]
+    dfZones["regionID"] = dfZones["region_id"]
 
     # Check if T0.00 < T1.00 < T2.00 for non-null rows
     non_null_rows = df_predictions[["T0.00", "T1.00", "T2.00"]].notnull().all(axis=1)

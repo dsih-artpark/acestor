@@ -16,21 +16,20 @@ class NBR:
         self.to_date = predict_upto_date - pd.Timedelta(days=28)
 
     def lag(self, config, data_features):
+        print(data_features.columns)
         for lag in config["lag"]["lag_temp"]:
             col_name_temp = f"temp_lag_{lag}"
-            data_features[[col_name_temp]] = data_features.groupby(config["spatial_res"])[["2mTemperature"]].shift(lag)
+            data_features[[col_name_temp]] = data_features.groupby("region_id")[["2mTemperature"]].shift(lag)
         for lag in config["lag"]["lag_rf"]:
             col_name_rainfall = f"rainfall_lag_{lag}"
             col_name_relative_humidity = f"relative_humidity_lag_{lag}"
-            data_features[[col_name_rainfall, col_name_relative_humidity]] = data_features.groupby(config["spatial_res"])[
+            data_features[[col_name_rainfall, col_name_relative_humidity]] = data_features.groupby("region_id")[
                 ["totalPrecipitation", "2mDewpointTemperature"]
             ].shift(lag)
         return data_features
 
     def filter(self, config, data):
-        data_features = data[
-            config["data_features"] + ["rainfall_lag_4", "relative_humidity_lag_4", "temp_lag_12"] + [config["spatial_res"]]
-        ]
+        data_features = data[config["data_features"] + ["rainfall_lag_4", "relative_humidity_lag_4", "temp_lag_12"] + ["region_id"]]
         # # Apply lag
         # data_features = lag(config, data_features)
         # Filter out the years that are not required
@@ -70,6 +69,7 @@ class NBR:
             )
         return scaled_features, scaler  # Why did we not return scaler before?
 
+    # def run_predictions(self, save_model_parameters = True):
     def run_predictions(self):
         if self.predict_upto_date is None:
             # predict_upto_date = datetime.now().date()
@@ -102,7 +102,7 @@ class NBR:
         print(f"shape of train_data: {train_data.shape}")
         # Apply one-hot encoding and rescaling to the training data
         train_data.to_csv("datasets/train_data_debug.csv", index=False)
-        filtered_train_data = filter(self.config, train_data)
+        filtered_train_data = self.filter(self.config, train_data)
         print(f"shape of filtered_train_data: {filtered_train_data.shape}")
         encoded_train_data = self.one_hot_encode(filtered_train_data)
         scaler = None
@@ -117,6 +117,13 @@ class NBR:
         # Fit Negative Binomial Regression model to the training data
         neg_binom_model = sm.GLM(y_train, X_train, family=sm.families.NegativeBinomial(alpha=1.0))
         neg_binom_results = neg_binom_model.fit(method="lbfgs")
+
+        # TODO: Save model parameters
+
+        # if save_model_parameters:
+        ## save it.
+
+        ##
 
         # Predict on the test set (last 4 weeks of weather data)
         # if to_date is None:

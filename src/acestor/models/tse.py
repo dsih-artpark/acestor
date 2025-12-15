@@ -27,7 +27,7 @@ class TSE:
         df.loc[:, "equivCase"] = df["equivCase"].apply(lambda x: x if x != -999 else 0)
         df.loc[:, "Avg"] = df["equivCase"].rolling(window=4).mean()
         df.loc[:, "4wMovingAvg"] = df[["CountNaN", "Avg"]].apply(lambda x: x.iloc[0] + x.iloc[1], axis=1)
-        df["MaxCaseMonthlyHistorical"] = df.groupby(["district", "recordMonth"])["equivCase"].transform("max")
+        df["MaxCaseMonthlyHistorical"] = df.groupby(["region_id", "recordMonth"])["equivCase"].transform("max")
         df = df[~df["recordYear"].isin(config["years_to_exclude"])]
         df = df[(df["recordDate"] <= pd.to_datetime(predict_upto_date))]
         df.sort_values(by="recordDate", inplace=True)
@@ -44,7 +44,7 @@ class TSE:
             to_date = self.predict_upto_date - pd.Timedelta(days=14)
 
         df = retNAfilledDF(self.config, self.data, to_date=to_date)
-        df.sort_values(by=["recordDate", "district"], ascending=[True, True], inplace=True)
+        df.sort_values(by=["recordDate", "region_id"], ascending=[True, True], inplace=True)
         df = df.reset_index(drop=True)
 
         # Initialize an empty list to store the extrapolated rows
@@ -55,7 +55,7 @@ class TSE:
 
         df.to_csv("datasets/debug/linear_extra.csv", index=False)
 
-        for district_name, district_data in df.groupby("district"):
+        for district_name, district_data in df.groupby("region_id"):
             district_data = self.processDistrict(self.config, district_data, self.predict_upto_date)
 
             # Get the last two dates and their 4-week moving averages
@@ -83,7 +83,7 @@ class TSE:
 
                     # Create a new row with the extrapolated data
                     new_row = {
-                        "district": district_name,
+                        "region_id": district_name,
                         "recordDate": future_date,
                         "prediction": future_prediction,
                         # "MaxCaseMonthlyHistorical": month_max,

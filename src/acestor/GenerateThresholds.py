@@ -18,6 +18,8 @@ import sys
 from typing import Literal
 import pickle
 
+logger = logging.getLogger("generate-thresholds")
+
 
 # %% Align dates for N-day rolling average values for all regions by filling in zeroes for missing dates.
 def align_dates_all_regions(*, input_file_path):
@@ -238,6 +240,8 @@ def combined_thresholds(*, list_df, output_path, cols, sort_by_cols, sort_order)
 
 
 def generate_thresholds(region_type: str, threshold_combinations):
+    logger.info("Generating thresholds")
+
     df_align = align_dates_all_regions(input_file_path=f"./datasets/cases_{region_type}.csv")
 
     os.makedirs(Path("datasets/thresholds"), exist_ok=True)
@@ -265,7 +269,7 @@ def generate_thresholds(region_type: str, threshold_combinations):
 
     df_thresholds["Inf"] = np.inf
     df_thresholds["thresholdMethod"] = "combined"
-    df_thresholds = df_thresholds.rename(columns={"region_id": "district"})
+    # df_thresholds = df_thresholds.rename(columns={"region_id": "district"})
 
     df_thresholds["ISOWeek"] = df_thresholds["date"].dt.isocalendar().week
 

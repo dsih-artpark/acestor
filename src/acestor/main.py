@@ -17,10 +17,8 @@ import utils
 
 from DataIOWeatherData import download_weather_data, initialize_dataio_client, parse_dataio_weather_to_csv
 from DownloadCaseData import download_all_linelist_data
-from DownloadWeatherData import download_weather_data as download_weather_data_cds
 from GenerateMap import generate_map
 from IdentifyCutoffDates import identify_cutoff_dates
-from ParseAndExtractWeatherData import parse_and_extract_weather_data
 from ParseCaseData import aggregate_and_sample_case_data, parse_linelist_to_no_of_cases
 from GenerateThresholds import generate_thresholds
 from run_district_refactored import run_district_predictions
@@ -84,6 +82,15 @@ def parse_args():
     )
 
     parser.add_argument("-t", "--generate-thresholds", action="store_true", default=False, help="Generate thresholds(default: False)")
+
+    parser.add_argument(
+        "-m",
+        "--model-train-and-predict",
+        action="store_true",
+        default=False,
+        help="Train the model and generate predictions \
+                        (default: False)",
+    )
 
     parser.add_argument("-gm", "--generate-maps", action="store_true", default=False, help="Plot the results on a map")
 
@@ -154,7 +161,7 @@ def main():
     os.makedirs("results", exist_ok=True)
 
     if debug:
-        logger.info("DEBUG MODE ENABLED: Processing only last year of data")
+        logger.info("DEBUG MODE ENABLED: Processing only 3 years of data")
 
     # Step 1: Download ARTPARK linelist data from S3.
     if args.download_linelist:
@@ -173,13 +180,13 @@ def main():
 
     # Step 3: Parse case data
     logger.info("Parsing case data")
-    sampling_day, case_start_date, case_end_date = aggregate_and_sample_case_data(
-        root_dir=root_dir,
-        run_date=run_date,
-        debug=debug,
-        parse_district_level=parse_district,
-        parse_subdistrict_level=parse_subdistrict,
+    sampling_day, case_start_date, case_end_date, can_generate_thresholds, can_run_predictions = aggregate_and_sample_case_data(
+        root_dir=root_dir, run_date=run_date, granularity=granularity, debug=debug
     )
+
+    if not (can_generate_thresholds or can_run_predictions):
+        logger.critical("Cant generate thresholds or run predictions due to insufficient case data. Exiting...")
+        exit(0)
 
     logging.info(f"sampling day: {sampling_day}")
     logging.info(f"Case start date: {case_start_date}, Case end date: {case_end_date}")
@@ -243,6 +250,7 @@ def main():
         # Parse and save weather data
         logger.info("Parsing DataIO weather data")
         parse_dataio_weather_to_csv(
+            root_dir=root_dir,
             dataset=dataset,
             output_csv_path="datasets/weather_district_sampled.csv",
             geojson_folder_path=geojson_folder_path,
@@ -250,6 +258,7 @@ def main():
             end_date=case_end_date_dt.strftime("%Y-%m-%d"),
             sampling_day=sampling_day,
             bbox=bbox,
+            config=config,
         )
 
     if args.use_previously_downloaded_weather_data_from_s3:
@@ -299,6 +308,7 @@ def main():
         # Parse and save weather data
         logger.info("Parsing DataIO weather data")
         parse_dataio_weather_to_csv(
+            root_dir=root_dir,
             dataset=dataset,
             output_csv_path="datasets/weather_district_sampled.csv",
             geojson_folder_path=geojson_folder_path,
@@ -306,11 +316,14 @@ def main():
             end_date=case_end_date_dt.strftime("%Y-%m-%d"),
             sampling_day=sampling_day,
             bbox=bbox,
+            config=config,
         )
 
     # Step 5: Identify Cutoff Dates
     logger.info("Identify cutoff dates")
-    cutoff, pred_upto, cutoff_case, cutoff_weather, prediction_dates = identify_cutoff_dates(root_dir=root_dir)
+    cutoff, pred_upto, cutoff_case, cutoff_weather, prediction_dates = identify_cutoff_dates(
+        root_dir=root_dir, granularity=granularity, region_name=region_name
+    )
 
     logging.info(f"cutoff date: {cutoff}")
     logging.info(f"pred_upto date: {pred_upto}")
@@ -318,13 +331,13 @@ def main():
     logging.info(f"cutoff_weather: {cutoff_weather}")
     logging.info(f"prediction_dates: {prediction_dates}")
 
-    if args.generate_thresholds:
+    if args.generate_thresholds and can_generate_thresholds:
         thresholds_df = generate_thresholds(granularity, [(1, 0), (1, 1), (1, 2)])
-
-    thresholds_df.to_csv("datasets/thresholds_df.csv", index=False)
+        thresholds_df.to_csv("datasets/thresholds_df.csv", index=False)
+        logger.info("Thresholds generated and saved to datasets/thresholds_df.csv")
 
     # Step 6: Run District Predictions
-    if parse_district:
+    if args.model_train_and_predict and can_run_predictions:
         # logger.info("Run district predictions")
         # with open(root_dir / "config/config_district.yaml", "r") as f:
         #     config = yaml.safe_load(f)
@@ -342,7 +355,9 @@ def main():
         # logging.info(f"shape of merged_df: {merged_df.shape}")
         # merged_df = utils.retNAfilledDF(config, merged_df, to_date=pred_upto_date)
 
-        df_district, df_state = run_district_predictions(root_dir, pred_upto, cutoff_case, sampling_day, thresholds_df)
+        df_district, df_state = run_district_predictions(
+            root_dir, pred_upto, cutoff_case, sampling_day, thresholds_df, granularity, region_name
+        )
 
     if args.generate_maps:
         generate_map(df_district, "district", region_name, geojson_folder_path / Path("districts"))
