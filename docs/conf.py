@@ -23,12 +23,19 @@ html_static_path = ['_static']
 html_title = 'Acestor Documentation'
 html_logo = '_static/logo.png'
 
+# Make external links open in new tab
+html_context = {
+    'default_mode': 'auto'
+}
+
+# Add custom JavaScript to open external links in new tab
+html_js_files = [
+    ('external_links.js', {'defer': 'defer'}),
+]
+
 # -- Furo theme options ------------------------------------------------------
 html_theme_options = {
     "sidebar_hide_name": False,
-    "source_repository": "https://github.com/dsih-artpark/acestor/",
-    "source_branch": "main",
-    "source_directory": "docs/",
     "footer_icons": [
         {
             "name": "GitHub",

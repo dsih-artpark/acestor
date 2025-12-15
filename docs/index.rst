@@ -17,6 +17,12 @@ Acestor is a comprehensive package designed to run different disease models, wit
    ihip_data_fetcher
    output_format
 
+.. toctree::
+   :maxdepth: 1
+   :caption: Links:
+
+   GitHub Repository <https://github.com/dsih-artpark/acestor>
+
 Indices and tables
 ==================
 
