@@ -9,3 +9,9 @@ raw_linelist_path: /Users/akhil/workspace/acestor/datasets/raw_linelist_data/KA_
 granularity: district
 # fetch ihip data
 ihip_s3_location: s3://dsih-artpark-01-raw-data/EPRDS34-KA_IHIP_Dengue_LL/KA/
+
+# email configuration
+enable_email_reports: true  # Set to true to send email reports after pipeline completion
+email_recipients:
+  - "akhil@artpark.in"
+  # Add more recipients as needed

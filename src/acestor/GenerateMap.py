@@ -128,9 +128,9 @@ def genPlot(
     # Show the plot
     plt.title(f"{region_title} Dengue Risk Map\n({thisdate}) ({model} - {threshold})")
     endString = pd.Timestamp.today().date().strftime(format="%Y%m%d")
-    plt.savefig(f"plots/{region_title}_{datestring}_{model}_{threshold}_{endString}.png")
-    plt.show()
-    plt.close()
+    filename = f"plots/{region_title}_{region}_{datestring}_{model}_{threshold}_{endString}.png"
+    plt.savefig(filename)
+    return filename
 
 
 def main():
@@ -178,6 +178,7 @@ def main():
 def generate_map(df, region_type, region_name, geojson_folder):
     # Define the color mapping
     color_mapping = {1: "green", 2: "yellow", 3: "orange", 4: "red", 0: "w"}
+    filenames = []
     for thisdate in df["startDatePredictedWeek"].unique():
         date_df = df[(df["startDatePredictedWeek"] == thisdate)]
         for model in date_df["model"].unique():
@@ -187,7 +188,7 @@ def generate_map(df, region_type, region_name, geojson_folder):
             else:
                 for threshold in model_df["thresholdMethod"].unique():
                     color_df = model_df[model_df["thresholdMethod"] == threshold]
-                    genPlot(
+                    filename = genPlot(
                         color_df,
                         geojson_folder,
                         region_name,
@@ -197,4 +198,6 @@ def generate_map(df, region_type, region_name, geojson_folder):
                         threshold=threshold,
                         thisdate=thisdate,
                     )
-                    print(region_type, thisdate, model, threshold)
+                    filenames.append(filename)
+
+    return filenames

@@ -22,6 +22,7 @@ from IdentifyCutoffDates import identify_cutoff_dates
 from ParseCaseData import aggregate_and_sample_case_data, parse_linelist_to_no_of_cases
 from GenerateThresholds import generate_thresholds
 from run_district_refactored import run_district_predictions
+from indra.emails import Report, Status
 
 
 def valid_date(s: str) -> datetime:
@@ -157,6 +158,16 @@ def main():
 
     start_time = time.time()
 
+    # Initialize email report if enabled
+    report = None
+    if config.get("enable_email_reports", False):
+        email_recipients = config.get("email_recipients", [])
+        if email_recipients:
+            report = Report(job_name=f"Dengue Pipeline - {region_name}", email_recipients=email_recipients, run_date=str(run_date))
+            logger.info(f"Email reporting enabled for {len(email_recipients)} recipients")
+        else:
+            logger.warning("Email reporting enabled but no recipients configured")
+
     # make necessary folders
     os.makedirs("results", exist_ok=True)
 
@@ -186,7 +197,13 @@ def main():
 
     if not (can_generate_thresholds or can_run_predictions):
         logger.critical("Cant generate thresholds or run predictions due to insufficient case data. Exiting...")
+        if report:
+            report.add_a_status_report("Data Processing", Status.ERROR, "Insufficient case data to generate thresholds or run predictions")
+            report.send_email()
         exit(0)
+
+    if report:
+        report.add_a_status_report("Data Processing", Status.SUCCESS, f"Processed case data from {case_start_date} to {case_end_date}")
 
     logging.info(f"sampling day: {sampling_day}")
     logging.info(f"Case start date: {case_start_date}, Case end date: {case_end_date}")
@@ -333,8 +350,12 @@ def main():
 
     if args.generate_thresholds and can_generate_thresholds:
         thresholds_df = generate_thresholds(granularity, [(1, 0), (1, 1), (1, 2)])
-        thresholds_df.to_csv("datasets/thresholds_df.csv", index=False)
-        logger.info("Thresholds generated and saved to datasets/thresholds_df.csv")
+        thresholds_file = root_dir / "datasets/thresholds_df.csv"
+        thresholds_df.to_csv(thresholds_file, index=False)
+        logger.info(f"Thresholds generated and saved to {thresholds_file}")
+
+        if report:
+            report.add_a_status_report("Threshold Generation", Status.SUCCESS, f"Generated alert thresholds.")
 
     # Step 6: Run District Predictions
     if args.model_train_and_predict and can_run_predictions:
@@ -359,11 +380,50 @@ def main():
             root_dir, pred_upto, cutoff_case, sampling_day, thresholds_df, granularity, region_name
         )
 
-    if args.generate_maps:
-        generate_map(df_district, "district", region_name, geojson_folder_path / Path("districts"))
-        generate_map(df_state, "state", region_name, geojson_folder_path / Path("districts"))
+        if report:
+            report.add_a_status_report("Model Predictions", Status.SUCCESS, f"Predictions successfully generated")
+            # Attach prediction files
+            prediction_files = list((root_dir / "results").glob("Predictions_*.csv"))
+            # Get the most recent prediction files (created in the last minute)
+            import time as time_mod
 
-    # generate report
+            current_time = time_mod.time()
+            for pred_file in prediction_files:
+                if (current_time - pred_file.stat().st_mtime) < 60:  # Files modified in last 60 seconds
+                    # report.add_attachment(str(pred_file))
+                    logger.info(f"Attached prediction file: {pred_file.name}")
+
+    if args.generate_maps:
+        district_filenames = generate_map(df_district, "district", region_name, geojson_folder_path / Path("districts"))
+        state_filenames = generate_map(df_state, "state", region_name, geojson_folder_path / Path("districts"))
+
+        if report:
+            map_files_attached = 0
+            # Find and attach map files
+            map_files = district_filenames + state_filenames
+            for map_file in map_files:
+                report.add_attachment(str(map_file))
+                logger.info(f"Attached map file: {map_file}")
+                map_files_attached += 1
+
+            report.add_a_status_report(
+                "Map Generation",
+                Status.SUCCESS if map_files_attached > 0 else Status.WARNING,
+                f"Generated and attached {map_files_attached} maps"
+                if map_files_attached > 0
+                else "Map generation completed but no files found",
+            )
+
+    # Send email report
+    if report:
+        time_taken = time.time() - start_time
+        report.add_a_status_report("Pipeline Completion", Status.SUCCESS, f"Pipeline completed successfully in {time_taken:.2f} seconds")
+
+        try:
+            report.send_email()
+            logger.info(f"Email report sent successfully")
+        except Exception as e:
+            logger.error(f"Failed to send email report: {e}")
 
     logger.info("Production pipeline completed")
 

@@ -143,7 +143,6 @@ def run_district_predictions(root_dir: Path, pred_upto, cutoff_case, sampling_da
         tse_pred = TSE(config, case_data, pred_upto_date).run_predictions()
         output_tse = mergePredictionsThresholds(config, tse_pred, thresholds_df=thresholds_df)
         output_tse[output_tse["startDatePredictedWeek"] <= pd.Timestamp(pred_upto_date)]
-        logging.info(output_tse)
 
     if config["spatial_res"] == "district":
         predictions_df0 = pd.concat([output_nbr, output_tse]).reset_index(drop=True)
@@ -165,7 +164,7 @@ def run_district_predictions(root_dir: Path, pred_upto, cutoff_case, sampling_da
     predictions_df = deepcopy(predictions_df2)
     predictions_df.loc[:, "dateOfComputingPrediction"] = datetime.now().strftime("%Y-%m-%d")
     predictions_df.sort_values(by=["regionID", "startDatePredictedWeek"], ascending=[True, True], inplace=True)
-    predictions_df["predictionZone"] = predictions_df["predictionZone"].fillna(0)
+    predictions_df["predictionZone"] = predictions_df["predictionZone"].fillna(0).astype(int)
     predictions_df["prediction"] = predictions_df["prediction"].fillna(0)
 
     listPredDates = list(predictions_df["startDatePredictedWeek"].unique())
@@ -195,6 +194,6 @@ def run_district_predictions(root_dir: Path, pred_upto, cutoff_case, sampling_da
         predictions_df_state.loc[:, "predictionZone"] = 0
         predictions_df_state = predictions_df_state[cols_of_interest]
         predictions_df_state.drop_duplicates(inplace=True)
-        predictions_df_state.to_csv(f"results/Predictions_{monthstring}_Karnataka_{endString}.csv", index=False)
+        predictions_df_state.to_csv(f"results/Predictions_{monthstring}_{region_name}_{endString}.csv", index=False)
 
     return predictions_df, predictions_df_state

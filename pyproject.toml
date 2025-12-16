@@ -17,6 +17,7 @@ dependencies = [
     "cdsapi>=0.7.6",
     "dataio-artpark",
     "geopandas>=1.1.1",
+    "indra",
     "ipykernel>=7.0.0",
     "matplotlib>=3.10.3",
     "netcdf4>=1.7.3",
@@ -35,7 +36,7 @@ dependencies = [
     "shapely>=2.1.1",
     "statsmodels>=0.14.5",
     "tqdm>=4.67.1",
-    "typer>=0.16.0",
+    "typer>=0.15.2",
     "typing>=3.10.0.0",
     "xarray>=2025.6.1",
     "xlwings>=0.33.16",
@@ -70,3 +71,4 @@ packages = ["src/acestor"]
 
 [tool.uv.sources]
 dataio-artpark = { git = "https://github.com/dsih-artpark/dataio.git", rev = "staging" }
+indra = { git = "https://github.com/dsih-artpark/indra.git", rev = "production" }

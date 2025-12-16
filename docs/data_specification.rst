@@ -189,6 +189,12 @@ Configuration Parameters
    * - ``ihip_s3_location``
      - String (S3 URI)
      - S3 bucket location for IHIP data fetching (optional, used only if fetching data from IHIP).
+   * - ``enable_email_reports``
+     - Boolean
+     - Set to ``true`` to enable automatic email reports after pipeline completion (default: false).
+   * - ``email_recipients``
+     - List of Strings
+     - List of email addresses to receive reports, in format "Name <email@example.com>".
 
 Example Configuration
 ---------------------
@@ -205,6 +211,10 @@ Example Configuration
     granularity: district
     # fetch ihip data
     ihip_s3_location: s3://dsih-artpark-01-raw-data/EPRDS34-KA_IHIP_Dengue_LL/KA/
+    # email configuration
+    enable_email_reports: true
+    email_recipients:
+      - "User Name <user@example.com>"
 
 Configuration Notes
 -------------------
@@ -217,6 +227,49 @@ Configuration Notes
 
 - When ``debug`` is enabled, only the most recent **3 years** of data is processed, significantly reducing processing time for testing.
 - All path parameters support both absolute and relative paths (relative to ``root_dir``).
+
+Email Configuration
+-------------------
+
+The pipeline can automatically send email reports with pipeline status, attached results, and maps after completion.
+
+**Environment Variables**
+
+Email functionality requires SMTP credentials to be configured in a ``.env`` file in the project root:
+
+.. code-block:: bash
+
+    # SMTP Configuration
+    SMTP_SERVER=smtp.gmail.com
+    PORT=587
+    EMAIL=your.email@gmail.com
+    PASSWORD=your_app_specific_password
+
+**For Gmail Users:**
+
+1. Enable 2-factor authentication on your Google account
+2. Generate an App-Specific Password at https://myaccount.google.com/apppasswords
+3. Use the app-specific password (not your regular Gmail password)
+
+**Email Report Contents:**
+
+When enabled, the pipeline sends an HTML email report containing:
+
+- Pipeline status for each major step (data processing, thresholds, predictions, maps)
+- Color-coded status indicators (green for success, red for errors, orange for warnings)
+- Attached files:
+
+  - ``thresholds_df.csv`` - Generated alert thresholds
+  - ``Predictions_*.csv`` - Model prediction results
+  - Map images (PNG/PDF) if ``-gm`` flag was used
+
+- Pipeline execution time and completion summary
+
+**Error Handling:**
+
+- If email sending fails, the pipeline logs the error but continues execution
+- The pipeline will complete successfully even if email delivery fails
+- Check the log files for email-related error messages
 
 3. GeoJSON File Specification
 ==============================
