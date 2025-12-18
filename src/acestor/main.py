@@ -22,6 +22,7 @@ from IdentifyCutoffDates import identify_cutoff_dates
 from ParseCaseData import aggregate_and_sample_case_data, parse_linelist_to_no_of_cases
 from GenerateThresholds import generate_thresholds
 from run_district_refactored import run_district_predictions
+from GenerateReport import generate_report
 from indra.emails import Report, Status
 
 
@@ -138,6 +139,7 @@ def main():
     weather_data_path = Path(config.get("weather_data_path"))
     raw_linelist_path = config.get("raw_linelist_path")
     granularity = config.get("granularity")
+    continuous_data_strict = config.get("continuous_data_strict", True)  # Default to True if not specified
     parse_district = granularity == "district" or granularity == "subdistrict"
     parse_subdistrict = granularity == "subdistrict"
 
@@ -192,7 +194,7 @@ def main():
     # Step 3: Parse case data
     logger.info("Parsing case data")
     sampling_day, case_start_date, case_end_date, can_generate_thresholds, can_run_predictions = aggregate_and_sample_case_data(
-        root_dir=root_dir, run_date=run_date, granularity=granularity, debug=debug
+        root_dir=root_dir, run_date=run_date, granularity=granularity, debug=debug, continuous_data_strict=continuous_data_strict
     )
 
     if not (can_generate_thresholds or can_run_predictions):
@@ -355,7 +357,7 @@ def main():
         logger.info(f"Thresholds generated and saved to {thresholds_file}")
 
         if report:
-            report.add_a_status_report("Threshold Generation", Status.SUCCESS, f"Generated alert thresholds.")
+            report.add_a_status_report("Threshold Generation", Status.SUCCESS, "Generated alert thresholds.")
 
     # Step 6: Run District Predictions
     if args.model_train_and_predict and can_run_predictions:
@@ -376,12 +378,10 @@ def main():
         # logging.info(f"shape of merged_df: {merged_df.shape}")
         # merged_df = utils.retNAfilledDF(config, merged_df, to_date=pred_upto_date)
 
-        df_district, df_state = run_district_predictions(
-            root_dir, pred_upto, cutoff_case, sampling_day, thresholds_df, granularity, region_name
-        )
+        df_district = run_district_predictions(root_dir, pred_upto, cutoff_case, sampling_day, thresholds_df, granularity, region_name)
 
         if report:
-            report.add_a_status_report("Model Predictions", Status.SUCCESS, f"Predictions successfully generated")
+            report.add_a_status_report("Model Predictions", Status.SUCCESS, "Predictions successfully generated")
             # Attach prediction files
             prediction_files = list((root_dir / "results").glob("Predictions_*.csv"))
             # Get the most recent prediction files (created in the last minute)
@@ -395,24 +395,52 @@ def main():
 
     if args.generate_maps:
         district_filenames = generate_map(df_district, "district", region_name, geojson_folder_path / Path("districts"))
-        state_filenames = generate_map(df_state, "state", region_name, geojson_folder_path / Path("districts"))
+        # state_filenames = generate_map(df_state, "state", region_name, geojson_folder_path / Path("districts"))
 
-        if report:
-            map_files_attached = 0
-            # Find and attach map files
-            map_files = district_filenames + state_filenames
-            for map_file in map_files:
-                report.add_attachment(str(map_file))
-                logger.info(f"Attached map file: {map_file}")
-                map_files_attached += 1
+        logger.info(f"Generated {len(district_filenames)} map files")
 
-            report.add_a_status_report(
-                "Map Generation",
-                Status.SUCCESS if map_files_attached > 0 else Status.WARNING,
-                f"Generated and attached {map_files_attached} maps"
-                if map_files_attached > 0
-                else "Map generation completed but no files found",
+        # Generate LaTeX report (which also creates the plots zip)
+        logger.info("Generating LaTeX report and plots zip")
+        try:
+            # Determine which map files to use based on granularity
+            if granularity in ["district", "subdistrict"]:
+                map_files_for_report = district_filenames
+
+            zip_path, pdf_path, maps_zip_path = generate_report(
+                root_dir=root_dir,
+                granularity=granularity,
+                region_name=region_name,
+                case_start_date=case_start_date,
+                cutoff_case=cutoff_case,
+                cutoff_weather=cutoff_weather,
+                map_filenames=map_files_for_report,
+                output_dir="results",
+                compile_pdf=True,
             )
+
+            if report:
+                # Attach PDF report if available
+                if pdf_path and pdf_path.exists():
+                    report.add_attachment(str(pdf_path))
+                    logger.info(f"Attached report PDF: {pdf_path}")
+                    report.add_a_status_report("Report Generation", Status.SUCCESS, f"Generated PDF report: {pdf_path.name}")
+                else:
+                    report.add_attachment(str(zip_path))
+                    logger.info(f"Attached LaTeX zip: {zip_path}")
+                    report.add_a_status_report("Report Generation", Status.WARNING, "LaTeX sources generated but PDF compilation failed")
+
+                # Attach plots zip file
+                if maps_zip_path and maps_zip_path.exists():
+                    report.add_attachment(str(maps_zip_path))
+                    logger.info(f"Attached plots zip: {maps_zip_path}")
+                    report.add_a_status_report("Map Generation", Status.SUCCESS, f"Generated plots zip: {maps_zip_path.name}")
+                else:
+                    report.add_a_status_report("Map Generation", Status.WARNING, "Maps generated but zip creation failed")
+
+        except Exception as e:
+            logger.error(f"Failed to generate report: {e}")
+            if report:
+                report.add_a_status_report("Report Generation", Status.ERROR, f"Report generation failed: {e}")
 
     # Send email report
     if report:
@@ -421,7 +449,7 @@ def main():
 
         try:
             report.send_email()
-            logger.info(f"Email report sent successfully")
+            logger.info("Email report sent successfully")
         except Exception as e:
             logger.error(f"Failed to send email report: {e}")
 

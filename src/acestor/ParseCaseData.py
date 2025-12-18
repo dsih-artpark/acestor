@@ -514,7 +514,7 @@ def find_continuous_data_range(group):
     return pd.Series({"min_date": dates_in_range["date"].min(), "max_date": dates_in_range["date"].max()})
 
 
-def aggregate_and_sample_case_data(root_dir, run_date, granularity, debug=False):
+def aggregate_and_sample_case_data(root_dir, run_date, granularity, debug=False, continuous_data_strict=True):
     """
     Main function to parse and process case data.
 
@@ -531,6 +531,8 @@ def aggregate_and_sample_case_data(root_dir, run_date, granularity, debug=False)
         Root directory for the pipeline (from config).
     debug : bool, optional
         If True, only process data from the last year for testing purposes. Default is False.
+    continuous_data_strict : bool, optional
+        If True, enforce continuous weekly data requirement (at least 4 days per ISO week). Default is True.
 
     Returns
     -------
@@ -561,45 +563,74 @@ def aggregate_and_sample_case_data(root_dir, run_date, granularity, debug=False)
         logger.error(f"No data found up to {run_date_ts.date()}")
         raise ValueError(f"No data available up to {run_date_ts.date()}")
 
-    # Find continuous range for each region
-    region_ranges = df_filtered.groupby("region_id").apply(find_continuous_data_range).reset_index()
+    if continuous_data_strict:
+        logger.info("Applying continuous data filter (continuous_data_strict=True)")
 
-    # Find the most restrictive range (latest min_date, earliest max_date that still gives us data)
-    valid_ranges = region_ranges[region_ranges["min_date"].notna() & region_ranges["max_date"].notna()]
+        # Find continuous range for each region
+        region_ranges = df_filtered.groupby("region_id").apply(find_continuous_data_range).reset_index()
 
-    if valid_ranges.empty:
-        logger.error("No regions have continuous weekly data (at least 4 days per ISO week)")
-        raise ValueError("Insufficient data quality: No continuous weekly data available")
+        # Find the most restrictive range (latest min_date, earliest max_date that still gives us data)
+        valid_ranges = region_ranges[region_ranges["min_date"].notna() & region_ranges["max_date"].notna()]
 
-    # Use the most conservative range
-    effective_min_date = valid_ranges["min_date"].max()  # Latest min date
-    effective_max_date = valid_ranges["max_date"].min()  # Earliest max date
+        if valid_ranges.empty:
+            logger.error("No regions have continuous weekly data (at least 4 days per ISO week)")
+            raise ValueError("Insufficient data quality: No continuous weekly data available")
 
-    if effective_min_date > effective_max_date:
-        logger.error("No overlapping continuous data range across all regions")
-        raise ValueError("No common continuous data period across regions")
+        # Use the most conservative range
+        effective_min_date = valid_ranges["min_date"].max()  # Latest min date
+        effective_max_date = valid_ranges["max_date"].min()  # Earliest max date
 
-    # Calculate data span
-    data_span_days = (effective_max_date - effective_min_date).days
-    data_span_months = data_span_days / 30.44  # Average days per month
+        if effective_min_date > effective_max_date:
+            logger.error("No overlapping continuous data range across all regions")
+            raise ValueError("No common continuous data period across regions")
 
-    logger.info(f"Continuous data available from {effective_min_date.date()} to {effective_max_date.date()}")
-    logger.info(f"Data span: {data_span_days} days ({data_span_months:.1f} months)")
+        # Calculate data span
+        data_span_days = (effective_max_date - effective_min_date).days
+        data_span_months = data_span_days / 30.44  # Average days per month
 
-    # Determine capabilities
-    can_generate_thresholds = data_span_months >= 4
-    can_run_predictions = data_span_months >= 12
+        logger.info(f"Continuous data available from {effective_min_date.date()} to {effective_max_date.date()}")
+        logger.info(f"Data span: {data_span_days} days ({data_span_months:.1f} months)")
 
-    if not can_generate_thresholds:
-        logger.error(f"Insufficient data: Only {data_span_months:.1f} months of continuous data available")
-        logger.error("Required: At least 4 months to generate thresholds, 12 months to run predictions")
-        raise ValueError(f"Insufficient data: Need at least 4 months, have {data_span_months:.1f} months")
+        # Determine capabilities
+        can_generate_thresholds = data_span_months >= 4
+        can_run_predictions = data_span_months >= 12
 
-    if can_run_predictions:
-        logger.info("✓ Sufficient data to run predictions (>= 12 months)")
+        if not can_generate_thresholds:
+            logger.error(f"Insufficient data: Only {data_span_months:.1f} months of continuous data available")
+            logger.error("Required: At least 4 months to generate thresholds, 12 months to run predictions")
+            raise ValueError(f"Insufficient data: Need at least 4 months, have {data_span_months:.1f} months")
+
+        if can_run_predictions:
+            logger.info("✓ Sufficient data to run predictions (>= 12 months)")
+        else:
+            logger.warning(f"⚠ Only {data_span_months:.1f} months of data available")
+            logger.warning("Can generate thresholds but cannot run predictions (need >= 12 months)")
     else:
-        logger.warning(f"⚠ Only {data_span_months:.1f} months of data available")
-        logger.warning("Can generate thresholds but cannot run predictions (need >= 12 months)")
+        logger.info("Skipping continuous data filter (continuous_data_strict=False)")
+
+        # Simply calculate data span without strict continuity checks
+        effective_min_date = df_filtered["date"].min()
+        effective_max_date = df_filtered["date"].max()
+
+        data_span_days = (effective_max_date - effective_min_date).days
+        data_span_months = data_span_days / 30.44  # Average days per month
+
+        logger.info(f"Data available from {effective_min_date.date()} to {effective_max_date.date()}")
+        logger.info(f"Data span: {data_span_days} days ({data_span_months:.1f} months)")
+
+        # More lenient capability checks
+        can_generate_thresholds = data_span_months >= 4
+        can_run_predictions = data_span_months >= 12
+
+        if not can_generate_thresholds:
+            logger.warning(f"Limited data: Only {data_span_months:.1f} months of data available")
+            logger.warning("May not generate accurate thresholds with less than 4 months")
+
+        if can_run_predictions:
+            logger.info("✓ Sufficient data span to run predictions (>= 12 months)")
+        else:
+            logger.warning(f"⚠ Only {data_span_months:.1f} months of data available")
+            logger.warning("May not generate accurate predictions with less than 12 months")
 
     logger.info(f"Using root directory: {root_dir}")
 
@@ -616,7 +647,7 @@ def aggregate_and_sample_case_data(root_dir, run_date, granularity, debug=False)
     # Filter to last year only if debug mode
     if debug:
         logger.info(f"Filtering {granularity} daily data to last year only (debug mode)")
-        df_region_daily = filter_last_year_data(
+        filter_last_year_data(
             input_path=root_dir / f"datasets/cases_{granularity}_daily.csv",
             output_path=root_dir / f"datasets/cases_{granularity}_daily.csv",
             years=3,
@@ -635,7 +666,7 @@ def aggregate_and_sample_case_data(root_dir, run_date, granularity, debug=False)
     latest_day = get_latest_sampling_day(day_given=max_date_cases, sampling_day_abbrev=sampling_day)
 
     # Sample the data
-    df_case_region_sample = sample_data(
+    sample_data(
         filepath=root_dir / f"datasets/cases_{granularity}.csv",
         sample_filepath=root_dir / f"datasets/cases_{granularity}_sampled.csv",
         end_date=latest_day,

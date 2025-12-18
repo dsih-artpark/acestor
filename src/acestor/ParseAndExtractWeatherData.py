@@ -318,7 +318,6 @@ def get_region_gdfs(*, geojson_folder, region_type="district", target_crs="EPSG:
     return list_gdf
 
 
-# %% Other functions
 def get_datafile_list(*, source_path, filetypes):
     """
     Fetch the list of data files present in the source folder based on specified file types.

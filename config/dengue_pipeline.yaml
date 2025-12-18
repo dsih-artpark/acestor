@@ -7,6 +7,7 @@ weather_data_path: /Users/akhil/workspace/acestor/weather_data_from_s3
 geojson_folder: /Users/akhil/workspace/acestor/geojsons  # Path to geojson folder (relative to root_dir)
 raw_linelist_path: /Users/akhil/workspace/acestor/datasets/raw_linelist_data/KA_linelist
 granularity: district
+continuous_data_strict: false  # Set to true to enforce continuous weekly data requirement (at least 4 days per ISO week)
 # fetch ihip data
 ihip_s3_location: s3://dsih-artpark-01-raw-data/EPRDS34-KA_IHIP_Dengue_LL/KA/
 

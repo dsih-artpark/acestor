@@ -41,8 +41,6 @@ def genPlot(
     # Create a GeoDataFrame to hold all district geometries
     gdf_list = []
 
-    print(list(color_df["regionID"]))
-
     # Read each GeoJSON file and assign the corresponding color
     listJsons = os.listdir(geojson_folder)
     for file in os.listdir(geojson_folder):
@@ -55,9 +53,9 @@ def genPlot(
                 color_code = color_df.loc[color_df["regionID"] == region_name, "predictionZone"].values[0]
                 color = color_mapping[color_code]
                 hatch = ""
-                logger.info(f"Color code found for {region_name}")
+                logger.debug(f"Color code found for {region_name}")
             except Exception as e:
-                logger.info(f"No color code found for {region_name}")
+                logger.warning(f"No color code found for {region_name}")
                 color = color_mapping[0]
                 hatch = "////"
 

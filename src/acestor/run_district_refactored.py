@@ -174,26 +174,26 @@ def run_district_predictions(root_dir: Path, pred_upto, cutoff_case, sampling_da
 
     predictions_df.to_csv(f"results/Predictions_{monthstring}_{config['spatial_res'].capitalize()}_{endString}.csv", index=False)
 
-    cols_of_interest = [
-        "dateOfComputingPrediction",
-        "startDatePredictedWeek",
-        "regionID",
-        "prediction",
-        "thresholdMethod",
-        "predictionZone",
-        "model",
-    ]
+    # cols_of_interest = [
+    #     "dateOfComputingPrediction",
+    #     "startDatePredictedWeek",
+    #     "regionID",
+    #     "prediction",
+    #     "thresholdMethod",
+    #     "predictionZone",
+    #     "model",
+    # ]
 
-    if config["spatial_res"] == "district":
-        predictions_df = deepcopy(predictions_df2)
-        predictions_df_state = (
-            predictions_df.groupby(["startDatePredictedWeek", "model", "thresholdMethod"])["prediction"].sum().reset_index()
-        )
-        predictions_df_state.loc[:, "dateOfComputingPrediction"] = datetime.now().strftime("%Y-%m-%d")
-        predictions_df_state.loc[:, "regionID"] = "state_29"
-        predictions_df_state.loc[:, "predictionZone"] = 0
-        predictions_df_state = predictions_df_state[cols_of_interest]
-        predictions_df_state.drop_duplicates(inplace=True)
-        predictions_df_state.to_csv(f"results/Predictions_{monthstring}_{region_name}_{endString}.csv", index=False)
+    # if config["spatial_res"] == "district":
+    #     predictions_df = deepcopy(predictions_df2)
+    #     predictions_df_state = (
+    #         predictions_df.groupby(["startDatePredictedWeek", "model", "thresholdMethod"])["prediction"].sum().reset_index()
+    #     )
+    #     predictions_df_state.loc[:, "dateOfComputingPrediction"] = datetime.now().strftime("%Y-%m-%d")
+    #     predictions_df_state.loc[:, "regionID"] = "state_29"
+    #     predictions_df_state.loc[:, "predictionZone"] = 0
+    #     predictions_df_state = predictions_df_state[cols_of_interest]
+    #     predictions_df_state.drop_duplicates(inplace=True)
+    #     predictions_df_state.to_csv(f"results/Predictions_{monthstring}_{region_name}_{endString}.csv", index=False)
 
-    return predictions_df, predictions_df_state
+    return predictions_df
