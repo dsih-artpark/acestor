@@ -1,4 +1,4 @@
-name: dataio CI
+name: acestor CI
 
 on:
   push:
