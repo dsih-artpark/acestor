@@ -444,6 +444,7 @@ def create_cases_file(linelist_file, output_file, regionids_file="data/regionids
 
             # Reorder columns
             cases_df = cases_df[["date", "district.ID", "district.name", "state.ID", "state.name", "case"]]
+            cases_df = cases_df.rename({"district.ID": "region_id"})
 
         # Sort by date and district
         cases_df = cases_df.sort_values(["date", "district.name"]).reset_index(drop=True)

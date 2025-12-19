@@ -213,7 +213,7 @@ def main():
     if args.download_and_use_weather_data_from_s3:
         # if False:
         case_start_date_dt = datetime.strptime(case_start_date, "%Y-%m-%d") - timedelta(days=100)
-        case_end_date_dt = datetime.strptime(case_end_date, "%Y-%m-%d") + timedelta(days=100)
+        case_end_date_dt = run_date
 
         logging.info(f"After shift Case start date: {case_start_date_dt}, Case end date: {case_end_date_dt}")
 
@@ -282,7 +282,7 @@ def main():
 
     if args.use_previously_downloaded_weather_data_from_s3:
         case_start_date_dt = datetime.strptime(case_start_date, "%Y-%m-%d") - timedelta(days=100)
-        case_end_date_dt = datetime.strptime(case_end_date, "%Y-%m-%d") + timedelta(days=100)
+        case_end_date_dt = run_date
 
         logger.info("Reusing weather data which was previously downloaded.")
 
