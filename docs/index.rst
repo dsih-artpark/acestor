@@ -11,6 +11,7 @@ Acestor is a comprehensive package designed to run different disease models, wit
 .. toctree::
    :maxdepth: 2
    :caption: Contents:
+   :hidden:
 
    data_specification
    usage
@@ -20,6 +21,7 @@ Acestor is a comprehensive package designed to run different disease models, wit
 .. toctree::
    :maxdepth: 1
    :caption: Links:
+   :hidden:
 
    GitHub Repository <https://github.com/dsih-artpark/acestor>
 
