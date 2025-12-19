@@ -1,7 +1,7 @@
 # main pipeline
 
 root_dir: /Users/akhil/workspace/acestor
-debug: true  # Set to true to process only last year of data for testing
+debug: true  # Set to true to process last 3 years of data for testing
 region_name: Karnataka  # Name of the region for weather data downloads
 weather_data_path: /Users/akhil/workspace/acestor/weather_data_from_s3
 geojson_folder: /Users/akhil/workspace/acestor/geojsons  # Path to geojson folder (relative to root_dir)
