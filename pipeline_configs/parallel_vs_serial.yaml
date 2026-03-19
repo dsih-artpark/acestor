@@ -1,0 +1,12 @@
+pipeline:
+  name: parallel_vs_serial_demo
+
+storages:
+  runs:
+    kind: filesystem
+    filesystem:
+      base_path: ./runs
+
+logging:
+  level: INFO
+

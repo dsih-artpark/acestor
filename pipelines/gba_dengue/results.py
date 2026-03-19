@@ -1,0 +1,90 @@
+"""Typed result dataclasses for every step in the GBA dengue pipeline.
+
+Each frozen dataclass is the *contract* between a step and its downstream
+consumers.  All step output types live in this single file so that the full
+data-flow shape of the pipeline is visible at a glance.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+
+@dataclass(frozen=True)
+class SamplingDayResult:
+    run_date: str
+    sampling_day: str
+
+
+@dataclass(frozen=True)
+class CaseDownloadResult:
+    enabled: bool
+    copied_files: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class WeatherDownloadResult:
+    enabled: bool
+    downloaded_files: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ParseCaseDataResult:
+    """Case parse outputs.
+
+    ``sampled_csv_path`` / ``region_type`` follow the **last** entry in ``data.case_parse.region_types``
+    (SOT-style order: list ``corp`` then ``zone`` so zone feeds cutoffs). See ``sampled_by_region_type`` for all.
+    """
+
+    sampled_csv_path: str
+    region_type: str
+    sampled_by_region_type: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ParseWeatherDataResult:
+    weather_csv_path: str
+    region_type: str
+
+
+@dataclass(frozen=True)
+class CutoffDatesResult:
+    cutoff: str
+    pred_upto: str
+    cutoff_case: str
+    cutoff_weather: str
+    prediction_dates: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ThresholdsResult:
+    thresholds_csv_path: str
+    region_type: str
+
+
+@dataclass(frozen=True)
+class PredictionResult:
+    predictions_csv_path: str
+    region_type: str
+    month_string: str
+
+
+@dataclass(frozen=True)
+class CombinedPredictionsResult:
+    combined_csv_path: str
+
+
+@dataclass(frozen=True)
+class ThresholdAssessmentResult:
+    best_method_corp_csv: str
+    best_method_zone_csv: str
+
+
+@dataclass(frozen=True)
+class MapsResult:
+    map_paths: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ReportResult:
+    report_path: str

@@ -1,0 +1,47 @@
+[project]
+name = "acestor"
+version = "0.1.0"
+description = "Lightweight SDK for defining and running DAG-based ML pipelines."
+readme = "ACESTOR_PRD_v1.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pandas>=2.3.3",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+s3 = [
+    "boto3",
+]
+api = [
+    "fastapi",
+]
+gba-dengue = [
+    "pandas",
+    "numpy",
+    "statsmodels",
+    "scikit-learn",
+    "geopandas",
+    "matplotlib",
+]
+cds = [
+    "cdsapi",
+    "xarray",
+    "netcdf4",
+]
+dev = [
+    "ruff",
+    "black",
+    "pre-commit",
+    "pytest",
+]
+
+[project.scripts]
+acestor-run = "acestor.run:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.black]
+target-version = ["py310"]

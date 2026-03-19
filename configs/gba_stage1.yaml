@@ -1,0 +1,130 @@
+pipeline:
+  name: gba_dengue
+
+run:
+  run_date: "2026-03-18"
+
+# ---------------------------------------------------------------------------
+# Data download & parse configuration
+# ---------------------------------------------------------------------------
+data:
+  case_download:
+    enabled: true
+    source_storage: "raw_case"
+    source_paths:
+      - "cases_zone_daily.csv"
+    dest_relpath: "datasets/raw_case_data"
+
+  case_parse:
+    # Raw lat/lon inputs: list multiple types (e.g. corp + zone) like SOT ParseNonStandardizedCaseData.py loop.
+    # Pre-aggregated inputs (region_id/date/case): use exactly one entry — file is already one resolution.
+    region_types:
+      - "zone"   # list order: last entry is the case series used by identify_cutoff_dates (SOT: corp then zone)
+    geojson_folder: "geojsons/geojsons_GBA"   # base folder containing {region_type}s/ subfolders
+    date_start: "2015-01-01"
+    date_end: ""   # inclusive end; empty → use today
+
+  weather_download:
+    enabled: true
+    source_mode: "filesystem"           # "filesystem" or "cds"
+    # --- filesystem mode: copy pre-parsed CSVs from a storage ---
+    source_storage: "raw_weather"
+    source_prefix: ""
+    source_paths: []
+    dest_relpath: "datasets/raw_weather_data"
+    # --- cds mode: download from Copernicus CDS API ---
+    cds_dataset: "reanalysis-era5-land"
+    cds_variables:
+      - "2m_temperature"
+      - "2m_dewpoint_temperature"
+      - "total_precipitation"
+    # region_bounds: [13.3, 77.3, 12.7, 77.9]  # [N, W, S, E] or omit for auto from geojson
+    geojson_folder: "geojsons/geojsons_GBA"  # base folder containing {region_type}s/ subfolders
+    region_type: "zone"                       # zone, corp, ward
+    cache_path: "datasets/netcdf"           # where raw NetCDFs are cached
+    parsed_output_path: "datasets/parsednetcdf"  # where parsed per-region CSVs go
+    w_params: ["t2m", "d2m", "tp"]            # NetCDF short variable names for parsing
+    threshold_km: 25.0                        # grid-point distance filter from region boundary
+    bounds_resolution_deg: 0.1                # auto bounds: snap to this degree grid + padding (GBA uses 0.1°; use 0.25 for ERA5 single-levels)
+    start_date: "2015-01-01"                  # inclusive download start (YYYY-MM-DD)
+    end_date: "2024-07-01"                    # inclusive download end (YYYY-MM-DD)
+    cds_url: "${CDS_API_URL:-}"               # reads from env; falls back to ~/.cdsapirc if empty
+    cds_key: "${CDS_API_KEY:-}"               # reads from env; falls back to ~/.cdsapirc if empty
+
+  weather_parse:
+    region_type: "zone"
+    geojson_path: "geojsons/geojsons_GBA"
+    weather_variables:
+      - "2mTemperature"
+      - "totalPrecipitation"
+      - "2mDewpointTemperature"
+
+# ---------------------------------------------------------------------------
+# Cutoff, threshold, and model configuration
+# ---------------------------------------------------------------------------
+cutoff:
+  case_min_regions: 2
+  weather_min_regions: 5
+
+thresholds:
+  region_type: "zone"
+  n_weeks: 4
+  historical_n_years: 5
+  excluded_years: [2020, 2021]
+
+model:
+  spatial_res: "zone"
+  tempo_res: "W-MON"
+  data_features:
+    - "case"
+    - "recordDate"
+    - "recordYear"
+    - "recordMonth"
+    - "ISOWeek"
+    - "2mTemperature"
+    - "totalPrecipitation"
+    - "2mDewpointTemperature"
+  lag:
+    lag_temp: [12]
+    lag_rf: [4]
+  years_to_exclude: [2020, 2021]
+  list_alpha: [1.0, 2.0]
+
+# ---------------------------------------------------------------------------
+# Post-processing
+# ---------------------------------------------------------------------------
+assess:
+  total_corp_regions: 5
+  total_zone_regions: 10
+
+maps:
+  geojson_base: "geojsons/geojsons_GBA"
+  output_dir: "plots"
+
+report:
+  output_dir: "reports"
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+logging:
+  level: INFO
+
+# ---------------------------------------------------------------------------
+# Storages
+# ---------------------------------------------------------------------------
+storages:
+  raw_case:
+    kind: filesystem
+    filesystem:
+      base_path: "./dengue-model-pipeline-automation - GBA/src/dengue-model-pipeline/datasets"
+
+  raw_weather:
+    kind: filesystem
+    filesystem:
+      base_path: "./dengue-model-pipeline-automation - GBA/src/dengue-model-pipeline/datasets/parsednetcdf/zone"
+
+  artifacts:
+    kind: filesystem
+    filesystem:
+      base_path: "./artifacts"

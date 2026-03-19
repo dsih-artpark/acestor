@@ -1,0 +1,140 @@
+General assumptions:
+--------------------
+The following files exist:
+	a. utils.py
+	b. models/nbr.py
+	c. models/tse.py
+
+
+Execution Steps:
+----------------
+1. 	IdentifySamplingDay.py
+		Identify the weekdays for which we want to sample cases and weather data. 
+		Output: Variable "sampling_day" in "dumps/sampling_day.pkl" file.
+
+2. 	DownloadCaseData.py   # Download Bengaluru linelist instead of Karnataka. For GBA, I had manually downloaded the linelist, hence did not adapt this code for GBA.
+		Download case data from S3. 
+		Output: Data download into the following folders:
+			a. "datasets/raw_linelist_data/Bengaluru_IHIP_linelist"
+			# b. "datasets/raw_linelist_data/IHIP_linelist"
+
+3. 	ParseNonStandardizedCaseData.py   # This is for GBA, and adapted to aggregate cases when lat-long are available. I recommend using this approach. This code requires access to geojson files.
+	# ParseCaseData.py  # This is for Karnataka
+		Do parsing, aggregation, and sampling of case data. 
+		Dependency: 
+			a. "sampling_day" variable from "dumps/sampling_day.pkl" file.
+			b. Geojson files within the folders: 
+				- "geojsons/geojsons_GBA/corps"
+				- "geojsons/geojsons_GBA/zones"
+				- "geojsons/geojsons_GBA/wards"  # Not doing ward level modeling for GBA at the moment.
+
+		Output:
+			a. "datasets/cases_corp_sampled.csv"
+			b. "datasets/cases_zone_sampled.csv"
+
+4. 	DownloadWeatherData.py
+		Download the latest weather data. 
+		Dependency: 
+			a. Geojson files within the folders: 
+				- "geojsons/geojsons_GBA/corps"
+				- "geojsons/geojsons_GBA/zones"
+				- "geojsons/geojsons_GBA/wards"  # Not doing ward level modeling for GBA at the moment.
+		Output:
+			Files of the format: "datasets/netcdf/<yyyy>/<yyyy>_<mm>.zip"
+
+5. 	ParseAndExtractWeatherData.py
+		Do parsing, aggregation, and sampling of weather data.
+		Dependency: 
+			a. Geojson files within the folders: 
+				- "geojsons/geojsons_GBA/corps"
+				- "geojsons/geojsons_GBA/zones"
+				- "geojsons/geojsons_GBA/wards"  # Not doing ward level modeling for GBA at the moment.
+			b. 'sampling_day' variable from "dumps/sampling_day.pkl" file.
+			c. Historical weather data: "datasets/netcdf/<yyyy>/<yyyy>_<mm>.nc(.zip)"
+		Output: Saves the output as the following files:
+			a. "datasets/processed_aggregated_era5_GBA_Corp.csv" 
+			b. "datasets/processed_aggregated_era5_GBA_Zone.csv"
+
+6. 	IdentifyCutoffDates.py: 
+		Identify the training data cutoff and model prediction cutoff dates. 
+		Output: Saves the following cutoff values in "dumps/cutoffs.pkl" file:
+			a. cutoff: The date up to which model can be trained
+			b. pred_upto: The date up to which we can make predictions
+			c. cutoff_case: Max date for 'useful' case data
+			d. cutoff_weather: Max date for 'useful' weather data
+			e. prediction_dates: The dates for which predictions can be made
+
+7. 	run_corp.py:
+		Generate corporation level predictions
+		Dependency: 
+			a. "config_corp.yaml", 
+			b. "dumps/cutoffs.pkl" for variable 'pred_upto' 
+			c. "dumps/sampling_day.pkl" for variable 
+		Output: Corporation level predictions. GBA level cases via corporation level predictions.
+			a. Intermediate values: 
+				- 'monthstring': e.g. 'Jul - Aug 2025', 'Dec 2024 - Jan 2025', 'Jan 2025', etc. Depends on the range of dates for which predictions are made.
+				- 'endstring': The day on which we have made the predictions. Format: "%Y%m%d"
+			b. "dumps/monthstring.pkl" for variable 'monthstring'
+			c. "results/Predictions_<monthstring>_Corp_<endstring>.csv"
+			d. "results/Predictions_<monthstring>_GBA_corp_<endstring>.csv"
+
+8. 	run_zone.py: 
+		Generate zone level predictions
+		Dependency: 
+			a. "config_zone.yaml", 
+			b. "dumps/cutoffs.pkl" for variable 'pred_upto' 
+			c. "dumps/sampling_day.pkl" for variable 
+		Output: Zone level predictions. GBA level cases via zone level predictions.
+			a. Intermediate values: 
+				- 'monthstring': e.g. 'Jul - Aug 2025', 'Dec 2024 - Jan 2025', 'Jan 2025', etc. Depends on the range of dates for which predictions are made
+				- 'endstring': The day on which we have made the predictions. Format: "%Y%m%d"
+			b. "results/Predictions_<monthstring>_Zone_<endstring>.csv"
+			c. "results/Predictions_<monthstring>_GBA_zone_<endstring>.csv"
+
+9. 	CombineAllPredictions.py
+		Consolidate district, subdistrict, and state level predictions in one file.
+		Dependency: 
+			a. "dumps/cutoffs.pkl" for variable 'pred_upto' 
+			b. "dumps/monthstring.pkl" for variable 'monthstring'
+			c. "results" folder containing the following:
+				- "Predictions_<monthstring>_Corp_<endstring>.csv"
+				- "Predictions_<monthstring>_GBA_corp_<endstring>.csv"
+				- "Predictions_<monthstring>_Zone_<endstring>.csv"
+				- "Predictions_<monthstring>_GBA_zone_<endstring>.csv"
+		Output: 
+			a. "results/Predictions_<monthstring>_<endstring>.csv"
+
+10. GenerateMaps.py:
+		Generate corporation and zone level risk maps. 
+		Dependency: 
+			a. Geojson files within the folders: 
+				- "geojsons/geojsons_GBA/corps"
+				- "geojsons/geojsons_GBA/zones"
+			b. "dumps/monthstring.pkl" for variable 'monthstring'
+		Output: Maps saved in the following name format:
+			a. Intermediate value: 
+				- 'endstring'
+			b. 'plots/Corps_<date>_<Model>_<Threshold>_<endstring>.png'
+			c. 'plots/Zones_<date>_<Model>_<Threshold>_<endstring>.png'
+	
+11. AssessThresholdPerformance.py:
+		Assess the predictions w.r.t. different thresholding methods used, and select the best ones to be put into the report
+		Dependency: 
+			a. "dumps/monthstring.pkl" for variable 'monthstring'
+			b. "results/Predictions_{monthstring}_{endstring}.csv" where 'endstring' is computed within the code
+		Output:
+			a. "dumps/best_method_corp_{monthstring}_{endstring}.csv"
+			b. "dumps/best_method_zone_{monthstring}_{endstring}.csv"
+		
+12. GenerateLatexCode_PyLaTeX.py
+		Generate and execute the LaTeX code using PyLaTeX. Save the results in a folder.
+		Dependency:
+			a. "dumps/cutoffs.pkl" for case and weather cut offs. These values go in the report.
+			b. "dumps/monthstring.pkl" for variable 'monthstring'
+			c. "dumps/best_method_corp_{monthstring}_{endstring}.csv" where 'endstring' is computed within the code
+			d. "dumps/best_method_zone_{monthstring}_{endstring}.csv" where 'endstring' is computed within the code
+			e. "plots" folder as a source of the necessary plots
+		Output:
+			a. "results/Report_GBA_{reportmonth}_{endstring}.zip" is the zip file containing the LaTeX code for generating the report. 'reportmonth' is computed within the code
+			b. "results/AllMaps_{monthstring}_{endstring}.zip" is the zip file containing all the relevent maps that go into the report
+			c. "results/Report_GBA_{reportmonth}_{endstring}.pdf" is the pdf report

@@ -1,0 +1,16 @@
+pipeline:
+  name: example_pipeline
+
+storages:
+  raw:
+    kind: filesystem
+    filesystem:
+      base_path: ./data
+  runs:
+    kind: filesystem
+    filesystem:
+      base_path: ./runs
+
+logging:
+  level: INFO
+

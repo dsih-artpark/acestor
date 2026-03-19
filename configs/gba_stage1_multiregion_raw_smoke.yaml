@@ -1,0 +1,109 @@
+# Smoke config: raw lat/lon CSV + multiple region_types (spatial join + geojson each).
+# Requires: nonstd_case_smoke.csv under raw_case storage base_path (GBA datasets folder).
+pipeline:
+  name: gba_dengue
+
+run:
+  run_date: "2026-03-18"
+
+data:
+  case_download:
+    enabled: true
+    source_storage: "raw_case"
+    source_paths:
+      - "nonstd_case_smoke.csv"
+    dest_relpath: "datasets/raw_case_data"
+
+  case_parse:
+    region_types:
+      - "corp"
+      - "zone"   # last entry → sampled_csv_path for downstream (same as SOT loop order)
+    geojson_folder: "geojsons/geojsons_GBA"
+    date_start: "2015-01-01"
+    date_end: ""
+
+  weather_download:
+    enabled: true
+    source_mode: "filesystem"
+    source_storage: "raw_weather"
+    source_prefix: ""
+    source_paths: []
+    dest_relpath: "datasets/raw_weather_data"
+    cds_dataset: "reanalysis-era5-land"
+    cds_variables:
+      - "2m_temperature"
+      - "2m_dewpoint_temperature"
+      - "total_precipitation"
+    geojson_folder: "geojsons/geojsons_GBA"
+    region_type: "zone"
+    cache_path: "datasets/netcdf"
+    parsed_output_path: "datasets/parsednetcdf"
+    w_params: ["t2m", "d2m", "tp"]
+    threshold_km: 25.0
+    bounds_resolution_deg: 0.1
+    start_date: "2015-01-01"
+    end_date: "2024-07-01"
+    cds_url: "${CDS_API_URL:-}"
+    cds_key: "${CDS_API_KEY:-}"
+
+  weather_parse:
+    region_type: "zone"
+    geojson_path: "geojsons/geojsons_GBA"
+    weather_variables:
+      - "2mTemperature"
+      - "totalPrecipitation"
+      - "2mDewpointTemperature"
+
+cutoff:
+  case_min_regions: 2
+  weather_min_regions: 5
+
+thresholds:
+  region_type: "zone"
+  n_weeks: 4
+  historical_n_years: 5
+  excluded_years: [2020, 2021]
+
+model:
+  spatial_res: "zone"
+  tempo_res: "W-MON"
+  data_features:
+    - "case"
+    - "recordDate"
+    - "recordYear"
+    - "recordMonth"
+    - "ISOWeek"
+    - "2mTemperature"
+    - "totalPrecipitation"
+    - "2mDewpointTemperature"
+  lag:
+    lag_temp: [12]
+    lag_rf: [4]
+  years_to_exclude: [2020, 2021]
+  list_alpha: [1.0, 2.0]
+
+assess:
+  total_corp_regions: 5
+  total_zone_regions: 10
+
+report:
+  output_dir: "reports"
+
+logging:
+  level: INFO
+
+storages:
+  raw_case:
+    kind: filesystem
+    filesystem:
+      base_path: "./dengue-model-pipeline-automation - GBA/src/dengue-model-pipeline/datasets"
+
+  raw_weather:
+    kind: filesystem
+    filesystem:
+      base_path: "./dengue-model-pipeline-automation - GBA/src/dengue-model-pipeline/datasets/parsednetcdf/zone"
+
+  artifacts:
+    kind: filesystem
+    filesystem:
+      base_path: "./artifacts"
