@@ -61,14 +61,28 @@ class ParseWeatherDataStep(BaseStep[ParseWeatherDataInputs, ParseWeatherDataResu
         if "date" not in merged.columns and "metadata.primaryDate" in merged.columns:
             merged.rename(columns={"metadata.primaryDate": "date"}, inplace=True)
 
-        daily = weather.aggregate_daily(merged, cfg.weather_variables)
-        rolling = weather.rolling_aggregate(daily, cfg.weather_variables, n_days=7)
+        daily = weather.aggregate_daily(
+            merged,
+            cfg.weather_variables,
+            daily_agg=cfg.daily_agg,
+        )
+        rolling = weather.rolling_aggregate(
+            daily,
+            cfg.weather_variables,
+            n_days=cfg.rolling_n_days,
+            rolling_agg=cfg.rolling_agg,
+        )
 
         max_date = pd.Timestamp(rolling["date"].max())
         latest_day = get_latest_sampling_day(
             max_date, inputs.identify_sampling_day.sampling_day
         )
-        sampled = weather.sample_data(rolling, end_date=latest_day)
+        sampled = weather.sample_data(
+            rolling,
+            end_date=latest_day,
+            sample_from="end",
+            sampling_rate=cfg.sampling_rate,
+        )
 
         renamed = weather.rename_columns_for_output(sampled, cfg.region_type)
         dest = context.artifact_path(f"datasets/weather_{cfg.region_type}_sampled.csv")

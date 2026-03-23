@@ -1,6 +1,7 @@
-"""acestor v1 SDK package.
+"""acestor — runtime package for the production dengue pipeline.
 
-Core primitives for defining and running class-based ML pipelines using DAGs.
+Exposes configuration, orchestration, storage, and step primitives used by the
+pipeline implementation under ``pipelines/``.
 """
 
 from acestor.core.config import PipelineConfig

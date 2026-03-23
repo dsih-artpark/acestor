@@ -1,7 +1,8 @@
 # Smoke config: raw lat/lon CSV + multiple region_types (spatial join + geojson each).
-# Requires: nonstd_case_smoke.csv under raw_case storage base_path (GBA datasets folder).
+# Requires: nonstd_case_smoke.csv under raw_case storage base_path.
 pipeline:
-  name: gba_dengue
+  name: dengue
+  title: "Dengue intelligence"
 
 run:
   run_date: "2026-03-18"
@@ -21,6 +22,15 @@ data:
     geojson_folder: "geojsons/geojsons_GBA"
     date_start: "2015-01-01"
     date_end: ""
+
+  case_sufficiency:
+    enabled: true
+    min_total_rows: 1
+    min_distinct_regions: 1
+    min_date_span_days: 1
+    case_column: "case"
+    region_column: ""
+    date_column: ""
 
   weather_download:
     enabled: true
@@ -53,6 +63,25 @@ data:
       - "2mTemperature"
       - "totalPrecipitation"
       - "2mDewpointTemperature"
+    daily_agg:
+      - name: "2mTemperature"
+        op: "mean"
+      - name: "2mDewpointTemperature"
+        op: "mean"
+      - name: "totalPrecipitation"
+        op: "sum"
+
+    rolling_agg:
+      - name: "2mTemperature"
+        op: "mean"
+      - name: "2mDewpointTemperature"
+        op: "mean"
+      - name: "totalPrecipitation"
+        op: "sum"
+    # Number of days to aggregate over for rolling windows; default 7.
+    rolling_n_days: 7
+    # Sample rate for daily data; default 7.
+    sampling_rate: 7
 
 cutoff:
   case_min_regions: 2
@@ -86,8 +115,14 @@ assess:
   total_corp_regions: 5
   total_zone_regions: 10
 
+maps:
+  geojson_base: "geojsons/geojsons_GBA"
+  output_dir: "plots"
+  figure_title: "Dengue risk map"
+
 report:
   output_dir: "reports"
+  compile_pdf: false
 
 logging:
   level: INFO

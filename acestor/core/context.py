@@ -20,6 +20,10 @@ class PipelineContext:
     run_id: str
     storages: Dict[str, Storage] = field(default_factory=dict)
     logger: Any | None = None
+    #: ISO8601 UTC set by :class:`PipelineRunner` at run start (for notifications).
+    run_started_at: str | None = None
+    #: Step names finished so far in the current run (append order ≈ completion order).
+    completed_steps: list[str] = field(default_factory=list)
 
     def require_storage(self, name: str) -> Storage:
         """Return a configured storage or raise a clear error."""
@@ -42,8 +46,23 @@ class PipelineContext:
         return current if isinstance(current, Mapping) else {}
 
     def artifact_path(self, relpath: str) -> str:
-        """Return the full artifact key for a relative path under this run."""
+        """Return the storage key ``{run_id}/{relpath}`` for this run.
+
+        This is **not** an absolute filesystem path. Read/write via
+        ``context.artifacts`` (or :meth:`artifact_fs_path` when you need a local
+        ``Path`` for subprocesses or libraries that expect disk paths).
+        """
         return f"{self.run_id}/{relpath}"
+
+    def artifact_fs_path(self, relpath: str) -> Path:
+        """Absolute path under the artifacts filesystem storage (local runs only)."""
+        storage = self.artifacts
+        if not isinstance(storage, FileStorage):
+            raise TypeError(
+                "artifact_fs_path() requires storages['artifacts'] with kind 'filesystem'; "
+                f"got {type(storage).__name__}."
+            )
+        return storage.base_path / self.artifact_path(relpath)
 
     def write_artifact_json(self, relpath: str, payload: Mapping[str, Any]) -> str:
         """Write a JSON payload under the current run in the artifacts storage."""

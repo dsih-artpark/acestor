@@ -8,6 +8,7 @@ import pandas as pd
 
 from acestor import BaseStep, PipelineContext
 from pipelines.gba_dengue.configs import AssessConfig, _section
+from pipelines.gba_dengue.lib import report as report_lib
 from pipelines.gba_dengue.lib import thresholds
 from pipelines.gba_dengue.results import (
     CombinedPredictionsResult,
@@ -39,6 +40,13 @@ class AssessThresholdsStep(BaseStep[AssessThresholdsInputs, ThresholdAssessmentR
         _, best_zone = thresholds.assess_thresholds(
             df, region_prefix="zone", total_regions_overall=cfg.total_zone_regions
         )
+
+        # SOT: generate_LaTeX_fig_captions before writing best-method CSVs
+        # (AssessThresholdPerformance.py L145–149).
+        if len(best_corp) > 0:
+            best_corp = report_lib.add_latex_figure_metadata(best_corp)
+        if len(best_zone) > 0:
+            best_zone = report_lib.add_latex_figure_metadata(best_zone)
 
         end_str = pd.Timestamp.today().date().strftime("%Y%m%d")
         corp_dest = context.artifact_path(f"dumps/best_method_corp_{end_str}.csv")

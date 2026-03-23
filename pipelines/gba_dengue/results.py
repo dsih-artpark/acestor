@@ -1,4 +1,4 @@
-"""Typed result dataclasses for every step in the GBA dengue pipeline.
+"""Typed result dataclasses for every step in the dengue pipeline.
 
 Each frozen dataclass is the *contract* between a step and its downstream
 consumers.  All step output types live in this single file so that the full
@@ -26,6 +26,13 @@ class CaseDownloadResult:
 class WeatherDownloadResult:
     enabled: bool
     downloaded_files: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class DataSufficiencyResult:
+    """Output of ``validate_case_data_sufficiency``; carries case parse through the gate."""
+
+    case_result: ParseCaseDataResult
 
 
 @dataclass(frozen=True)
@@ -87,4 +94,21 @@ class MapsResult:
 
 @dataclass(frozen=True)
 class ReportResult:
+    """``report_path`` is the ``rep_dict`` JSON storage key.
+
+    ``tex_path`` / ``latex_bundle_zip_path`` are set when those artifacts are emitted.
+    ``pdf_path`` is set when ``report.compile_pdf`` and LaTeX compilation succeed.
+    """
+
     report_path: str
+    pdf_path: str | None = None
+    tex_path: str | None = None
+    latex_bundle_zip_path: str | None = None
+
+
+@dataclass(frozen=True)
+class NotifyRunResult:
+    """Outcome of the optional SMTP notification step (success-path only)."""
+
+    notified: bool
+    reason: str  # e.g. "disabled", "not_subscribed", "sent", "smtp_incomplete", "send_failed"

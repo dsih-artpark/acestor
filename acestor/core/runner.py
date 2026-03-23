@@ -11,7 +11,6 @@ from concurrent.futures import ThreadPoolExecutor, Future, wait, FIRST_COMPLETED
 from acestor.core.context import PipelineContext
 from acestor.core.dag import PipelineDAG
 from acestor.core.step import build_typed_inputs
-from acestor.infra import send_email
 
 
 @dataclass
@@ -21,6 +20,7 @@ class RunResult:
     run_id: str
     status: str
     steps: Dict[str, Any]
+    failure_detail: str = ""
 
 
 @dataclass
@@ -37,11 +37,14 @@ class PipelineRunner:
         """
         logger = self.context.logger
         start_ts = datetime.now(timezone.utc).isoformat()
+        self.context.run_started_at = start_ts
+        self.context.completed_steps = []
         if logger is not None:
             logger.info("Starting run %s", self.context.run_id)
 
         results: Dict[str, Any] = {}
         status = "success"
+        failure_detail = ""
 
         try:
             name_to_step = {s.name: s for s in self.dag.steps}
@@ -73,13 +76,15 @@ class PipelineRunner:
                     for fut in list(done):
                         step_name = futures.pop(fut)
                         results[step_name] = fut.result()
+                        self.context.completed_steps.append(step_name)
 
                         for child in self.dag.children(step_name):
                             in_degree[child] -= 1
                             if in_degree[child] == 0:
                                 submit_step(executor, child)
-        except Exception:
+        except Exception as exc:
             status = "failed"
+            failure_detail = f"{type(exc).__name__}: {exc}"
             if logger is not None:
                 logger.exception("Run %s failed", self.context.run_id)
 
@@ -110,52 +115,9 @@ class PipelineRunner:
                         "Failed to write run metadata for %s", self.context.run_id
                     )
 
-        email_cfg = (
-            (self.context.config.get("email") or {})
-            if isinstance(self.context.config, dict)
-            else {}
+        return RunResult(
+            run_id=self.context.run_id,
+            status=status,
+            steps=results,
+            failure_detail=failure_detail,
         )
-        if email_cfg.get("enabled"):
-            try:
-                on = email_cfg.get("on") or []
-                if status in on:
-                    smtp_cfg = email_cfg.get("smtp") or {}
-                    host = smtp_cfg.get("host")
-                    port = int(smtp_cfg.get("port", 587))
-                    username = smtp_cfg.get("username")
-                    password = smtp_cfg.get("password")
-                    use_tls = bool(smtp_cfg.get("use_tls", True))
-                    sender = email_cfg.get("from")
-                    recipients = email_cfg.get("to") or []
-                    if host and sender and recipients:
-                        pipeline_name = (self.context.config.get("pipeline") or {}).get(
-                            "name"
-                        ) or "pipeline"
-                        subject = f"[acestor] {pipeline_name} run {status} (run_id={self.context.run_id})"
-                        body = (
-                            f"Pipeline: {pipeline_name}\n"
-                            f"Run ID: {self.context.run_id}\n"
-                            f"Status: {status}\n"
-                            f"Started: {start_ts}\n"
-                            f"Finished: {end_ts}\n"
-                            f"Steps: {', '.join(results.keys())}\n"
-                        )
-                        send_email(
-                            host=host,
-                            port=port,
-                            username=username,
-                            password=password,
-                            use_tls=use_tls,
-                            sender=sender,
-                            recipients=recipients,
-                            subject=subject,
-                            body=body,
-                        )
-            except Exception:
-                if logger is not None:
-                    logger.exception(
-                        "Failed to send notification email for run %s",
-                        self.context.run_id,
-                    )
-
-        return RunResult(run_id=self.context.run_id, status=status, steps=results)

@@ -1,5 +1,7 @@
 pipeline:
-  name: gba_dengue
+  name: dengue
+  # Used for report/map titles when report.document_title is omitted:
+  title: "Dengue intelligence"
 
 run:
   run_date: "2026-03-18"
@@ -24,6 +26,16 @@ data:
     date_start: "2015-01-01"
     date_end: ""   # inclusive end; empty → use today
 
+  # Early exit if sampled case data is too thin (cf. main.py can_run_predictions).
+  case_sufficiency:
+    enabled: true
+    min_total_rows: 30
+    min_distinct_regions: 2
+    min_date_span_days: 14
+    case_column: "case"
+    region_column: ""   # empty → use location.admin*.ID from region_type
+    date_column: ""     # empty → metadata.primaryDate
+
   weather_download:
     enabled: true
     source_mode: "filesystem"           # "filesystem" or "cds"
@@ -45,7 +57,7 @@ data:
     parsed_output_path: "datasets/parsednetcdf"  # where parsed per-region CSVs go
     w_params: ["t2m", "d2m", "tp"]            # NetCDF short variable names for parsing
     threshold_km: 25.0                        # grid-point distance filter from region boundary
-    bounds_resolution_deg: 0.1                # auto bounds: snap to this degree grid + padding (GBA uses 0.1°; use 0.25 for ERA5 single-levels)
+    bounds_resolution_deg: 0.1                # auto bounds: snap to this degree grid + padding (~0.25 for ERA5 single-levels)
     start_date: "2015-01-01"                  # inclusive download start (YYYY-MM-DD)
     end_date: "2024-07-01"                    # inclusive download end (YYYY-MM-DD)
     cds_url: "${CDS_API_URL:-}"               # reads from env; falls back to ~/.cdsapirc if empty
@@ -58,6 +70,26 @@ data:
       - "2mTemperature"
       - "totalPrecipitation"
       - "2mDewpointTemperature"
+    # Optional: override daily / rolling aggregation per variable; defaults match these.
+    daily_agg:
+      - name: "2mTemperature"
+        op: "mean"
+      - name: "2mDewpointTemperature"
+        op: "mean"
+      - name: "totalPrecipitation"
+        op: "sum"
+
+    rolling_agg:
+      - name: "2mTemperature"
+        op: "mean"
+      - name: "2mDewpointTemperature"
+        op: "mean"
+      - name: "totalPrecipitation"
+        op: "sum"
+    # Number of days to aggregate over for rolling windows; default 7.
+    rolling_n_days: 7
+    # Sample rate for daily data; default 7.
+    sampling_rate: 7
 
 # ---------------------------------------------------------------------------
 # Cutoff, threshold, and model configuration
@@ -100,9 +132,29 @@ assess:
 maps:
   geojson_base: "geojsons/geojsons_GBA"
   output_dir: "plots"
+  figure_title: "Dengue risk map"
 
 report:
   output_dir: "reports"
+  compile_pdf: false
+  # Optional overrides (defaults come from pipeline.title + sensible fallbacks):
+  # document_title: "Custom — summary report"
+  # caption_corp_scope: "municipal corporations"
+  # caption_zone_scope: "planning zones"
+  # bundle_prefix: "Report"
+
+# Runner notification (acestor.core.runner) — optional SMTP when enabled.
+# email:
+#   enabled: false
+#   on: [success, failed]   # runner status strings
+#   from: "pipeline-bot@example.com"
+#   to: ["team@example.com"]
+#   smtp:
+#     host: "smtp.example.com"
+#     port: 587
+#     use_tls: true
+#     username: "${SMTP_USER:-}"
+#     password: "${SMTP_PASSWORD:-}"
 
 # ---------------------------------------------------------------------------
 # Logging

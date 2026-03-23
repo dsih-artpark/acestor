@@ -22,11 +22,17 @@ build/
 *.egg-info/
 
 *.md
+!README.md
 
 
 runs/
 data/
 artifacts/
+deng
+
+# Internal / local-only (not published)
+parity/
+execution_steps.txt
 
 *.log
 

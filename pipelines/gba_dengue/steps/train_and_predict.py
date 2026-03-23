@@ -53,21 +53,17 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
             df["recordYear"] = df["recordDate"].dt.year
             df["recordMonth"] = df["recordDate"].dt.month
             df["ISOWeek"] = df["recordDate"].dt.isocalendar().week.astype(int)
+            # Normalise spatial column to cfg.spatial_res
             for cand, target in [
-                ("location.admin4.ID", "zone"),
+                ("location.admin3.ID", "zone"),
                 ("location.admin2.ID", "corp"),
-                ("location.admin3.ID", "subdistrict"),
+                ("location.admin4.ID", "ward"),
                 ("region_id", cfg.spatial_res),
             ]:
                 if cand in df.columns and cand != cfg.spatial_res:
-                    df.rename(
-                        columns={
-                            cand: (
-                                target if target != cfg.spatial_res else cfg.spatial_res
-                            )
-                        },
-                        inplace=True,
-                    )
+                    new_name = target if target != cfg.spatial_res else cfg.spatial_res
+                    df.rename(columns={cand: new_name}, inplace=True)
+                    break
 
         merged = case_df.merge(
             weather_df,

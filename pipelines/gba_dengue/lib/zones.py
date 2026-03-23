@@ -73,7 +73,10 @@ def mu_sigma(
     df0 = ret_na_filled_df(case_data, spatial_col=spatial_col, to_date=to_date)
     agg = df0.sort_values([spatial_col, "recordDate"]).reset_index(drop=True)
 
-    agg_for_thresh = agg.rename(columns={spatial_col: "region_id"})
+    # Threshold helpers expect columns named ``region_id`` and ``date``.
+    agg_for_thresh = agg.rename(
+        columns={spatial_col: "region_id", "recordDate": "date"}
+    )
     hist = historical_threshold_params(agg_for_thresh)
     prev = prev_nweeks_threshold_params(agg_for_thresh)
     return pd.concat([hist, prev], ignore_index=True)
@@ -153,11 +156,8 @@ def merge_predictions_thresholds(
     thresholds = compute_thresholds(
         case_data, spatial_col=spatial_col, list_alpha=list_alpha, to_date=to_date
     )
-    thresholds = (
-        thresholds[thresholds["recordDate"] == pd.Timestamp(to_date)]
-        if to_date
-        else thresholds
-    )
+    if to_date:
+        thresholds = thresholds[thresholds["date"] == pd.Timestamp(to_date)]
 
     t_cols = [c for c in thresholds.columns if c.startswith("T") and "." in c]
     thresh_keep = [
@@ -182,4 +182,7 @@ def merge_predictions_thresholds(
     merged["startDatePredictedWeek"] = merged["recordDate"]
     merged["dateOfComputingPrediction"] = datetime.now().strftime("%Y-%m-%d")
     merged["regionID"] = merged[spatial_col]
+    # SOT prediction CSVs use camelCase; assess_thresholds / maps expect thresholdMethod.
+    if "threshold_method" in merged.columns:
+        merged = merged.rename(columns={"threshold_method": "thresholdMethod"})
     return merged.sort_values([spatial_col, "recordDate"]).reset_index(drop=True)

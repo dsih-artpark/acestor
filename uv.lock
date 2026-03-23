@@ -35,13 +35,7 @@ cds = [
     { name = "xarray", version = "2025.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "xarray", version = "2026.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
-dev = [
-    { name = "black" },
-    { name = "pre-commit" },
-    { name = "pytest" },
-    { name = "ruff" },
-]
-gba-dengue = [
+dengue = [
     { name = "geopandas" },
     { name = "matplotlib" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -51,6 +45,12 @@ gba-dengue = [
     { name = "scikit-learn", version = "1.7.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scikit-learn", version = "1.8.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "statsmodels" },
+]
+dev = [
+    { name = "black" },
+    { name = "pre-commit" },
+    { name = "pytest" },
+    { name = "ruff" },
 ]
 s3 = [
     { name = "boto3" },
@@ -62,21 +62,21 @@ requires-dist = [
     { name = "boto3", marker = "extra == 's3'" },
     { name = "cdsapi", marker = "extra == 'cds'" },
     { name = "fastapi", marker = "extra == 'api'" },
-    { name = "geopandas", marker = "extra == 'gba-dengue'" },
-    { name = "matplotlib", marker = "extra == 'gba-dengue'" },
+    { name = "geopandas", marker = "extra == 'dengue'" },
+    { name = "matplotlib", marker = "extra == 'dengue'" },
     { name = "netcdf4", marker = "extra == 'cds'" },
-    { name = "numpy", marker = "extra == 'gba-dengue'" },
+    { name = "numpy", marker = "extra == 'dengue'" },
     { name = "pandas", specifier = ">=2.3.3" },
-    { name = "pandas", marker = "extra == 'gba-dengue'" },
+    { name = "pandas", marker = "extra == 'dengue'" },
     { name = "pre-commit", marker = "extra == 'dev'" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pyyaml" },
     { name = "ruff", marker = "extra == 'dev'" },
-    { name = "scikit-learn", marker = "extra == 'gba-dengue'" },
-    { name = "statsmodels", marker = "extra == 'gba-dengue'" },
+    { name = "scikit-learn", marker = "extra == 'dengue'" },
+    { name = "statsmodels", marker = "extra == 'dengue'" },
     { name = "xarray", marker = "extra == 'cds'" },
 ]
-provides-extras = ["s3", "api", "gba-dengue", "cds", "dev"]
+provides-extras = ["s3", "api", "dengue", "cds", "dev"]
 
 [[package]]
 name = "annotated-doc"

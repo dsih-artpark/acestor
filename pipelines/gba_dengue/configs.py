@@ -1,4 +1,4 @@
-"""Typed configuration dataclasses for each step in the GBA dengue pipeline.
+"""Typed configuration dataclasses for each step in the dengue pipeline.
 
 Each dataclass has a ``from_raw`` classmethod that validates and provides
 defaults, so the step's ``run()`` never touches raw dicts.
@@ -61,7 +61,7 @@ class CaseParseConfig:
     """
 
     region_types: list[str]
-    geojson_folder: str  # base geojson folder (e.g. "geojsons/geojsons_GBA")
+    geojson_folder: str  # base geojson folder (set explicitly in YAML)
     date_start: str
     date_end: (
         str  # inclusive; empty string → step uses "today" (see parse_nonstd_case_data)
@@ -109,6 +109,32 @@ class CaseParseConfig:
         )
 
 
+@dataclass(frozen=True)
+class CaseSufficiencyConfig:
+    """Early gate after case parse (similar spirit to ``main.py`` can_run_predictions)."""
+
+    enabled: bool
+    min_total_rows: int
+    min_distinct_regions: int
+    min_date_span_days: int
+    case_column: str
+    # Empty strings → derive from ``ParseCaseDataResult.region_type`` (admin ID columns).
+    region_column: str
+    date_column: str
+
+    @classmethod
+    def from_raw(cls, raw: Mapping[str, Any]) -> CaseSufficiencyConfig:
+        return cls(
+            enabled=bool(raw.get("enabled", True)),
+            min_total_rows=int(raw.get("min_total_rows", 30)),
+            min_distinct_regions=int(raw.get("min_distinct_regions", 2)),
+            min_date_span_days=int(raw.get("min_date_span_days", 14)),
+            case_column=str(raw.get("case_column", "case")),
+            region_column=str(raw.get("region_column", "")),
+            date_column=str(raw.get("date_column", "")),
+        )
+
+
 # ---------------------------------------------------------------------------
 # Weather download
 # ---------------------------------------------------------------------------
@@ -127,7 +153,7 @@ class WeatherDownloadConfig:
     cds_dataset: str
     cds_variables: list[str]
     region_bounds: list[float] | None  # [N, W, S, E] or None for auto from geojson
-    geojson_folder: str  # base geojson folder (e.g. "geojsons/geojsons_GBA")
+    geojson_folder: str  # base geojson folder (set explicitly in YAML)
     region_type: str  # "zone", "corp", "ward" — subfolder under geojson_folder
     cache_path: str  # where raw NetCDFs are cached
     parsed_output_path: str  # where parsed per-region CSVs are written
@@ -191,25 +217,66 @@ class WeatherDownloadConfig:
 
 @dataclass(frozen=True)
 class WeatherParseConfig:
+    """Weather parsing and aggregation settings.
+
+    All fields are driven from ``data.weather_parse`` in the pipeline YAML.  The
+    defaults match the current hard-coded behaviour so existing configs keep
+    working.
+    """
+
     region_type: str
     geojson_path: str
     weather_variables: list[str]
+    # Optional config-driven aggregation knobs
+    daily_agg: list[dict[str, str]]
+    rolling_agg: list[dict[str, str]]
+    rolling_n_days: int
+    sampling_rate: int
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any]) -> WeatherParseConfig:
+        def _as_str(v: Any) -> str:
+            if v is None:
+                return ""
+            return str(v).strip()
+
+        region_type = _as_str(raw.get("region_type", "zone"))
+        geojson_path = _as_str(raw.get("geojson_path", ""))
+        weather_variables = list(
+            raw.get(
+                "weather_variables",
+                [
+                    "2mTemperature",
+                    "totalPrecipitation",
+                    "2mDewpointTemperature",
+                ],
+            )
+        )
+
+        # Defaults mirror existing lib.weather behaviour:
+        # - 2mTemperature / 2mDewpointTemperature: mean
+        # - totalPrecipitation: sum
+        default_daily = [
+            {"name": "2mTemperature", "op": "mean"},
+            {"name": "2mDewpointTemperature", "op": "mean"},
+            {"name": "totalPrecipitation", "op": "sum"},
+        ]
+        default_rolling = default_daily
+
+        daily_agg = list(raw.get("daily_agg", default_daily))
+        rolling_agg = list(raw.get("rolling_agg", default_rolling))
+
+        rolling_n_days = int(raw.get("rolling_n_days", 7))
+        sampling_rate = int(raw.get("sampling_rate", 7))
+
         return cls(
-            region_type=raw.get("region_type", "zone"),
-            geojson_path=raw.get("geojson_path", ""),
-            weather_variables=list(
-                raw.get(
-                    "weather_variables",
-                    [
-                        "2mTemperature",
-                        "totalPrecipitation",
-                        "2mDewpointTemperature",
-                    ],
-                )
-            ),
+            region_type=region_type,
+            geojson_path=geojson_path,
+            weather_variables=weather_variables,
+            daily_agg=daily_agg,
+            rolling_agg=rolling_agg,
+            rolling_n_days=rolling_n_days,
+            sampling_rate=sampling_rate,
         )
 
 
@@ -326,12 +393,17 @@ class AssessConfig:
 class MapsConfig:
     geojson_base: str
     output_dir: str
+    figure_title: str  # map suptitle (first line); second line is the prediction date
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any]) -> MapsConfig:
         return cls(
-            geojson_base=raw.get("geojson_base", "geojsons/geojsons_GBA"),
+            geojson_base=raw.get("geojson_base", "geojsons"),
             output_dir=raw.get("output_dir", "plots"),
+            figure_title=str(
+                raw.get("figure_title") or "Dengue risk map",
+            ).strip()
+            or "Dengue risk map",
         )
 
 
@@ -342,10 +414,47 @@ class MapsConfig:
 
 @dataclass(frozen=True)
 class ReportConfig:
+    """Report step: JSON + summary ``.tex`` + LaTeX bundle zip always; PDF only if ``compile_pdf``."""
+
     output_dir: str
+    compile_pdf: bool
+    document_title: str
+    caption_corp_scope: str
+    caption_zone_scope: str
+    bundle_prefix: str
 
     @classmethod
-    def from_raw(cls, raw: Mapping[str, Any]) -> ReportConfig:
+    def from_raw(
+        cls,
+        raw: Mapping[str, Any],
+        *,
+        pipeline: Mapping[str, Any] | None = None,
+    ) -> ReportConfig:
+        pipe = pipeline or {}
+
+        doc = str(raw.get("document_title") or "").strip()
+        if not doc:
+            hint = str(pipe.get("title") or pipe.get("display_name") or "").strip()
+            doc = (
+                f"{hint} — summary report"
+                if hint
+                else "Dengue intelligence — summary report"
+            )
+
+        corp = str(raw.get("caption_corp_scope") or "").strip()
+        if not corp:
+            corp = "municipal corporations"
+        zone = str(raw.get("caption_zone_scope") or "").strip()
+        if not zone:
+            zone = "planning zones"
+
+        prefix = str(raw.get("bundle_prefix") or "").strip() or "Report"
+
         return cls(
-            output_dir=raw.get("output_dir", "reports"),
+            output_dir=str(raw.get("output_dir", "reports")),
+            compile_pdf=bool(raw.get("compile_pdf", False)),
+            document_title=doc,
+            caption_corp_scope=corp,
+            caption_zone_scope=zone,
+            bundle_prefix=prefix,
         )

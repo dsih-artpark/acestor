@@ -1,8 +1,10 @@
 [project]
 name = "acestor"
 version = "0.1.0"
-description = "Lightweight SDK for defining and running DAG-based ML pipelines."
-readme = "ACESTOR_PRD_v1.md"
+description = "Production dengue intelligence pipeline."
+readme = "README.md"
+license = {text = "GPL-3.0"}
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = [
     "pandas>=2.3.3",
@@ -16,7 +18,8 @@ s3 = [
 api = [
     "fastapi",
 ]
-gba-dengue = [
+# Production dengue pipeline (geospatial + modeling)
+dengue = [
     "pandas",
     "numpy",
     "statsmodels",

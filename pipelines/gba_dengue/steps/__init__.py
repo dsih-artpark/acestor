@@ -1,1 +1,1 @@
-"""Step implementations for the GBA dengue pipeline."""
+"""Step implementations for the dengue pipeline."""

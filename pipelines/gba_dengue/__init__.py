@@ -1,1 +1,1 @@
-"""GBA dengue pipeline implemented using the `acestor` SDK."""
+"""Dengue pipeline package (orchestrated by acestor)."""

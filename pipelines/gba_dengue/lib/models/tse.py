@@ -64,9 +64,14 @@ def linear_extrapolation(
         last_date = region_data["recordDate"].iloc[-1]
         second_last_date = region_data["recordDate"].iloc[-2]
 
-        if to_date - last_date.to_pydatetime().date() <= timedelta(
-            days=15
-        ) and to_date - second_last_date.to_pydatetime().date() <= timedelta(days=15):
+        # SOT compares calendar dates; normalize so we never mix pd.Timestamp with datetime.date.
+        to_date_day = pd.Timestamp(to_date).normalize().date()
+        last_day = pd.Timestamp(last_date).normalize().date()
+        second_last_day = pd.Timestamp(second_last_date).normalize().date()
+
+        if (to_date_day - last_day) <= timedelta(days=15) and (
+            to_date_day - second_last_day
+        ) <= timedelta(days=15):
             date_diff = (last_date - second_last_date).days
             avg_diff = (
                 region_data["4wMovingAvg"].iloc[-1]

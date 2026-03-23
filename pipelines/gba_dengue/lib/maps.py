@@ -1,7 +1,4 @@
-"""Map generation functions.
-
-Translated from GBA ``GenerateMap.py``.
-"""
+"""Map generation functions (choropleth risk maps)."""
 
 from __future__ import annotations
 
@@ -9,6 +6,11 @@ import os
 from pathlib import Path
 
 import geopandas as gpd
+import matplotlib
+
+# Pipeline runner executes steps in worker threads; macOS GUI backend raises.
+matplotlib.use("Agg")
+
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -35,6 +37,7 @@ def gen_plot(
     thisdate: str,
     geojson_base: str,
     output_dir: str = "plots",
+    figure_title: str = "Dengue risk map",
 ) -> str:
     """Generate a choropleth risk-map PNG and return its path."""
     geojson_folder = os.path.join(
@@ -100,7 +103,7 @@ def gen_plot(
         loc="lower left",
         bbox_to_anchor=(0.655, 0.7),
     )
-    plt.suptitle(f"GBA Dengue Risk Map\n({thisdate})", x=0.52, y=0.95)
+    plt.suptitle(f"{figure_title}\n({thisdate})", x=0.52, y=0.95)
 
     end_str = pd.Timestamp.today().date().strftime("%Y%m%d")
     fname = f"{REGION_LABEL.get(region, region)}s_{thisdate}_{MODEL_LABEL.get(model, model)}_{THRESHOLD_LABEL.get(threshold, threshold)}_{end_str}.png"

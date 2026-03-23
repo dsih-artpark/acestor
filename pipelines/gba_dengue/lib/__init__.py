@@ -1,1 +1,1 @@
-"""Pure domain logic for the GBA dengue pipeline — zero framework imports."""
+"""Pure domain logic for the dengue pipeline — zero framework imports."""

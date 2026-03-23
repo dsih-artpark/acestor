@@ -11,14 +11,14 @@ from pipelines.gba_dengue.configs import CutoffConfig, _section
 from pipelines.gba_dengue.lib import cutoffs
 from pipelines.gba_dengue.results import (
     CutoffDatesResult,
-    ParseCaseDataResult,
+    DataSufficiencyResult,
     ParseWeatherDataResult,
 )
 
 
 @dataclass(frozen=True)
 class IdentifyCutoffDatesInputs:
-    parse_nonstd_case_data: ParseCaseDataResult
+    validate_case_data_sufficiency: DataSufficiencyResult
     parse_weather_data: ParseWeatherDataResult
 
 
@@ -31,7 +31,7 @@ class IdentifyCutoffDatesStep(BaseStep[IdentifyCutoffDatesInputs, CutoffDatesRes
         cfg = CutoffConfig.from_raw(_section(context.config, "cutoff"))
 
         case_csv = context.artifacts.read_text(
-            inputs.parse_nonstd_case_data.sampled_csv_path
+            inputs.validate_case_data_sufficiency.case_result.sampled_csv_path
         )
         weather_csv = context.artifacts.read_text(
             inputs.parse_weather_data.weather_csv_path

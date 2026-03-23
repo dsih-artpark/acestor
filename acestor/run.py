@@ -1,12 +1,12 @@
-"""CLI entrypoint for running acestor pipelines.
+"""CLI entrypoint for running acestor.
 
 Usage (from project root):
 
-    python -m acestor.run --pipeline my_pkg.my_module:build_pipeline --config path/to/config.yaml
+    python -m acestor.run --pipeline module.path:build_function --config path/to/config.yaml
 
-The referenced ``build_pipeline`` callable should accept a ``PipelineConfig``
-instance and return a ``PipelineDAG``. The CLI will create a ``PipelineContext``
-and ``PipelineRunner`` and execute the DAG.
+The referenced callable must accept a ``PipelineConfig`` and return a
+``PipelineDAG``. The CLI builds a ``PipelineContext`` and ``PipelineRunner``
+and executes the graph.
 """
 
 from __future__ import annotations
@@ -14,9 +14,11 @@ from __future__ import annotations
 import argparse
 import importlib
 import uuid
+from datetime import datetime, timezone
 from typing import Callable
 
 from acestor import PipelineConfig, PipelineContext, PipelineDAG, PipelineRunner
+from acestor.infra.run_notification import send_run_notification_email_if_configured
 
 
 def _load_builder(spec: str) -> Callable[[PipelineConfig], PipelineDAG]:
@@ -34,7 +36,7 @@ def _load_builder(spec: str) -> Callable[[PipelineConfig], PipelineDAG]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Run an acestor pipeline.")
+    parser = argparse.ArgumentParser(description="Run acestor.")
     parser.add_argument(
         "--pipeline",
         required=True,
@@ -65,6 +67,25 @@ def main(argv: list[str] | None = None) -> int:
 
     result = runner.run()
     print(f"Run {result.run_id} finished with status={result.status}")
+
+    # Failure notifications: the DAG may not reach ``notify_run``, so handle here.
+    if result.status == "failed":
+        cfg = context.config if isinstance(context.config, dict) else {}
+        email_cfg = cfg.get("email") if isinstance(cfg.get("email"), dict) else {}
+        if email_cfg.get("enabled") and "failed" in (email_cfg.get("on") or []):
+            end_ts = datetime.now(timezone.utc).isoformat()
+            start_ts = context.run_started_at or end_ts
+            send_run_notification_email_if_configured(
+                config=cfg,
+                run_id=context.run_id,
+                status="failed",
+                start_ts=start_ts,
+                end_ts=end_ts,
+                step_names=sorted(context.completed_steps),
+                failure_detail=result.failure_detail,
+                logger=context.log,
+            )
+
     return 0 if result.status == "success" else 1
 
 
