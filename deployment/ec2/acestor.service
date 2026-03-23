@@ -1,0 +1,13 @@
+[Unit]
+Description=acestor dengue pipeline (Docker one-shot)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/acestor
+ExecStart=/usr/bin/bash /opt/acestor/deployment/ec2/deploy.sh
+RemainAfterExit=true
+
+[Install]
+WantedBy=multi-user.target
