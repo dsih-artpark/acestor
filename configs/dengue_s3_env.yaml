@@ -21,7 +21,6 @@ data:
   case_parse:
     region_types:
       - "zone"
-    geojson_folder: "${GEOJSON_BASE:-geojsons/geojsons_GBA}"
     date_start: "${CASE_DATE_START:-2015-01-01}"
     date_end: "${CASE_DATE_END:-}"
 
@@ -42,24 +41,15 @@ data:
     source_paths: []
     dest_relpath: "datasets/raw_weather_data"
 
-    # Optional CDS mode (if source_mode=cds):
-    cds_dataset: "reanalysis-era5-land"
-    cds_variables: ["2m_temperature", "2m_dewpoint_temperature", "total_precipitation"]
-    geojson_folder: "${GEOJSON_BASE:-geojsons/geojsons_GBA}"
     region_type: "zone"
-    cache_path: "datasets/netcdf"
-    parsed_output_path: "datasets/parsednetcdf"
     w_params: ["t2m", "d2m", "tp"]
     threshold_km: 25.0
     bounds_resolution_deg: 0.1
     start_date: "${WEATHER_DATE_START:-2015-01-01}"
     end_date: "${WEATHER_DATE_END:-}"
-    cds_url: "${CDS_API_URL:-}"
-    cds_key: "${CDS_API_KEY:-}"
 
   weather_parse:
     region_type: "zone"
-    geojson_path: "${GEOJSON_BASE:-geojsons/geojsons_GBA}"
     weather_variables: ["2mTemperature", "totalPrecipitation", "2mDewpointTemperature"]
     daily_agg:
       - { name: "2mTemperature", op: "mean" }
@@ -105,7 +95,6 @@ assess:
   total_zone_regions: 10
 
 maps:
-  geojson_base: "${GEOJSON_BASE:-geojsons/geojsons_GBA}"
   output_dir: "plots"
   figure_title: "Dengue risk map"
 
@@ -169,3 +158,4 @@ storages:
       base_prefix: "${RUNS_PREFIX:-acestor/runs-meta}"
       aws_profile: "${AWS_PROFILE:-}"
       region: "${AWS_REGION:-}"
+

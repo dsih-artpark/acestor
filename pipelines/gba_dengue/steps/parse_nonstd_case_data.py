@@ -9,6 +9,7 @@ import pandas as pd
 from acestor import BaseStep, PipelineContext
 from pipelines.gba_dengue.configs import CaseParseConfig, _section
 from pipelines.gba_dengue.lib import case_data
+from pipelines.gba_dengue.sources import filesystem as geojson_sources
 from pipelines.gba_dengue.results import (
     CaseDownloadResult,
     ParseCaseDataResult,
@@ -98,7 +99,9 @@ class ParseNonStandardCaseDataStep(
 
             by_region: dict[str, str] = {}
             for region_type in cfg.region_types:
-                gdf = case_data.load_region_gdf(cfg.geojson_folder, region_type)
+                gdf = case_data.load_region_gdf(
+                    geojson_sources.get_geojson_base_dir(), region_type
+                )
                 per_file = case_data.aggregate_all_data_daily(
                     raw_dfs,
                     gdf,

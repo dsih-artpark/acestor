@@ -15,11 +15,12 @@ from acestor.core import (
     RunResult,
     StepImpl,
 )
-from acestor.io import FileStorage, S3Storage, Storage
+from acestor.io import FileSource, FileStorage, S3Source, S3Storage, Storage
 
 __all__ = [
     "BaseStep",
     "FileStorage",
+    "FileSource",
     "NoInputs",
     "PipelineConfig",
     "PipelineContext",
@@ -28,6 +29,7 @@ __all__ = [
     "PipelineStep",
     "RunResult",
     "S3Storage",
+    "S3Source",
     "StepImpl",
     "Storage",
 ]

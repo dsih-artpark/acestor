@@ -19,7 +19,6 @@ data:
     region_types:
       - "corp"
       - "zone"   # last entry → sampled_csv_path for downstream (same as SOT loop order)
-    geojson_folder: "geojsons/geojsons_GBA"
     date_start: "2015-01-01"
     date_end: ""
 
@@ -39,26 +38,15 @@ data:
     source_prefix: ""
     source_paths: []
     dest_relpath: "datasets/raw_weather_data"
-    cds_dataset: "reanalysis-era5-land"
-    cds_variables:
-      - "2m_temperature"
-      - "2m_dewpoint_temperature"
-      - "total_precipitation"
-    geojson_folder: "geojsons/geojsons_GBA"
     region_type: "zone"
-    cache_path: "datasets/netcdf"
-    parsed_output_path: "datasets/parsednetcdf"
     w_params: ["t2m", "d2m", "tp"]
     threshold_km: 25.0
     bounds_resolution_deg: 0.1
     start_date: "2015-01-01"
     end_date: "2024-07-01"
-    cds_url: "${CDS_API_URL:-}"
-    cds_key: "${CDS_API_KEY:-}"
 
   weather_parse:
     region_type: "zone"
-    geojson_path: "geojsons/geojsons_GBA"
     weather_variables:
       - "2mTemperature"
       - "totalPrecipitation"
@@ -116,7 +104,6 @@ assess:
   total_zone_regions: 10
 
 maps:
-  geojson_base: "geojsons/geojsons_GBA"
   output_dir: "plots"
   figure_title: "Dengue risk map"
 

@@ -9,6 +9,7 @@ import pandas as pd
 from acestor import BaseStep, PipelineContext
 from pipelines.gba_dengue.configs import MapsConfig, _section
 from pipelines.gba_dengue.lib import maps
+from pipelines.gba_dengue.sources import filesystem as geojson_sources
 from pipelines.gba_dengue.results import (
     CombinedPredictionsResult,
     MapsResult,
@@ -28,6 +29,7 @@ class GenerateMapsStep(BaseStep[GenerateMapsInputs, MapsResult]):
     def run(self, context: PipelineContext, inputs: GenerateMapsInputs) -> MapsResult:
         cfg = MapsConfig.from_raw(_section(context.config, "maps"))
         plots_dir = str(context.artifact_fs_path(cfg.output_dir))
+        geojson_base = geojson_sources.get_geojson_base_dir()
 
         pred_csv = context.artifacts.read_text(
             inputs.combine_predictions.combined_csv_path
@@ -53,7 +55,7 @@ class GenerateMapsStep(BaseStep[GenerateMapsInputs, MapsResult]):
                             model=model,
                             threshold=threshold,
                             thisdate=str(thisdate),
-                            geojson_base=cfg.geojson_base,
+                            geojson_base=geojson_base,
                             output_dir=plots_dir,
                             figure_title=cfg.figure_title,
                         )

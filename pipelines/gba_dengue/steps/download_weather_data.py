@@ -1,17 +1,37 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
+from typing import Any
 from typing import ClassVar
 
 import pandas as pd
 
 from acestor import BaseStep, NoInputs, PipelineContext
 from pipelines.gba_dengue.configs import WeatherDownloadConfig, _section
+from pipelines.gba_dengue.sources import filesystem as fs_sources
+from pipelines.gba_dengue.sources import s3 as s3_sources
+from pipelines.gba_dengue.sources import filesystem as geojson_sources
+from pipelines.gba_dengue.sources import cds as cds_sources
 from pipelines.gba_dengue.results import WeatherDownloadResult
 
 
 class DownloadWeatherDataStep(BaseStep[NoInputs, WeatherDownloadResult]):
     input_type: ClassVar[type] = NoInputs
+
+    def __init__(self, source: Any | None = None) -> None:
+        if source is not None:
+            self.source = source
+            return
+        backend = os.getenv("GBA_WEATHER_SOURCE_BACKEND", "filesystem").strip().lower()
+        if backend == "s3":
+            try:
+                self.source = s3_sources.get_weather_source()
+                return
+            except Exception:
+                self.source = None
+                return
+        self.source = fs_sources.get_weather_source()
 
     def run(self, context: PipelineContext, inputs: NoInputs) -> WeatherDownloadResult:
         cfg = WeatherDownloadConfig.from_raw(
@@ -31,7 +51,9 @@ class DownloadWeatherDataStep(BaseStep[NoInputs, WeatherDownloadResult]):
         self, context: PipelineContext, cfg: WeatherDownloadConfig
     ) -> WeatherDownloadResult:
         """Filesystem mode: copy pre-existing CSVs from a configured storage."""
-        source = context.require_storage(cfg.source_storage)
+        source = self.source
+        if source is None:
+            source = context.require_storage(cfg.source_storage)
         paths = cfg.source_paths
         if not paths:
             paths = source.list_objects(cfg.source_prefix)
@@ -61,7 +83,10 @@ class DownloadWeatherDataStep(BaseStep[NoInputs, WeatherDownloadResult]):
             parse_cached_netcdfs,
         )
 
-        cache = Path(cfg.cache_path)
+        cds = cds_sources.get_cds_source()
+        geojson_base = geojson_sources.get_geojson_base_dir()
+
+        cache = Path(cds.cache_path)
         cache.mkdir(parents=True, exist_ok=True)
 
         # --- Resolve region bounds ---
@@ -70,7 +95,7 @@ class DownloadWeatherDataStep(BaseStep[NoInputs, WeatherDownloadResult]):
         else:
             context.log.info("region_bounds not set — computing from geojson files")
             region_bounds = compute_region_bounds_from_geojsons(
-                Path(cfg.geojson_folder) / f"{cfg.region_type}s",
+                Path(geojson_base) / f"{cfg.region_type}s",
                 resolution_deg=cfg.bounds_resolution_deg,
             )
         context.log.info("Region bounds (N, W, S, E): %s", region_bounds)
@@ -102,23 +127,23 @@ class DownloadWeatherDataStep(BaseStep[NoInputs, WeatherDownloadResult]):
         # --- Download from CDS API ---
         if missing:
             download_months(
-                dataset=cfg.cds_dataset,
+                dataset=cds.dataset,
                 region_bounds=region_bounds,
-                variables=cfg.cds_variables,
+                variables=cds.variables,
                 months=missing,
                 cache_path=cache,
-                cds_url=cfg.cds_url,
-                cds_key=cfg.cds_key,
+                cds_url=cds.cds_url,
+                cds_key=cds.cds_key,
             )
 
         # --- Parse all cached NetCDFs into per-region per-month CSVs ---
-        parsed_out = Path(cfg.parsed_output_path) / cfg.region_type
+        parsed_out = Path(cds.parsed_output_path) / cfg.region_type
         parsed_out.mkdir(parents=True, exist_ok=True)
 
         csv_paths = parse_cached_netcdfs(
             cache_path=cache,
             output_path=parsed_out,
-            geojson_folder=cfg.geojson_folder,
+            geojson_folder=geojson_base,
             region_type=cfg.region_type,
             w_params=cfg.w_params,
             threshold_km=cfg.threshold_km,

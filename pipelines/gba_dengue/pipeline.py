@@ -98,6 +98,7 @@ def build_pipeline(config: PipelineConfig) -> PipelineDAG:
     # cutoffs -> thresholds -> train -> combine -> assess
     identify_cutoff_dates >> generate_thresholds
     generate_thresholds >> train_and_predict
+    identify_cutoff_dates >> train_and_predict
     [train_and_predict, identify_cutoff_dates] >> combine_predictions
     combine_predictions >> assess_thresholds
 
