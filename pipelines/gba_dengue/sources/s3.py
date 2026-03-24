@@ -39,8 +39,10 @@ def _make_source(
 
 def get_case_source() -> S3Source:
     return _make_source(
-        bucket=_required_env("RAW_CASE_BUCKET"),
-        base_prefix=os.getenv("RAW_CASE_PREFIX", "").strip(),
+        bucket=os.getenv("RAW_CASE_BUCKET", "standardized-bucket").strip(),
+        base_prefix=os.getenv(
+            "RAW_CASE_PREFIX", "EP0005DS0068-Bengaluru_IHIP_Dengue_LL/"
+        ).strip(),
         cache_dir=os.getenv("GBA_S3_CASE_CACHE_DIR", "./cache/raw_case"),
         strategy=os.getenv("GBA_S3_CASE_STRATEGY", "local_first"),
     )

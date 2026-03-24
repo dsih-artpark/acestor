@@ -16,7 +16,7 @@ fs_geojsons = FileSystemSource(
 fs_raw_case_data = FileSystemSource(
     base_path=os.getenv(
         "GBA_FS_RAW_CASE_BASE",
-        "./dengue-model-pipeline-automation - GBA/src/dengue-model-pipeline/datasets",
+        "./datasets/raw_linelist_data/Bengaluru_IHIP_linelist",
     ),
     cache_enabled=bool(int(os.getenv("GBA_FS_RAW_CASE_CACHE_ENABLED", "1"))),
     cache_dir=os.getenv("GBA_FS_RAW_CASE_CACHE_DIR", "./cache/raw_case"),
@@ -26,7 +26,7 @@ fs_raw_case_data = FileSystemSource(
 fs_raw_weather_data = FileSystemSource(
     base_path=os.getenv(
         "GBA_FS_RAW_WEATHER_BASE",
-        "./dengue-model-pipeline-automation - GBA/src/dengue-model-pipeline/datasets/parsednetcdf/zone",
+        "./datasets/netcdf",
     ),
     cache_enabled=bool(int(os.getenv("GBA_FS_RAW_WEATHER_CACHE_ENABLED", "1"))),
     cache_dir=os.getenv("GBA_FS_RAW_WEATHER_CACHE_DIR", "./cache/raw_weather"),

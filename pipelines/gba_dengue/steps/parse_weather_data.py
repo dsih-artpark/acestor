@@ -26,6 +26,15 @@ class ParseWeatherDataInputs:
 class ParseWeatherDataStep(BaseStep[ParseWeatherDataInputs, ParseWeatherDataResult]):
     input_type: ClassVar[type] = ParseWeatherDataInputs
 
+    def _read_bytes(self, context: PipelineContext, ref: str) -> bytes:
+        if ref.startswith("filesystem://"):
+            with open(ref[len("filesystem://") :], "rb") as fh:
+                return fh.read()
+        if ref.startswith("fs://"):
+            with open(ref[len("fs://") :], "rb") as fh:
+                return fh.read()
+        return context.artifacts.read(ref)
+
     def run(
         self, context: PipelineContext, inputs: ParseWeatherDataInputs
     ) -> ParseWeatherDataResult:
@@ -34,7 +43,7 @@ class ParseWeatherDataStep(BaseStep[ParseWeatherDataInputs, ParseWeatherDataResu
         )
 
         raw_dfs = [
-            pd.read_csv(io.BytesIO(context.artifacts.read(f)), low_memory=False)
+            pd.read_csv(io.BytesIO(self._read_bytes(context, f)), low_memory=False)
             for f in inputs.download_weather_data.downloaded_files
         ]
         if not raw_dfs:

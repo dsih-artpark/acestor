@@ -1,5 +1,3 @@
-# Smoke config: raw lat/lon CSV + multiple region_types (spatial join + geojson each).
-# Requires: nonstd_case_smoke.csv under raw_case storage base_path.
 pipeline:
   name: dengue
   title: "Dengue intelligence"
@@ -10,40 +8,46 @@ run:
 data:
   case_download:
     enabled: true
-    source_storage: "raw_case"
-    source_paths:
-      - "nonstd_case_smoke.csv"
+    source_backend: "s3"
+    source_path: "s3://dsih-artpark-03-standardised-data/EP0005DS0006-Bengaluru_City_Dengue_Line_List/"
+    cache_enabled: true
+    cache_dir: "./cache/raw_case"
+    cache_strategy: "local_first"
+    source_prefix: "ihip/"
+    source_paths: []
     dest_relpath: "datasets/raw_case_data"
 
   case_parse:
     region_types:
-      - "corp"
-      - "zone"   # last entry → sampled_csv_path for downstream (same as SOT loop order)
+      - "zone"
     date_start: "2015-01-01"
     date_end: ""
 
   case_sufficiency:
     enabled: true
-    min_total_rows: 1
-    min_distinct_regions: 1
-    min_date_span_days: 1
+    min_total_rows: 30
+    min_distinct_regions: 2
+    min_date_span_days: 14
     case_column: "case"
     region_column: ""
     date_column: ""
 
   weather_download:
     enabled: true
-    source_mode: "filesystem"
-    source_storage: "raw_weather"
-    source_prefix: ""
-    source_paths: []
-    dest_relpath: "datasets/raw_weather_data"
-    region_type: "zone"
-    w_params: ["t2m", "d2m", "tp"]
-    threshold_km: 25.0
-    bounds_resolution_deg: 0.1
-    start_date: "2015-01-01"
-    end_date: "2024-07-01"
+    source_mode: "filesystem"           # "filesystem" (local zip cache) or "cds" (download from Copernicus)
+    netcdf_cache_path: "./datasets/netcdf"        # local zip cache dir; if set, filesystem mode parses zips here
+    parsed_output_path: "./datasets/parsednetcdf" # parsed CSVs cached here; re-parse skipped if CSV already exists
+    # region_bounds: [13.3, 77.3, 12.7, 77.9]  # [N, W, S, E] or omit for auto from geojson
+    region_type: "zone"                       # zone, corp, ward
+    w_params: ["t2m", "d2m", "tp"]            # NetCDF short variable names for parsing
+    threshold_km: 25.0                        # grid-point distance filter from region boundary
+    bounds_resolution_deg: 0.1                # auto bounds: snap to this degree grid + padding (~0.25 for ERA5 single-levels)
+    start_date: "2015-01-01"                  # inclusive download start (YYYY-MM-DD)
+    end_date: "2024-07-01"                    # inclusive download end (YYYY-MM-DD)
+    # cds_variables:                          # optional: override CDS API variable names (default: from GBA_CDS_VARIABLES env)
+    #   - "2m_temperature"
+    #   - "2m_dewpoint_temperature"
+    #   - "total_precipitation"
 
   weather_parse:
     region_type: "zone"
@@ -58,7 +62,6 @@ data:
         op: "mean"
       - name: "totalPrecipitation"
         op: "sum"
-
     rolling_agg:
       - name: "2mTemperature"
         op: "mean"
@@ -66,9 +69,7 @@ data:
         op: "mean"
       - name: "totalPrecipitation"
         op: "sum"
-    # Number of days to aggregate over for rolling windows; default 7.
     rolling_n_days: 7
-    # Sample rate for daily data; default 7.
     sampling_rate: 7
 
 cutoff:
@@ -115,17 +116,8 @@ logging:
   level: INFO
 
 storages:
-  raw_case:
-    kind: filesystem
-    filesystem:
-      base_path: "./dengue-model-pipeline-automation - GBA/src/dengue-model-pipeline/datasets"
-
-  raw_weather:
-    kind: filesystem
-    filesystem:
-      base_path: "./dengue-model-pipeline-automation - GBA/src/dengue-model-pipeline/datasets/parsednetcdf/zone"
-
   artifacts:
     kind: filesystem
     filesystem:
       base_path: "./artifacts"
+

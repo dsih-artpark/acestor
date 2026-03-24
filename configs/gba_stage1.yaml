@@ -12,15 +12,14 @@ run:
 data:
   case_download:
     enabled: true
-    source_paths:
-      - "cases_zone_daily.csv"
-    dest_relpath: "datasets/raw_case_data"
+    source_backend: "filesystem"   # "filesystem" or "s3"
+    source_path: "datasets/raw_linelist_data/Bengaluru_IHIP_linelist"
 
   case_parse:
     # Raw lat/lon inputs: list multiple types (e.g. corp + zone) like SOT ParseNonStandardizedCaseData.py loop.
     # Pre-aggregated inputs (region_id/date/case): use exactly one entry — file is already one resolution.
     region_types:
-      - "zone"   # list order: last entry is the case series used by identify_cutoff_dates (SOT: corp then zone)
+      - "zone"
     date_start: "2015-01-01"
     date_end: ""   # inclusive end; empty → use today
 
@@ -36,11 +35,9 @@ data:
 
   weather_download:
     enabled: true
-    source_mode: "filesystem"           # "filesystem" or "cds"
-    # --- filesystem mode: copy pre-parsed CSVs from a storage ---
-    source_prefix: ""
-    source_paths: []
-    dest_relpath: "datasets/raw_weather_data"
+    source_mode: "filesystem"           # "filesystem" (local zip cache) or "cds" (download from Copernicus)
+    netcdf_cache_path: "./datasets/netcdf"        # local zip cache dir; if set, filesystem mode parses zips here
+    parsed_output_path: "./datasets/parsednetcdf" # parsed CSVs cached here; re-parse skipped if CSV already exists
     # region_bounds: [13.3, 77.3, 12.7, 77.9]  # [N, W, S, E] or omit for auto from geojson
     region_type: "zone"                       # zone, corp, ward
     w_params: ["t2m", "d2m", "tp"]            # NetCDF short variable names for parsing
@@ -48,6 +45,10 @@ data:
     bounds_resolution_deg: 0.1                # auto bounds: snap to this degree grid + padding (~0.25 for ERA5 single-levels)
     start_date: "2015-01-01"                  # inclusive download start (YYYY-MM-DD)
     end_date: "2024-07-01"                    # inclusive download end (YYYY-MM-DD)
+    # cds_variables:                          # optional: override CDS API variable names (default: from GBA_CDS_VARIABLES env)
+    #   - "2m_temperature"
+    #   - "2m_dewpoint_temperature"
+    #   - "total_precipitation"
 
   weather_parse:
     region_type: "zone"

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import io
+import os
 from dataclasses import dataclass
 from typing import ClassVar
 
 import pandas as pd
 
 from acestor import BaseStep, PipelineContext
-from pipelines.gba_dengue.configs import CaseParseConfig, _section
+from acestor.core.sources import FileSystemSource, S3Source
+from pipelines.gba_dengue.configs import CaseDownloadConfig, CaseParseConfig, _section
 from pipelines.gba_dengue.lib import case_data
 from pipelines.gba_dengue.sources import filesystem as geojson_sources
 from pipelines.gba_dengue.results import (
@@ -33,29 +35,73 @@ _OPERATIONS = ["sum"]
 
 
 @dataclass(frozen=True)
-class ParseNonStandardCaseDataInputs:
+class ParseCaseDataInputs:
     identify_sampling_day: SamplingDayResult
     download_case_data: CaseDownloadResult
 
 
-class ParseNonStandardCaseDataStep(
-    BaseStep[ParseNonStandardCaseDataInputs, ParseCaseDataResult]
-):
-    input_type: ClassVar[type] = ParseNonStandardCaseDataInputs
+class ParseCaseDataStep(BaseStep[ParseCaseDataInputs, ParseCaseDataResult]):
+    input_type: ClassVar[type] = ParseCaseDataInputs
+
+    def _build_case_source(self, cfg: CaseDownloadConfig):
+        backend = (cfg.source_backend or "filesystem").strip().lower()
+        source_path = (cfg.source_path or "").strip()
+        if source_path and backend == "s3" and source_path.startswith("s3://"):
+            bucket_and_prefix = source_path[len("s3://") :]
+            bucket, _, prefix = bucket_and_prefix.partition("/")
+            return S3Source(
+                bucket=bucket,
+                base_prefix=prefix,
+                aws_profile=(os.getenv("AWS_PROFILE", "").strip() or None),
+                region=(os.getenv("AWS_REGION", "").strip() or None),
+                cache_enabled=cfg.cache_enabled,
+                cache_dir=cfg.cache_dir,
+                strategy=cfg.cache_strategy,
+            )
+        if source_path and backend == "filesystem":
+            return FileSystemSource(base_path=source_path)
+        if backend == "s3":
+            return S3Source(
+                bucket=cfg.s3_bucket,
+                base_prefix=cfg.s3_prefix,
+                aws_profile=(os.getenv("AWS_PROFILE", "").strip() or None),
+                region=(os.getenv("AWS_REGION", "").strip() or None),
+                cache_enabled=cfg.cache_enabled,
+                cache_dir=cfg.cache_dir,
+                strategy=cfg.cache_strategy,
+            )
+        return FileSystemSource(base_path=cfg.filesystem_base_path)
+
+    def _read_case_bytes(self, context: PipelineContext, source, ref: str) -> bytes:
+        if ref.startswith("filesystem://"):
+            return source.read(ref[len("filesystem://") :])
+        if ref.startswith("fs://"):
+            return source.read(ref[len("fs://") :])
+        if ref.startswith("s3://"):
+            return source.read(ref[len("s3://") :])
+        # Backward compatibility for older runs that wrote artifact keys.
+        return context.artifacts.read(ref)
 
     def run(
-        self, context: PipelineContext, inputs: ParseNonStandardCaseDataInputs
+        self, context: PipelineContext, inputs: ParseCaseDataInputs
     ) -> ParseCaseDataResult:
         cfg = CaseParseConfig.from_raw(_section(context.config, "data.case_parse"))
 
         if not inputs.download_case_data.copied_files:
             raise ValueError(
-                "parse_nonstd_case_data requires case files; download_case_data produced none. "
-                "Enable case_download and set source_paths (or source_prefix) so files are copied."
+                "parse_case_data requires case files; download_case_data produced none. "
+                "Enable case_download and set source paths so files are available."
             )
 
+        case_dl_cfg = CaseDownloadConfig.from_raw(
+            _section(context.config, "data.case_download")
+        )
+        case_source = self._build_case_source(case_dl_cfg)
         raw_dfs = [
-            pd.read_csv(io.BytesIO(context.artifacts.read(f)), low_memory=False)
+            pd.read_csv(
+                io.BytesIO(self._read_case_bytes(context, case_source, f)),
+                low_memory=False,
+            )
             for f in inputs.download_case_data.copied_files
         ]
 
@@ -65,11 +111,11 @@ class ParseNonStandardCaseDataStep(
             if len(cfg.region_types) != 1:
                 raise ValueError(
                     "Pre-aggregated case input (region_id/date/case) only supports exactly one entry in "
-                    "data.case_parse.region_types — the file is already at a fixed spatial resolution. "
+                    "data.case_parse.region_types - the file is already at a fixed spatial resolution. "
                     f"Got region_types={cfg.region_types!r}."
                 )
             context.log.info(
-                "parse_nonstd_case_data: detected pre-aggregated daily data (region_id/date/case), "
+                "parse_case_data: detected pre-aggregated daily data (region_id/date/case), "
                 "skipping spatial join (region_type=%s)",
                 cfg.region_types[0],
             )
@@ -77,14 +123,11 @@ class ParseNonStandardCaseDataStep(
             daily["date"] = pd.to_datetime(daily["date"])
             daily = daily[["region_id", "date", "case"]].copy()
             by_region = self._finalize_and_write(
-                context,
-                inputs,
-                daily,
-                cfg.region_types[0],
+                context, inputs, daily, cfg.region_types[0]
             )
         elif _RAW_NONSTANDARD_COLS.issubset(first_cols):
             context.log.info(
-                "parse_nonstd_case_data: detected raw non-standardized lab data (lat/lon), "
+                "parse_case_data: detected raw non-standardized lab data (lat/lon), "
                 "performing spatial join geocoding for region_types=%s",
                 cfg.region_types,
             )
@@ -113,12 +156,12 @@ class ParseNonStandardCaseDataStep(
                 )
                 if not per_file:
                     raise ValueError(
-                        f"aggregate_all_data_daily produced no output for region_type={region_type!r} — "
-                        "check geojson_folder, region_type, and that case CSVs have valid lat/lon."
+                        f"aggregate_all_data_daily produced no output for region_type={region_type!r} - "
+                        "check region_type and that case CSVs have valid lat/lon."
                     )
                 daily_rt = case_data.concat_daily_dfs(per_file, _COMMON_COLS, _W_PARAMS)
                 by_region.update(
-                    self._finalize_and_write(context, inputs, daily_rt, region_type),
+                    self._finalize_and_write(context, inputs, daily_rt, region_type)
                 )
         else:
             raise ValueError(
@@ -144,10 +187,13 @@ class ParseNonStandardCaseDataStep(
     def _finalize_and_write(
         self,
         context: PipelineContext,
-        inputs: ParseNonStandardCaseDataInputs,
+        inputs: ParseCaseDataInputs,
         daily: pd.DataFrame,
         region_type: str,
     ) -> dict[str, str]:
+        daily_dest = context.artifact_path(f"datasets/cases_{region_type}_daily.csv")
+        context.artifacts.write_text(daily.to_csv(index=False), daily_dest)
+
         rolling = case_data.rolling_aggregate(daily, n_days=7)
         max_date = pd.Timestamp(rolling["date"].max())
         latest_day = case_data.get_latest_sampling_day(
@@ -155,9 +201,14 @@ class ParseNonStandardCaseDataStep(
         )
         sampled = case_data.sample_data(rolling, end_date=latest_day)
         renamed = case_data.rename_columns_for_output(sampled, region_type)
-        dest = context.artifact_path(f"datasets/cases_{region_type}_sampled.csv")
-        context.artifacts.write_text(renamed.to_csv(index=False), dest)
-        context.log.info(
-            "parse_nonstd_case_data: %d rows, region_type=%s", len(renamed), region_type
+        sampled_dest = context.artifact_path(
+            f"datasets/cases_{region_type}_sampled.csv"
         )
-        return {region_type: dest}
+        context.artifacts.write_text(renamed.to_csv(index=False), sampled_dest)
+        context.log.info(
+            "parse_case_data: region_type=%s daily_rows=%d sampled_rows=%d",
+            region_type,
+            len(daily),
+            len(renamed),
+        )
+        return {region_type: sampled_dest}

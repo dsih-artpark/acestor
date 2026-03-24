@@ -12,9 +12,7 @@ from acestor import PipelineConfig, PipelineDAG, PipelineStep
 from pipelines.gba_dengue.steps.identify_sampling_day import IdentifySamplingDayStep
 from pipelines.gba_dengue.steps.download_case_data import DownloadCaseDataStep
 from pipelines.gba_dengue.steps.download_weather_data import DownloadWeatherDataStep
-from pipelines.gba_dengue.steps.parse_nonstd_case_data import (
-    ParseNonStandardCaseDataStep,
-)
+from pipelines.gba_dengue.steps.parse_case_data import ParseCaseDataStep
 from pipelines.gba_dengue.steps.parse_weather_data import ParseWeatherDataStep
 from pipelines.gba_dengue.steps.validate_case_data_sufficiency import (
     ValidateCaseDataSufficiencyStep,
@@ -39,9 +37,7 @@ def build_pipeline(config: PipelineConfig) -> PipelineDAG:
     download_weather_data = PipelineStep(
         name="download_weather_data", impl=DownloadWeatherDataStep()
     )
-    parse_nonstd_case_data = PipelineStep(
-        name="parse_nonstd_case_data", impl=ParseNonStandardCaseDataStep()
-    )
+    parse_case_data = PipelineStep(name="parse_case_data", impl=ParseCaseDataStep())
     validate_case_data_sufficiency = PipelineStep(
         name="validate_case_data_sufficiency",
         impl=ValidateCaseDataSufficiencyStep(),
@@ -68,8 +64,8 @@ def build_pipeline(config: PipelineConfig) -> PipelineDAG:
     generate_report = PipelineStep(name="generate_report", impl=GenerateReportStep())
     notify_run = PipelineStep(name="notify_run", impl=NotifyRunStep())
 
-    [identify_sampling_day, download_case_data] >> parse_nonstd_case_data
-    parse_nonstd_case_data >> validate_case_data_sufficiency
+    [identify_sampling_day, download_case_data] >> parse_case_data
+    parse_case_data >> validate_case_data_sufficiency
     [identify_sampling_day, download_weather_data] >> parse_weather_data
     [validate_case_data_sufficiency, parse_weather_data] >> identify_cutoff_dates
     identify_cutoff_dates >> generate_thresholds
@@ -85,7 +81,7 @@ def build_pipeline(config: PipelineConfig) -> PipelineDAG:
             identify_sampling_day,
             download_case_data,
             download_weather_data,
-            parse_nonstd_case_data,
+            parse_case_data,
             validate_case_data_sufficiency,
             parse_weather_data,
             identify_cutoff_dates,

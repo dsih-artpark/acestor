@@ -147,7 +147,7 @@ def download_month(
 
     folder = cache_path / str(year)
     folder.mkdir(parents=True, exist_ok=True)
-    output = folder / f"{year}_{month:02d}.nc"
+    output = folder / f"{year}_{month:02d}.zip"
 
     bound_n, bound_w, bound_s, bound_e = region_bounds
     request = {
@@ -158,7 +158,7 @@ def download_month(
         "day": [f"{d:02d}" for d in range(1, 32)],
         "time": [f"{h:02d}:00" for h in range(24)],
         "data_format": "netcdf",
-        "download_format": "unarchived",
+        "download_format": "zip",
         "area": [bound_n, bound_w, bound_s, bound_e],
     }
 
@@ -400,9 +400,10 @@ def process_month_file(
     for region_data_gdf, centroid, region_gdf in zip(
         filtered_regions, region_centroids, region_gdfs
     ):
+        right = region_data_gdf.drop(columns=["latitude", "longitude"], errors="ignore")
         joined = gpd.sjoin(
             gdf_data,
-            region_data_gdf,
+            right,
             how="inner",
             predicate="intersects",
         ).reset_index(drop=True)
@@ -457,10 +458,16 @@ def parse_cached_netcdfs(
                     nc_files.append((year, month, f))
 
     outputs: list[str] = []
+    skipped = 0
+    parsed = 0
     for year, month, nc_path in nc_files:
         dest_dir = output_path / str(year)
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / f"{year}_{month:02d}.csv"
+        if dest.exists():
+            outputs.append(str(dest))
+            skipped += 1
+            continue
         log.info("Parsing %s -> %s", nc_path, dest)
         try:
             result = process_month_file(
@@ -468,6 +475,13 @@ def parse_cached_netcdfs(
             )
             result.to_csv(dest, index=False)
             outputs.append(str(dest))
+            parsed += 1
         except Exception:
             log.exception("Failed to parse %s", nc_path)
+    log.info(
+        "parse_cached_netcdfs: %d newly parsed, %d reused from cache, %d total",
+        parsed,
+        skipped,
+        len(outputs),
+    )
     return outputs

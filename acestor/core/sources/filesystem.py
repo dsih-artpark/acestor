@@ -21,7 +21,7 @@ class FileSystemSource:
         base_path: str,
         cache_enabled: bool = False,
         cache_dir: str = "",
-        strategy: str = "local",
+        strategy: str = "cloud",
     ) -> None:
         self.remote = FileSource(base_path=Path(base_path))
         self.cache_enabled = cache_enabled

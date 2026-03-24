@@ -16,7 +16,7 @@ from pipelines.gba_dengue.results import DataSufficiencyResult, ParseCaseDataRes
 
 @dataclass(frozen=True)
 class ValidateCaseDataSufficiencyInputs:
-    parse_nonstd_case_data: ParseCaseDataResult
+    parse_case_data: ParseCaseDataResult
 
 
 class ValidateCaseDataSufficiencyStep(
@@ -32,7 +32,7 @@ class ValidateCaseDataSufficiencyStep(
         cfg = CaseSufficiencyConfig.from_raw(
             _section(context.config, "data.case_sufficiency")
         )
-        case_res = inputs.parse_nonstd_case_data
+        case_res = inputs.parse_case_data
 
         if not cfg.enabled:
             context.log.info("validate_case_data_sufficiency: disabled by config")

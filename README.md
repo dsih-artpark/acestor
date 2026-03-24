@@ -104,7 +104,7 @@ Steps run according to the DAG dependencies below (names match logs and the code
 | 1 | `identify_sampling_day` | Resolve sampling day / case window metadata for the run. |
 | 2 | `download_case_data` | Copy or fetch case inputs into the run layout (if enabled). |
 | 3 | `download_weather_data` | Copy, CDS, or other weather ingest (if enabled). |
-| 4 | `parse_nonstd_case_data` | Parse case data (e.g. linelist → daily series by region). |
+| 4 | `parse_case_data` | Parse case data (e.g. linelist → daily series by region). |
 | 5 | `validate_case_data_sufficiency` | Optional gate: stop early if case data are too thin. |
 | 6 | `parse_weather_data` | Aggregate / sample weather features aligned to regions. |
 | 7 | `identify_cutoff_dates` | Case/weather cutoffs and prediction-week calendar. |

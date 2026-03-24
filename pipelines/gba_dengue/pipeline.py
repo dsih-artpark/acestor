@@ -10,9 +10,7 @@ from acestor import PipelineConfig, PipelineDAG, PipelineStep
 from pipelines.gba_dengue.steps.identify_sampling_day import IdentifySamplingDayStep
 from pipelines.gba_dengue.steps.download_case_data import DownloadCaseDataStep
 from pipelines.gba_dengue.steps.download_weather_data import DownloadWeatherDataStep
-from pipelines.gba_dengue.steps.parse_nonstd_case_data import (
-    ParseNonStandardCaseDataStep,
-)
+from pipelines.gba_dengue.steps.parse_case_data import ParseCaseDataStep
 from pipelines.gba_dengue.steps.parse_weather_data import ParseWeatherDataStep
 from pipelines.gba_dengue.steps.validate_case_data_sufficiency import (
     ValidateCaseDataSufficiencyStep,
@@ -32,7 +30,7 @@ def build_pipeline(config: PipelineConfig) -> PipelineDAG:
 
     DAG shape::
 
-        identify_sampling_day ──┬──> parse_nonstd_case_data ──> validate_case_data_sufficiency ──┐
+        identify_sampling_day ──┬──> parse_case_data ────────> validate_case_data_sufficiency ──┐
         download_case_data ─────┘                                                                  ├──> identify_cutoff_dates
         identify_sampling_day ──┬──> parse_weather_data ───────────────────────────────────────────┘
         download_weather_data ──┘
@@ -56,9 +54,7 @@ def build_pipeline(config: PipelineConfig) -> PipelineDAG:
     download_weather_data = PipelineStep(
         name="download_weather_data", impl=DownloadWeatherDataStep()
     )
-    parse_nonstd_case_data = PipelineStep(
-        name="parse_nonstd_case_data", impl=ParseNonStandardCaseDataStep()
-    )
+    parse_case_data = PipelineStep(name="parse_case_data", impl=ParseCaseDataStep())
     validate_case_data_sufficiency = PipelineStep(
         name="validate_case_data_sufficiency",
         impl=ValidateCaseDataSufficiencyStep(),
@@ -88,11 +84,11 @@ def build_pipeline(config: PipelineConfig) -> PipelineDAG:
     # --- Wire the DAG ---
 
     # download + sampling_day feed into parse steps
-    [identify_sampling_day, download_case_data] >> parse_nonstd_case_data
-    parse_nonstd_case_data >> validate_case_data_sufficiency
+    [identify_sampling_day, download_case_data] >> parse_case_data
+    parse_case_data >> validate_case_data_sufficiency
     [identify_sampling_day, download_weather_data] >> parse_weather_data
 
-    # validated case parse + weather feed cutoff identification
+    # # validated case parse + weather feed cutoff identification
     [validate_case_data_sufficiency, parse_weather_data] >> identify_cutoff_dates
 
     # cutoffs -> thresholds -> train -> combine -> assess
@@ -107,14 +103,14 @@ def build_pipeline(config: PipelineConfig) -> PipelineDAG:
 
     # assess + maps + cutoffs (rep_dict epi/weather dates) -> report -> optional email
     [assess_thresholds, generate_maps, identify_cutoff_dates] >> generate_report
-    generate_report >> notify_run
+    # generate_report >> notify_run
 
     return PipelineDAG.from_steps(
         [
             identify_sampling_day,
             download_case_data,
             download_weather_data,
-            parse_nonstd_case_data,
+            parse_case_data,
             validate_case_data_sufficiency,
             parse_weather_data,
             identify_cutoff_dates,

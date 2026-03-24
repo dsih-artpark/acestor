@@ -46,6 +46,14 @@ def _env_any(keys: tuple[str, ...], default: str) -> str:
 @dataclass(frozen=True)
 class CaseDownloadConfig:
     enabled: bool
+    source_backend: str  # "filesystem" or "s3"
+    source_path: str  # filesystem path or s3://bucket/prefix
+    cache_enabled: bool
+    cache_dir: str
+    cache_strategy: str
+    filesystem_base_path: str
+    s3_bucket: str
+    s3_prefix: str
     source_storage: str
     source_prefix: str
     source_paths: list[str]
@@ -55,6 +63,23 @@ class CaseDownloadConfig:
     def from_raw(cls, raw: Mapping[str, Any]) -> CaseDownloadConfig:
         return cls(
             enabled=bool(raw.get("enabled", False)),
+            source_backend=str(raw.get("source_backend", "filesystem")).strip().lower()
+            or "filesystem",
+            source_path=str(raw.get("source_path", "")).strip(),
+            cache_enabled=bool(raw.get("cache_enabled", True)),
+            cache_dir=str(raw.get("cache_dir", "./cache/raw_case")).strip(),
+            cache_strategy=str(raw.get("cache_strategy", "local_first")).strip()
+            or "local_first",
+            filesystem_base_path=str(
+                raw.get(
+                    "filesystem_base_path",
+                    "./datasets/raw_linelist_data/Bengaluru_IHIP_linelist",
+                )
+            ).strip(),
+            s3_bucket=str(raw.get("s3_bucket", "standardized-bucket")).strip(),
+            s3_prefix=str(
+                raw.get("s3_prefix", "EP0005DS0068-Bengaluru_IHIP_Dengue_LL/")
+            ).strip(),
             source_storage=raw.get("source_storage", ""),
             source_prefix=raw.get("source_prefix", ""),
             source_paths=list(raw.get("source_paths", [])),
@@ -81,9 +106,7 @@ class CaseParseConfig:
 
     region_types: list[str]
     date_start: str
-    date_end: (
-        str  # inclusive; empty string → step uses "today" (see parse_nonstd_case_data)
-    )
+    date_end: str  # inclusive; empty string → step uses "today" (see parse_case_data)
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any]) -> CaseParseConfig:
@@ -158,10 +181,26 @@ class WeatherDownloadConfig:
     enabled: bool
     source_mode: str  # "filesystem" or "cds"
     # filesystem mode
+    source_backend: str  # "filesystem" or "s3"
+    source_path: str  # filesystem path or s3://bucket/prefix
+    cache_enabled: bool
+    cache_dir: str
+    cache_strategy: str
+    filesystem_base_path: str
+    s3_bucket: str
+    s3_prefix: str
     source_storage: str
     source_prefix: str
     source_paths: list[str]
     dest_relpath: str
+    # local netcdf cache (used by both "filesystem" and "cds" modes)
+    netcdf_cache_path: str  # path to local zip cache (e.g. ./datasets/netcdf); empty → use CDSSource default
+    parsed_output_path: (
+        str  # where parsed per-region CSVs are written; empty → use CDSSource default
+    )
+    cds_variables: list[
+        str
+    ]  # CDS API variable names; empty → use GBA_CDS_VARIABLES env / CDSSource default
     # cds mode
     region_bounds: list[float] | None  # [N, W, S, E] or None for auto from geojson
     region_type: str  # "zone", "corp", "ward" — subfolder under geojson_folder
@@ -185,10 +224,25 @@ class WeatherDownloadConfig:
         return cls(
             enabled=bool(raw.get("enabled", False)),
             source_mode=raw.get("source_mode", "filesystem"),
+            source_backend=str(raw.get("source_backend", "filesystem")).strip().lower()
+            or "filesystem",
+            source_path=str(raw.get("source_path", "")).strip(),
+            cache_enabled=bool(raw.get("cache_enabled", True)),
+            cache_dir=str(raw.get("cache_dir", "./cache/raw_weather")).strip(),
+            cache_strategy=str(raw.get("cache_strategy", "local_first")).strip()
+            or "local_first",
+            filesystem_base_path=str(raw.get("filesystem_base_path", "")).strip(),
+            s3_bucket=str(raw.get("s3_bucket", "")).strip(),
+            s3_prefix=str(raw.get("s3_prefix", "")).strip(),
             source_storage=raw.get("source_storage", ""),
             source_prefix=raw.get("source_prefix", ""),
             source_paths=list(raw.get("source_paths", [])),
             dest_relpath=raw.get("dest_relpath", "datasets/raw_weather_data"),
+            netcdf_cache_path=str(raw.get("netcdf_cache_path", "")).strip(),
+            parsed_output_path=str(raw.get("parsed_output_path", "")).strip(),
+            cds_variables=[
+                str(v).strip() for v in raw.get("cds_variables", []) if str(v).strip()
+            ],
             region_bounds=bounds,
             region_type=raw.get("region_type", "zone"),
             w_params=list(raw.get("w_params", ["t2m", "d2m", "tp"])),

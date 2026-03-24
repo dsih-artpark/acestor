@@ -14,6 +14,7 @@ env/
 .coverage
 coverage.xml
 
+
 runs/
 dengue-model-pipeline-automation - GBA/
 acestor-existing/
@@ -29,6 +30,8 @@ runs/
 data/
 artifacts/
 deng
+datasets/
+cache/
 
 # Internal / local-only (not published)
 parity/
