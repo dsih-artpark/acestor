@@ -85,17 +85,14 @@ def linear_extrapolation(
                     region_data["4wMovingAvg"].iloc[-1]
                     + (avg_diff / date_diff) * (7 * i),
                 )
-                month_max_rows = region_data[
-                    region_data["recordMonth"] == future_date.month
-                ]["MaxCaseMonthlyHistorical"]
-                month_max = month_max_rows.iloc[0] if len(month_max_rows) > 0 else 0
+                # month_max = region_data[region_data["recordMonth"] == future_date.month]["MaxCaseMonthlyHistorical"].iloc[0]
 
                 rows.append(
                     {
                         spatial_col: region_name,
                         "recordDate": future_date,
                         "prediction": pred,
-                        "MaxCaseMonthlyHistorical": month_max,
+                        # "MaxCaseMonthlyHistorical": month_max,
                         "model": "timeSeriesExtrapolation",
                     }
                 )

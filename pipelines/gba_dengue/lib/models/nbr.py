@@ -46,7 +46,7 @@ def _filter_features(
 def _one_hot(df: pd.DataFrame, cols: list[str] | None = None) -> pd.DataFrame:
     if cols is None:
         cols = ["ISOWeek"]
-    enc = OneHotEncoder(drop="first", sparse_output=False)
+    enc = OneHotEncoder(sparse_output=False)
     encoded = enc.fit_transform(df[cols])
     return pd.DataFrame(encoded, columns=enc.get_feature_names_out(cols))
 
@@ -101,7 +101,7 @@ def negative_binomial_regression(
     y_train = filtered["case"]
 
     model = sm.GLM(y_train, X_train, family=sm.families.NegativeBinomial(alpha=1.0))
-    results = model.fit()
+    results = model.fit(method="lbfgs")
 
     test_data = df0[df0["recordDate"].isin(last_4)].copy().reset_index(drop=True)
     test_encoded = _one_hot(test_data)

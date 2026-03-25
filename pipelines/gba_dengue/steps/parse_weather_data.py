@@ -93,6 +93,15 @@ class ParseWeatherDataStep(BaseStep[ParseWeatherDataInputs, ParseWeatherDataResu
             sampling_rate=cfg.sampling_rate,
         )
 
+        # Drop derived daily columns not carried to final output (SOT keeps only t2m_mean, d2m_mean, tp_sum)
+        drop_cols = [
+            c
+            for c in ["2mTemperature_max", "2mTemperature_min"]
+            if c in sampled.columns
+        ]
+        if drop_cols:
+            sampled = sampled.drop(columns=drop_cols)
+
         renamed = weather.rename_columns_for_output(sampled, cfg.region_type)
         dest = context.artifact_path(f"datasets/weather_{cfg.region_type}_sampled.csv")
         context.artifacts.write_text(renamed.to_csv(index=False), dest)

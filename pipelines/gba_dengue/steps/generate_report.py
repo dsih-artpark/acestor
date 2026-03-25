@@ -66,8 +66,8 @@ class GenerateReportStep(BaseStep[GenerateReportInputs, ReportResult]):
             caps_c = report_lib.postprocess_captions_for_rep(
                 caps_c,
                 kind="corp",
-                caption_corp_scope=cfg.caption_corp_scope,
-                caption_zone_scope=cfg.caption_zone_scope,
+                caption_corp_scope=cfg.caption_primary,
+                caption_zone_scope=cfg.caption_secondary,
             )
 
         pred_z = dates_z = fnames_z = caps_z = None
@@ -76,8 +76,8 @@ class GenerateReportStep(BaseStep[GenerateReportInputs, ReportResult]):
             caps_z = report_lib.postprocess_captions_for_rep(
                 caps_z,
                 kind="zone",
-                caption_corp_scope=cfg.caption_corp_scope,
-                caption_zone_scope=cfg.caption_zone_scope,
+                caption_corp_scope=cfg.caption_primary,
+                caption_zone_scope=cfg.caption_secondary,
             )
 
         co = inputs.identify_cutoff_dates
@@ -99,9 +99,6 @@ class GenerateReportStep(BaseStep[GenerateReportInputs, ReportResult]):
         month_key = rep_dict["reportmonth"] or "report"
         safe_month = month_key.replace(" ", "_").replace("/", "-")
 
-        main_tex_content = report_lib.minimal_summary_tex(
-            rep_dict, document_title=cfg.document_title
-        )
         pred_raw = rep_dict.get("prediction_date") or str(pd.Timestamp.today().date())
         access_date = (
             pd.Timestamp(str(pred_raw).replace("--", "-")).date().strftime("%d-%b-%Y")
@@ -142,7 +139,7 @@ class GenerateReportStep(BaseStep[GenerateReportInputs, ReportResult]):
             f"results/{bundle_token}_{safe_month}_{end_str}.zip"
         )
         report_lib.create_latex_bundle_zip(
-            main_tex_content=main_tex_content,
+            rep_dict=rep_dict,
             access_date=access_date,
             plots_dir=plots_dir,
             image_filenames=all_names,
@@ -156,7 +153,14 @@ class GenerateReportStep(BaseStep[GenerateReportInputs, ReportResult]):
         details_zone = zone_details
         pdf_path: str | None = None
         if cfg.compile_pdf:
-            pdf = report_lib.compile_pdflatex_simple(tex_fs, latex_bin="pdflatex")
+            dest_pdf = context.artifact_fs_path(
+                f"results/Report_{safe_month}_{end_str}.pdf"
+            )
+            pdf = report_lib.compile_latex_bundle_zip(
+                bundle_fs,
+                destination_pdf_path=dest_pdf,
+                latex_bin="pdflatex",
+            )
             if pdf is not None:
                 pdf_path = str(pdf)
                 context.log.info("generate_report: pdf=%s", pdf_path)

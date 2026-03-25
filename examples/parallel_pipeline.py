@@ -43,7 +43,7 @@ class Join:
 
 
 def main() -> None:
-    config = PipelineConfig.from_yaml("pipeline_configs/example.yaml")
+    config = PipelineConfig.from_yaml("example.yaml")
     context = PipelineContext.from_config(config, run_id="parallel-example-run")
 
     fan_out = PipelineStep(name="fan_out", impl=FanOut())

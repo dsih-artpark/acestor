@@ -1,4 +1,4 @@
-FROM python:3.10-slim
+FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -17,6 +17,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     proj-bin \
     proj-data \
     libspatialindex-dev \
+    texlive-latex-base \
+    texlive-latex-extra \
+    texlive-fonts-recommended \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy metadata first to leverage Docker layer caching for dependency install.

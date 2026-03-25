@@ -457,8 +457,8 @@ class ReportConfig:
     output_dir: str
     compile_pdf: bool
     document_title: str
-    caption_corp_scope: str
-    caption_zone_scope: str
+    caption_primary: str
+    caption_secondary: str
     bundle_prefix: str
 
     @classmethod
@@ -479,12 +479,8 @@ class ReportConfig:
                 else "Dengue intelligence — summary report"
             )
 
-        corp = str(raw.get("caption_corp_scope") or "").strip()
-        if not corp:
-            corp = "municipal corporations"
-        zone = str(raw.get("caption_zone_scope") or "").strip()
-        if not zone:
-            zone = "planning zones"
+        primary = str(raw.get("caption_primary") or "").strip() or "corporations"
+        secondary = str(raw.get("caption_secondary") or "").strip() or "zones"
 
         prefix = str(raw.get("bundle_prefix") or "").strip() or "Report"
 
@@ -492,7 +488,7 @@ class ReportConfig:
             output_dir=str(raw.get("output_dir", "reports")),
             compile_pdf=bool(raw.get("compile_pdf", False)),
             document_title=doc,
-            caption_corp_scope=corp,
-            caption_zone_scope=zone,
+            caption_primary=primary,
+            caption_secondary=secondary,
             bundle_prefix=prefix,
         )

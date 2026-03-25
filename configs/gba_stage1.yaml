@@ -23,6 +23,9 @@ data:
     date_start: "2015-01-01"
     date_end: ""   # inclusive end; empty → use today
 
+  geojson:
+    base_path: "geojsons/geojsons_GBA"  # layout: {base_path}/{region_type}s/*.geojson
+
   # Early exit if sampled case data is too thin (cf. main.py can_run_predictions).
   case_sufficiency:
     enabled: true
@@ -56,17 +59,28 @@ data:
       - "2mTemperature"
       - "totalPrecipitation"
       - "2mDewpointTemperature"
-    # Optional: override daily / rolling aggregation per variable; defaults match these.
+    # Daily aggregation matches SOT: t2m → max/min/mean, d2m → mean, tp → sum.
     daily_agg:
       - name: "2mTemperature"
         op: "mean"
+      - name: "2mTemperature"
+        op: "max"
+        output_name: "2mTemperature_max"
+      - name: "2mTemperature"
+        op: "min"
+        output_name: "2mTemperature_min"
       - name: "2mDewpointTemperature"
         op: "mean"
       - name: "totalPrecipitation"
         op: "sum"
 
+    # Rolling aggregation: mean for all temperature variants, sum for precipitation.
     rolling_agg:
       - name: "2mTemperature"
+        op: "mean"
+      - name: "2mTemperature_max"
+        op: "mean"
+      - name: "2mTemperature_min"
         op: "mean"
       - name: "2mDewpointTemperature"
         op: "mean"
@@ -81,8 +95,8 @@ data:
 # Cutoff, threshold, and model configuration
 # ---------------------------------------------------------------------------
 cutoff:
-  case_min_regions: 2
-  weather_min_regions: 5
+  case_min_regions: 10
+  weather_min_regions: 25
 
 thresholds:
   region_type: "zone"

@@ -66,7 +66,7 @@ def serial_dag() -> PipelineDAG:
 
 
 def main() -> None:
-    config = PipelineConfig.from_yaml("pipeline_configs/parallel_vs_serial.yaml")
+    config = PipelineConfig.from_yaml("parallel_vs_serial.yaml")
     context = PipelineContext.from_config(config, run_id="parallel-vs-serial")
 
     dag = build_dag()

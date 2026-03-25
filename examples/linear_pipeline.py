@@ -35,7 +35,7 @@ class StepC:
 
 
 def main() -> None:
-    config = PipelineConfig.from_yaml("pipeline_configs/example.yaml")
+    config = PipelineConfig.from_yaml("example.yaml")
     context = PipelineContext.from_config(config, run_id="example-run")
 
     step_a = PipelineStep(name="step_a", impl=StepA())

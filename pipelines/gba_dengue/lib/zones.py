@@ -18,11 +18,10 @@ import pandas as pd
 
 def _gen_date_list(df_temp: pd.DataFrame, to_date) -> list:
     date_list = list(df_temp["recordDate"].unique())
-    return sorted(
-        pd.date_range(
-            date_list[0] if date_list else to_date, to_date, freq="7D"
-        ).tolist()
-    )
+    if not date_list:
+        return []
+    # Anchor to to_date and step backward (matching SOT GenDateList: pd.date_range(to_date, first, freq="-7D")[::-1])
+    return sorted(pd.date_range(to_date, date_list[0], freq="-7D").tolist())
 
 
 def _gen_missing_date_rows(df_temp: pd.DataFrame, to_date) -> pd.DataFrame:
@@ -103,6 +102,9 @@ def compute_thresholds(
     for i, a in enumerate(alphas[1:], start=1):
         thresholds[f"T{a:.2f}"] += i * epsilon
 
+    thresholds["ISOWeek"] = (
+        pd.to_datetime(thresholds["date"]).dt.isocalendar().week.astype(int)
+    )
     return thresholds
 
 

@@ -51,7 +51,6 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
                     break
             df["recordDate"] = pd.to_datetime(df["recordDate"])
             df["recordYear"] = df["recordDate"].dt.year
-            df["recordMonth"] = df["recordDate"].dt.month
             df["ISOWeek"] = df["recordDate"].dt.isocalendar().week.astype(int)
             # Normalise spatial column to cfg.spatial_res
             for cand, target in [
@@ -73,9 +72,19 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
         merged = merged.sort_values([cfg.spatial_res, "recordDate"]).reset_index(
             drop=True
         )
+        merged["recordMonth"] = merged["recordDate"].dt.month
 
         pred_upto = pd.Timestamp(inputs.identify_cutoff_dates.pred_upto)
         cutoff_case = pd.Timestamp(inputs.identify_cutoff_dates.cutoff_case)
+
+        # Filter merged to valid sampling-day dates (matching SOT get_days + filter)
+        sampling_day = inputs.identify_cutoff_dates.sampling_day
+        valid_dates = pd.date_range(
+            start=merged["recordDate"].min(),
+            end=pred_upto,
+            freq=sampling_day,
+        )
+        merged = merged[merged["recordDate"].isin(valid_dates)].reset_index(drop=True)
 
         nbr_pred = nbr.negative_binomial_regression(
             merged,
@@ -96,6 +105,7 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
 
         prediction_dfs = [nbr_out]
 
+        # TSE: always attempt for whatever spatial_res is configured
         tse_upto = cutoff_case + pd.Timedelta(days=14)
         tse_pred = tse.linear_extrapolation(
             case_df,
@@ -116,6 +126,10 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
         ensembled = pred_lib.ensemble_predictions(
             prediction_dfs, spatial_col=cfg.spatial_res
         )
+        # "ensembleModel" when NBR + TSE combined; "negativeBinomialRegression" when only NBR
+        if len(prediction_dfs) == 1:
+            ensembled["model"] = "negativeBinomialRegression"
+
         classified = zones.classify_into_zones(ensembled, spatial_col=cfg.spatial_res)
         classified["predictionZone"] = classified["predictionZone"].fillna(0)
 

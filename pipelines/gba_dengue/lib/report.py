@@ -280,8 +280,276 @@ def tex_escape_line(s: str) -> str:
     )
 
 
+def _fig_block(img: str, caption: str, label: str) -> str:
+    """Single LaTeX figure block matching SOT gen_latex_code."""
+    return (
+        "\\begin{figure}[h!]\n"
+        "    \\centering\n"
+        f"    \\includegraphics[width=0.95\\textwidth]{{Images/{img}}}\n"
+        f"    \\caption{{{caption}}}\n"
+        f"    \\label{{{label}}}\n"
+        "\\end{figure}"
+    )
+
+
+def gen_full_report_tex(rep_dict: dict[str, Any]) -> str:
+    """Generate the full LaTeX report matching SOT ``gen_latex_code`` (GenerateLatexCode_PyLaTeX.py).
+
+    Produces equivalent output without requiring the ``pylatex`` package.
+    """
+    fnames_c: list[str] = rep_dict.get("filenames_corp") or []
+    caps_c: list[str] = rep_dict.get("captions_corp") or []
+    labels_c: list[str] = rep_dict.get("labels_corp") or []
+    fnames_z: list[str] = rep_dict.get("filenames_zone") or []
+    caps_z: list[str] = rep_dict.get("captions_zone") or []
+    labels_z: list[str] = rep_dict.get("labels_zone") or []
+
+    epi_start = rep_dict.get("epi_data_start_date", "2021--11--09")
+    epi_end = rep_dict.get("epi_data_end_date", "")
+    weather_end = rep_dict.get("weather_data_end_date", "")
+    reportmonth = rep_dict.get("reportmonth", "")
+    prediction_date = rep_dict.get("prediction_date", "")
+    report_date = rep_dict.get("report_date", "")
+
+    preamble = r"""\documentclass[a4paper, 12pt]{article}
+\usepackage{amsmath, amsthm, amssymb}
+\usepackage{graphicx}
+\usepackage{subfig}
+\usepackage{tabularray}
+\UseTblrLibrary{booktabs}
+\usepackage[skip=1ex, font=small]{caption}
+\usepackage{float}
+\usepackage{multirow}
+\usepackage{hyperref}
+\usepackage[a4paper, left=20mm, right=20mm, top=25mm, bottom=30mm, heightrounded]{geometry}
+\usepackage{url}
+\usepackage{color}
+\usepackage{bm}
+\usepackage{comment}
+\usepackage[table, dvipsnames]{xcolor}
+\usepackage{fancyhdr}
+\usepackage{enumitem}
+\usepackage{titletoc}
+\usepackage[subfigure]{tocloft}
+\usepackage{setspace}
+\usepackage[numbers]{natbib}
+
+\hypersetup{
+    colorlinks,
+    linkcolor={blue!80!black},
+    citecolor={blue!80!black},
+    urlcolor={blue!90!black}
+}
+
+\newcommand{\footertext}{
+\textcolor{CadetBlue}
+{This is a Confidential Document only intended for the marked recipients.
+\\ARTPARK, I-HUB for Robotics and Autonomous Systems Innovation Foundation, Ground Floor,
+\\SID Entrepreneurship building, Indian Institute of Science, Bangalore - 560012. \url{www.artpark.in}}
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[R]{\thepage}
+\renewcommand{\headrulewidth}{0pt}
+\fancyfoot[C]{\scriptsize \footertext}
+
+\fancypagestyle{plain}{
+  \fancyhf{}
+  \renewcommand{\headrulewidth}{0pt}
+  \fancyfoot[C]{\scriptsize \footertext}
+}
+
+\makeatletter
+\renewcommand{\tableofcontents}{
+    \section*{}
+    \@starttoc{toc}
+}
+\makeatother
+
+\renewcommand{\cftsecleader}{\cftdotfill{\cftdotsep}}
+
+\setlength{\parskip}{0.7em}
+\setlength{\parindent}{2em}
+\setlength{\headheight}{15pt}
+\setlength{\cftbeforesecskip}{0.5em}
+\setlength{\cftbeforesubsecskip}{0.3em}
+
+\onehalfspacing"""
+
+    title_block = (
+        r"\begin{document}"
+        "\n"
+        r"\thispagestyle{plain}"
+        "\n"
+        r"{\begin{center}"
+        "\n"
+        r"\Huge\noindent\textbf{Dengue Risk Zone Predictions"
+        "\n"
+        r"\\\large "
+        + reportmonth
+        + r"}"
+        + "\n"
+        + r"\end{center}}"
+        + "\n\n"
+        + r"\begin{flushright}"
+        + "\n"
+        + r"\colorbox{CadetBlue!30}{Predictions performed on: "
+        + prediction_date
+        + r"}"
+        + "\n"
+        + r"\end{flushright}"
+        + "\n\n"
+        + r"\thispagestyle{plain}"
+        + "\n\n"
+        + r"{"
+        + "\n"
+        + r"\footnotesize"
+        + "\n"
+        + r"\begingroup"
+        + "\n"
+        + r"  \let\clearpage\relax"
+        + "\n"
+        + r"  \tableofcontents"
+        + "\n"
+        + r"\endgroup"
+        + "\n"
+        + r"}"
+    )
+
+    about_section = (
+        r"\section{About Risk Zone Classification}\label{sec:IntroRiskZoneClass}"
+        "\n"
+        "The risk zone classification depends on thresholds computed using the historical dengue case data "
+        "within the region(s) of interest. We use the following methods to calculate the thresholds:\n"
+        r"\begin{itemize}[leftmargin=*]"
+        "\n"
+        r"\item Method A (Threshold based on historical cases): We establish a baseline for each month by computing "
+        r"the mean $\left(\mu\right)$ of the weekly number of dengue cases for that month over the past "
+        r"\emph{five} years. In addition, we calculate the corresponding standard deviation $\left(\sigma\right)$."
+        "\n"
+        r"\item Method B (Threshold based on recent cases): The mean and standard deviation are calculated from the "
+        r"moving average of weekly dengue cases in the past 4 weeks. We have used the definition used by "
+        r"Salim, et al. in \cite{Salim2021}. The moving mean and the moving standard deviation required to "
+        r"determine the threshold value for each region in the $i$-th week are calculated from weekly cases "
+        r"from the previous four weeks in that region."
+        "\n"
+        r"\end{itemize}"
+        "\n"
+        "Following the guidance provided in the World Health Organization (WHO) Technical Handbook for "
+        r"Dengue Surveillance \cite{WHOHandbook}, we map each prediction to a dengue outbreak risk "
+        "zone: Green, Yellow, Orange, and Red. Green indicates minimal risk, followed by yellow, orange, "
+        "and red, with the latter indicating very high risk. If sufficient data is not available, we "
+        "associate White color with it."
+    )
+
+    disclaimer = (
+        r"\clearpage"
+        "\n"
+        r"\noindent\textbf{\textit{Disclaimer}}: These risk maps indicate qualitative risks based on "
+        "preliminary analysis using available data, which includes historical case patterns and trends, "
+        r"and weather parameters (see the section on~\nameref{sec:Data}). The predictions for Greater Bengaluru "
+        "Authority (GBA) do NOT include case counts for the area of Bengaluru Urban district outside of GBA, "
+        "and the projections for the same can be found separately. The risk map is only intended to serve "
+        "as a guide for prioritising interventions such as Source Reduction Activities (SRA). Careful "
+        "interpretation must be taken of any results herein and their practical significance to policy. "
+        r"Please share feedback, if any, at: \href{mailto:onehealth@artpark.in}{onehealth@artpark.in}."
+    )
+
+    # Corp figures
+    corp_figs_lines = [
+        r"\clearpage",
+        r"\section{Outbreak Risk Zone Maps}\label{sec:RiskMaps}",
+    ]
+    corp_figs_lines.append(
+        "In the following risk maps, green, yellow, orange, and red indicate Low, Moderate, High, and "
+        "Very High risk levels, respectively."
+    )
+    for img, cap, lbl in zip(fnames_c, caps_c, labels_c):
+        corp_figs_lines.append(_fig_block(img, cap, lbl))
+        corp_figs_lines.append(r"\clearpage")
+
+    data_section = (
+        r"\section{Data}\label{sec:Data}"
+        "\n"
+        "We use the following datasets, aggregated to weekly frequency at corp-level spatial resolution:\n"
+        r"\begin{enumerate}[leftmargin=*]"
+        "\n"
+        rf"\item Epidemiological Data: Yearly dengue line list data from {epi_start} till {epi_end}."
+        "\n"
+        r"\item \sloppy Meteorological Data: {\sffamily 2m\_Temperature}, {\sffamily 2m\_Dewpoint\_Temperature}, "
+        rf"and {{\sffamily Total\_Precipitation}} (available until {weather_end}). "
+        r"\newline\textit{Source}: \href{https://www.ecmwf.int/en/forecasts/dataset/ecmwf-reanalysis-v5}"
+        r"{ECMWF Reanalysis v5 (ERA5)} \cite{hersbach2023era5, climate2023change}."
+        "\n"
+        r"\item Socio-economic Data: Population data from the 15th decadal census of India (2011) and the area of the corp."
+        "\n"
+        r"\end{enumerate}"
+        "\n"
+        "Recall that we do not include the cases of Bengaluru Urban outside of the Greater Bengaluru "
+        "Authority (GBA) in the epidemiological data. We examine GBA cases separately because "
+        "(a)~the city of Bengaluru has GBA with a separate jurisdiction and governance structure, and "
+        r"(b)~the city of Bengaluru forms 20\% of the population of Karnataka."
+    )
+
+    model_section = (
+        r"\section{Model}\label{sec:Model}"
+        "\n"
+        "The risk maps in this report are generated using the results of an ensemble of the Negative "
+        "Binomial Regression model (Generalised Linear Models Family) and Linear Time-series Extrapolation "
+        "model. The maps in the Appendix are generated using the Negative Binomial Regression model."
+    )
+
+    references_section = (
+        r"\newpage"
+        "\n"
+        r"\section{References}\label{sec:References}"
+        "\n"
+        r"\bibliographystyle{unsrtnat}"
+        "\n"
+        r"\begingroup"
+        "\n"
+        r"\renewcommand{\section}[2]{}"
+        "\n"
+        r"\bibliography{bibliography}"
+        "\n"
+        r"\endgroup"
+    )
+
+    # Zone figures in appendix
+    appendix_lines = [r"\newpage", r"\section{Appendix}\label{sec: Appendix}"]
+    appendix_lines.append(
+        "The following are the risk maps based on the data available for different (10) zones:"
+    )
+    for i, (img, cap, lbl) in enumerate(zip(fnames_z, caps_z, labels_z)):
+        appendix_lines.append(_fig_block(img, cap, lbl))
+        if i < len(fnames_z) - 1:
+            appendix_lines.append(r"\clearpage")
+
+    footer_block = (
+        r"\begin{flushright}"
+        r"\colorbox{CadetBlue!30}{Report generated on: " + report_date + r"}"
+        r"\end{flushright}"
+    )
+
+    parts = [
+        preamble,
+        title_block,
+        about_section,
+        disclaimer,
+        "\n".join(corp_figs_lines),
+        data_section,
+        model_section,
+        references_section,
+        "\n".join(appendix_lines),
+        footer_block,
+        r"\end{document}",
+    ]
+    return "\n\n".join(parts) + "\n"
+
+
 def minimal_summary_tex(rep_dict: dict[str, Any], *, document_title: str) -> str:
-    """LaTeX source for the summary article (standalone .tex and ``main.tex`` in the bundle zip)."""
+    """Minimal summary .tex for standalone preview (not the full bundle report)."""
     title_tex = tex_escape_line(document_title)
     lines = [
         r"\documentclass[11pt,a4paper]{article}",
@@ -310,9 +578,9 @@ def minimal_summary_tex(rep_dict: dict[str, Any], *, document_title: str) -> str
             v = tex_escape_line(str(rep_dict[key]))
             lines.append(rf"\item \textbf{{{k}}}: {v}")
     lines.append(r"\end{itemize}")
-    lines.append(r"\section*{Figures}")
     nc = len(rep_dict.get("filenames_corp") or [])
     nz = len(rep_dict.get("filenames_zone") or [])
+    lines.append(r"\section*{Figures}")
     lines.append(
         rf"Planned map filenames: {tex_escape_line(str(nc))} corp, "
         rf"{tex_escape_line(str(nz))} zone (see JSON for full lists)."
@@ -399,17 +667,18 @@ url     = {{https://doi.org/10.24381/cds.adbb2d47}}
 
 def create_latex_bundle_zip(
     *,
-    main_tex_content: str,
+    rep_dict: dict[str, Any],
     access_date: str,
     plots_dir: Path,
     image_filenames: list[str],
     destination_zip: Path,
 ) -> None:
-    """Zip ``main.tex``, ``bibliography.bib``, and ``Images/`` map PNGs (legacy report zip layout)."""
+    """Zip full ``main.tex``, ``bibliography.bib``, and ``Images/`` map PNGs (matching SOT zip layout)."""
     destination_zip.parent.mkdir(parents=True, exist_ok=True)
+    main_tex = gen_full_report_tex(rep_dict)
     bib = create_report_bibliography_bib(access_date)
     with zipfile.ZipFile(destination_zip, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("main.tex", main_tex_content)
+        zf.writestr("main.tex", main_tex)
         zf.writestr("bibliography.bib", bib)
         for name in image_filenames:
             p = plots_dir / name
@@ -428,24 +697,47 @@ def write_minimal_pdf_source(
     )
 
 
-def compile_pdflatex_simple(
-    tex_path: Path, *, latex_bin: str = "pdflatex"
+def compile_latex_bundle_zip(
+    zip_path: Path,
+    *,
+    destination_pdf_path: Path,
+    latex_bin: str = "pdflatex",
 ) -> Path | None:
-    """Run pdflatex twice (no bibtex) for a minimal article."""
-    cwd = tex_path.parent
-    for _ in range(2):
-        r = subprocess.run(
-            [
-                latex_bin,
-                "-interaction=nonstopmode",
-                "-halt-on-error",
-                str(tex_path.name),
-            ],
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-        )
-        if r.returncode != 0:
+    """Extract zip to a temp dir, compile main.tex, copy PDF, clean up.
+
+    SOT sequence: extract zip → pdflatex → bibtex → pdflatex → pdflatex → copy PDF.
+    """
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            zf.extractall(tmp_dir)
+
+        main_tex = tmp_dir / "main.tex"
+        if not main_tex.exists():
             return None
-    pdf = cwd / f"{tex_path.stem}.pdf"
-    return pdf if pdf.is_file() else None
+
+        def _run(*cmd: str) -> bool:
+            try:
+                r = subprocess.run(
+                    list(cmd), cwd=tmp_dir, capture_output=True, text=True
+                )
+                return r.returncode == 0
+            except FileNotFoundError:
+                return False
+
+        if not _run(latex_bin, "-interaction=nonstopmode", "main.tex"):
+            return None
+        _run("bibtex", "main")
+        _run(latex_bin, "-interaction=nonstopmode", "main.tex")
+        _run(latex_bin, "-interaction=nonstopmode", "main.tex")
+
+        pdf = tmp_dir / "main.pdf"
+        if not pdf.exists():
+            return None
+
+        destination_pdf_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(pdf, destination_pdf_path)
+
+    return destination_pdf_path

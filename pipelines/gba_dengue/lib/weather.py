@@ -66,25 +66,61 @@ def aggregate_daily(
 ) -> pd.DataFrame:
     """Aggregate sub-daily rows to one row per (region_id, date).
 
-    Uses mean for temperature-like fields and sum for precipitation, consistent
-    with ``ParseAndExtractWeatherData.py`` daily aggregation from hourly data.
+    Each entry in ``daily_agg`` may have an optional ``output_name`` key so the
+    same input column can yield multiple output columns (e.g. max/min/mean for
+    temperature — matching the SOT ``ParseAndExtractWeatherData.py`` which produces
+    ``t2m_max``, ``t2m_min``, ``t2m_mean`` from the same hourly ``t2m`` column).
     """
     df = df.copy()
-    df["date"] = pd.to_datetime(df["date"]).dt.normalize()
+    # Convert GMT → IST (+5h30m) before daily grouping, matching SOT
+    # merge_file_daily_data: thisdf["time"] += timedelta(hours=5.5)
+    df["date"] = (
+        pd.to_datetime(df["date"]) + pd.Timedelta(hours=5, minutes=30)
+    ).dt.normalize()
     df["date"] = df["date"].dt.date.astype("datetime64[ns]")
+    # Remove boundary dates: first and last contain partial-day data due to IST offset
+    all_dates = sorted(df["date"].unique())
+    if len(all_dates) > 2:
+        df = df[df["date"].isin(all_dates[1:-1])].reset_index(drop=True)
     rules = daily_agg if daily_agg is not None else []
-    agg_spec = _build_agg_map(rules, _DAILY_AGG)
-    agg_dict: dict[str, str] = {}
-    for var in weather_vars:
-        if var not in df.columns:
+
+    # Build explicit (input_col, op, output_col) triples from rules.
+    # output_col defaults to input_col when not specified.
+    triples: list[tuple[str, str, str]] = []
+    for item in rules:
+        name = item.get("name")
+        op = item.get("op")
+        if not name or not op:
             continue
-        agg_dict[var] = agg_spec.get(var, "mean")
-    if not agg_dict:
+        output_name = str(item.get("output_name") or name)
+        if name in df.columns:
+            triples.append((name, op, output_name))
+
+    # Fallback: cover any weather_var that has no explicit rule.
+    covered_inputs = {inp for inp, _, _ in triples}
+    for var in weather_vars:
+        if var not in df.columns or var in covered_inputs:
+            continue
+        triples.append((var, _DAILY_AGG.get(var, "mean"), var))
+
+    if not triples:
         raise ValueError(
             "aggregate_daily: none of weather_vars are present in columns "
             f"{list(df.columns)!r} (after normalise_columns)."
         )
-    out = df.groupby(["region_id", "date"], as_index=False).agg(agg_dict)
+
+    grouped = df.groupby(["region_id", "date"])
+    parts: list[pd.DataFrame] = []
+    for inp_col, op, out_col in triples:
+        part = grouped[inp_col].agg(op).reset_index()
+        part.rename(columns={inp_col: out_col}, inplace=True)
+        parts.append(part.set_index(["region_id", "date"]))
+
+    out = parts[0].copy()
+    for part in parts[1:]:
+        out = out.join(part, how="outer")
+    out = out.reset_index()
+
     meta = [c for c in ("name", "parent", "parent_name") if c in df.columns]
     if meta:
         first = df.groupby(["region_id", "date"], as_index=False)[meta].first()
@@ -109,11 +145,16 @@ def rolling_aggregate(
     rules = rolling_agg if rolling_agg is not None else []
     agg_spec = _build_agg_map(rules, _ROLLING_AGG)
 
+    # Roll all weather_vars plus any column explicitly named in rolling_agg rules
+    # (e.g. derived daily columns like 2mTemperature_max that are not raw inputs).
+    extra = [item["name"] for item in rules if item.get("name")]
+    all_vars = list(dict.fromkeys(list(weather_vars) + extra))
+
     results: list[pd.DataFrame] = []
     window = f"{n_days - 1}D"
     for _, group in df.groupby("region_id"):
         g = group.set_index("date").sort_index()
-        for var in weather_vars:
+        for var in all_vars:
             if var not in g.columns:
                 continue
             op = agg_spec.get(var, "mean")

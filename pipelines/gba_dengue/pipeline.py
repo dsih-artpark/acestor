@@ -23,6 +23,7 @@ from pipelines.gba_dengue.steps.assess_thresholds import AssessThresholdsStep
 from pipelines.gba_dengue.steps.generate_maps import GenerateMapsStep
 from pipelines.gba_dengue.steps.generate_report import GenerateReportStep
 from pipelines.gba_dengue.steps.notify_run import NotifyRunStep
+from pipelines.gba_dengue.sources import filesystem as fs_sources
 
 
 def build_pipeline(config: PipelineConfig) -> PipelineDAG:
@@ -45,6 +46,9 @@ def build_pipeline(config: PipelineConfig) -> PipelineDAG:
                                      generate_maps ──────┤
                                      identify_cutoff_dates ┘
     """
+    # Apply data.geojson.base_path from YAML before any step runs.
+    fs_sources.configure_from_yaml(config.raw)
+
     identify_sampling_day = PipelineStep(
         name="identify_sampling_day", impl=IdentifySamplingDayStep()
     )
@@ -88,13 +92,16 @@ def build_pipeline(config: PipelineConfig) -> PipelineDAG:
     parse_case_data >> validate_case_data_sufficiency
     [identify_sampling_day, download_weather_data] >> parse_weather_data
 
-    # # validated case parse + weather feed cutoff identification
-    [validate_case_data_sufficiency, parse_weather_data] >> identify_cutoff_dates
+    # validated case parse + weather + sampling_day feed cutoff identification
+    [
+        validate_case_data_sufficiency,
+        parse_weather_data,
+        identify_sampling_day,
+    ] >> identify_cutoff_dates
 
     # cutoffs -> thresholds -> train -> combine -> assess
     identify_cutoff_dates >> generate_thresholds
-    generate_thresholds >> train_and_predict
-    identify_cutoff_dates >> train_and_predict
+    [generate_thresholds, identify_cutoff_dates] >> train_and_predict
     [train_and_predict, identify_cutoff_dates] >> combine_predictions
     combine_predictions >> assess_thresholds
 
@@ -103,7 +110,7 @@ def build_pipeline(config: PipelineConfig) -> PipelineDAG:
 
     # assess + maps + cutoffs (rep_dict epi/weather dates) -> report -> optional email
     [assess_thresholds, generate_maps, identify_cutoff_dates] >> generate_report
-    # generate_report >> notify_run
+    generate_report >> notify_run
 
     return PipelineDAG.from_steps(
         [

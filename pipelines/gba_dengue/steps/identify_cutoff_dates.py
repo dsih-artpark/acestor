@@ -13,6 +13,7 @@ from pipelines.gba_dengue.results import (
     CutoffDatesResult,
     DataSufficiencyResult,
     ParseWeatherDataResult,
+    SamplingDayResult,
 )
 
 
@@ -20,6 +21,7 @@ from pipelines.gba_dengue.results import (
 class IdentifyCutoffDatesInputs:
     validate_case_data_sufficiency: DataSufficiencyResult
     parse_weather_data: ParseWeatherDataResult
+    identify_sampling_day: SamplingDayResult
 
 
 class IdentifyCutoffDatesStep(BaseStep[IdentifyCutoffDatesInputs, CutoffDatesResult]):
@@ -89,5 +91,6 @@ class IdentifyCutoffDatesStep(BaseStep[IdentifyCutoffDatesInputs, CutoffDatesRes
             pred_upto=str(pred_upto.date()),
             cutoff_case=str(cutoff_case.date()),
             cutoff_weather=str(cutoff_weather.date()),
+            sampling_day=inputs.identify_sampling_day.sampling_day,
             prediction_dates=prediction_dates,
         )

@@ -106,11 +106,13 @@ assess:
 
 maps:
   output_dir: "plots"
-  figure_title: "Dengue risk map"
+  figure_title: "GBA Dengue Risk Map"
 
 report:
   output_dir: "reports"
-  compile_pdf: false
+  compile_pdf: true
+  caption_primary: "GBA corporations"
+  caption_secondary: "GBA zones"
 
 logging:
   level: INFO

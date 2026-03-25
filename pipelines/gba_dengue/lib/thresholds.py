@@ -41,13 +41,21 @@ def prev_nweeks_threshold_params(
     """Compute previous-N-weeks threshold parameters (Mean, StdDev) per region/date."""
 
     def _process_group(
-        group: pd.DataFrame, value_col: str, stat: str, n: int, k: int
+        group: pd.DataFrame,
+        value_col: str,
+        stat: str,
+        n: int,
+        k: int,
+        closed: str = "left",
     ) -> pd.Series:
         dates = group["date"]
         values = group[value_col]
         lookup = dict(zip(dates, values))
+        # closed="left": range(0, n) — includes current date (SOT default)
+        # closed != "left": range(1, n+1) — excludes current, looks back only (SOT closed=None)
+        indices = range(n) if closed == "left" else range(1, n + 1)
         target = pd.DataFrame(
-            {f"day_{i}": dates - pd.Timedelta(days=k * i) for i in range(n)}
+            {f"day_{i}": dates - pd.Timedelta(days=k * i) for i in indices}
         )
         target_vals = target.map(lambda d: lookup.get(d, np.nan))
         if stat == "mean":
@@ -64,9 +72,9 @@ def prev_nweeks_threshold_params(
     for _, group in df.groupby("region_id"):
         g = group.reset_index(drop=True)
         col = f"Mean_N{n}week_k{k}days"
-        g[col] = _process_group(g, "case", "mean", n, k)
-        g["Mean"] = _process_group(g, col, "mean", 3, k)
-        g["StdDev"] = _process_group(g, col, "std", 3, k)
+        g[col] = _process_group(g, "case", "mean", n, k, closed="left")
+        g["Mean"] = _process_group(g, col, "mean", 3, k, closed="right")
+        g["StdDev"] = _process_group(g, col, "std", 3, k, closed="right")
         parts.append(g)
 
     result = pd.concat(parts, ignore_index=True)

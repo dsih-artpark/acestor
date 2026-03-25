@@ -16,6 +16,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 COLOR_MAPPING = {1: "green", 2: "yellow", 3: "orange", 4: "red", 0: "w"}
+ZONE_LABEL = {1: "Low", 2: "Low Medium", 3: "Medium", 4: "High"}
 
 REGION_LABEL = {"corp": "Corp", "zone": "Zone", "ward": "Ward"}
 MODEL_LABEL = {
@@ -83,10 +84,17 @@ def gen_plot(
     if region in ("corp", "zone"):
         for _, row in gdf_all.iterrows():
             c = row["geometry"].centroid
-            ax.annotate(row["name"].title(), xy=(c.x, c.y), ha="center", fontsize=6)
+            ax.annotate(
+                row["name"].title(),
+                xy=(c.x, c.y),
+                xytext=(0, 0),
+                textcoords="offset points",
+                horizontalalignment="center",
+                fontsize=6,
+                color="black",
+            )
 
     ax.set_aspect("equal")
-    ax.axis("off")
 
     patches = []
     for label, color in COLOR_MAPPING.items():
@@ -95,14 +103,16 @@ def gen_plot(
             kw["hatch"] = "////"
             kw["label"] = "Not enough information"
         else:
-            kw["label"] = str(label)
+            kw["label"] = ZONE_LABEL.get(label, str(label))
         patches.append(mpatches.Patch(**kw))
     plt.legend(
         handles=patches,
-        title="Dengue Risk Zones",
+        title="Dengue Risk Levels",
         loc="lower left",
         bbox_to_anchor=(0.655, 0.7),
-    )
+    ).get_frame().set_edgecolor("black")
+
+    ax.axis("off")
     plt.suptitle(f"{figure_title}\n({thisdate})", x=0.52, y=0.95)
 
     end_str = pd.Timestamp.today().date().strftime("%Y%m%d")
