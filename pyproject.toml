@@ -7,8 +7,11 @@ license = {text = "GPL-3.0"}
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = [
+    "netcdf4>=1.7.3",
     "pandas>=2.3.3",
+    "python-dotenv>=1.2.2",
     "pyyaml",
+    "xarray>=2025.6.1",
 ]
 
 [project.optional-dependencies]

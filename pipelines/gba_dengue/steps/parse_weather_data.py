@@ -26,6 +26,31 @@ class ParseWeatherDataInputs:
 class ParseWeatherDataStep(BaseStep[ParseWeatherDataInputs, ParseWeatherDataResult]):
     input_type: ClassVar[type] = ParseWeatherDataInputs
 
+    def _write_intermediate(
+        self,
+        context: PipelineContext,
+        df: pd.DataFrame,
+        region_type: str,
+        folder: str,
+        col_rename: dict[str, str],
+    ) -> None:
+        """Write per-month partitioned intermediate files matching SOT structure.
+
+        Path: datasets/{folder}/{region_type}/{year}/{year}_{month:02d}.csv
+        Columns renamed per col_rename before writing.
+        """
+        out = df.copy()
+        rename_map = {k: v for k, v in col_rename.items() if k in out.columns}
+        if rename_map:
+            out = out.rename(columns=rename_map)
+        out["date"] = pd.to_datetime(out["date"])
+        for (year, month), grp in out.groupby(
+            [out["date"].dt.year, out["date"].dt.month]
+        ):
+            rel = f"datasets/{folder}/{region_type}/{year}/{year}_{month:02d}.csv"
+            dest = context.artifact_path(rel)
+            context.artifacts.write_text(grp.to_csv(index=False), dest)
+
     def _read_bytes(self, context: PipelineContext, ref: str) -> bytes:
         if ref.startswith("filesystem://"):
             with open(ref[len("filesystem://") :], "rb") as fh:
@@ -82,6 +107,13 @@ class ParseWeatherDataStep(BaseStep[ParseWeatherDataInputs, ParseWeatherDataResu
             rolling_agg=cfg.rolling_agg,
         )
 
+        self._write_intermediate(
+            context, daily, cfg.region_type, "agg_daily", cfg.intermediate_col_rename
+        )
+        self._write_intermediate(
+            context, rolling, cfg.region_type, "agg_Ndays", cfg.intermediate_col_rename
+        )
+
         max_date = pd.Timestamp(rolling["date"].max())
         latest_day = get_latest_sampling_day(
             max_date, inputs.identify_sampling_day.sampling_day
@@ -93,16 +125,10 @@ class ParseWeatherDataStep(BaseStep[ParseWeatherDataInputs, ParseWeatherDataResu
             sampling_rate=cfg.sampling_rate,
         )
 
-        # Drop derived daily columns not carried to final output (SOT keeps only t2m_mean, d2m_mean, tp_sum)
-        drop_cols = [
-            c
-            for c in ["2mTemperature_max", "2mTemperature_min"]
-            if c in sampled.columns
-        ]
-        if drop_cols:
-            sampled = sampled.drop(columns=drop_cols)
-
-        renamed = weather.rename_columns_for_output(sampled, cfg.region_type)
+        rename_map = {
+            k: v for k, v in cfg.intermediate_col_rename.items() if k in sampled.columns
+        }
+        renamed = sampled.rename(columns=rename_map) if rename_map else sampled
         dest = context.artifact_path(f"datasets/weather_{cfg.region_type}_sampled.csv")
         context.artifacts.write_text(renamed.to_csv(index=False), dest)
         context.log.info(

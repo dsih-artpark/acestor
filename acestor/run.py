@@ -15,7 +15,15 @@ import argparse
 import importlib
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Callable
+
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(__file__).parent.parent / ".env", override=False)
+except ImportError:
+    pass
 
 from acestor import PipelineConfig, PipelineContext, PipelineDAG, PipelineRunner
 from acestor.infra.run_notification import send_run_notification_email_if_configured
@@ -70,8 +78,8 @@ def main(argv: list[str] | None = None) -> int:
 
     # Failure notifications: the DAG may not reach ``notify_run``, so handle here.
     if result.status == "failed":
-        cfg = context.config if isinstance(context.config, dict) else {}
-        email_cfg = cfg.get("email") if isinstance(cfg.get("email"), dict) else {}
+        cfg = context.config or {}
+        email_cfg = cfg.get("email") or {}
         if email_cfg.get("enabled") and "failed" in (email_cfg.get("on") or []):
             end_ts = datetime.now(timezone.utc).isoformat()
             start_ts = context.run_started_at or end_ts

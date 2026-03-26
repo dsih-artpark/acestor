@@ -274,6 +274,8 @@ class WeatherParseConfig:
     rolling_agg: list[dict[str, str]]
     rolling_n_days: int
     sampling_rate: int
+    # Column rename map applied when writing agg_daily / agg_Ndays intermediate files
+    intermediate_col_rename: dict[str, str]
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any]) -> WeatherParseConfig:
@@ -310,6 +312,17 @@ class WeatherParseConfig:
         rolling_n_days = int(raw.get("rolling_n_days", 7))
         sampling_rate = int(raw.get("sampling_rate", 7))
 
+        default_rename: dict[str, str] = {
+            "2mTemperature_max": "t2m_max",
+            "2mTemperature_min": "t2m_min",
+            "2mTemperature": "t2m_mean",
+            "2mDewpointTemperature": "d2m_mean",
+            "totalPrecipitation": "tp_sum",
+        }
+        intermediate_col_rename = dict(
+            raw.get("intermediate_col_rename", default_rename)
+        )
+
         return cls(
             region_type=region_type,
             weather_variables=weather_variables,
@@ -317,6 +330,7 @@ class WeatherParseConfig:
             rolling_agg=rolling_agg,
             rolling_n_days=rolling_n_days,
             sampling_rate=sampling_rate,
+            intermediate_col_rename=intermediate_col_rename,
         )
 
 
@@ -371,7 +385,6 @@ class ThresholdsConfig:
 @dataclass(frozen=True)
 class TrainPredictConfig:
     spatial_res: str
-    tempo_res: str
     data_features: list[str]
     lag_temp: list[int]
     lag_rf: list[int]
@@ -384,7 +397,6 @@ class TrainPredictConfig:
         lag = raw.get("lag", {})
         return cls(
             spatial_res=raw.get("spatial_res", "zone"),
-            tempo_res=raw.get("tempo_res", "W-MON"),
             data_features=list(
                 raw.get(
                     "data_features",

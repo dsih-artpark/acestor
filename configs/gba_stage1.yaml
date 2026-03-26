@@ -90,6 +90,13 @@ data:
     rolling_n_days: 7
     # Sample rate for daily data; default 7.
     sampling_rate: 7
+    # Column rename applied when writing agg_daily / agg_Ndays intermediate files (SOT names)
+    intermediate_col_rename:
+      "2mTemperature_max": "t2m_max"
+      "2mTemperature_min": "t2m_min"
+      "2mTemperature": "t2m_mean"
+      "2mDewpointTemperature": "d2m_mean"
+      "totalPrecipitation": "tp_sum"
 
 # ---------------------------------------------------------------------------
 # Cutoff, threshold, and model configuration
@@ -106,16 +113,15 @@ thresholds:
 
 model:
   spatial_res: "zone"
-  tempo_res: "W-MON"
   data_features:
     - "case"
     - "recordDate"
     - "recordYear"
     - "recordMonth"
     - "ISOWeek"
-    - "2mTemperature"
-    - "totalPrecipitation"
-    - "2mDewpointTemperature"
+    - "t2m_mean"
+    - "tp_sum"
+    - "d2m_mean"
   lag:
     lag_temp: [12]
     lag_rf: [4]

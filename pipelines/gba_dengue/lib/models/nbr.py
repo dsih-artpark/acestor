@@ -16,11 +16,11 @@ def _lag(
     df: pd.DataFrame, spatial_col: str, lag_temp: list[int], lag_rf: list[int]
 ) -> pd.DataFrame:
     for lg in lag_temp:
-        df[f"temp_lag_{lg}"] = df.groupby(spatial_col)["2mTemperature"].shift(lg)
+        df[f"temp_lag_{lg}"] = df.groupby(spatial_col)["t2m_mean"].shift(lg)
     for lg in lag_rf:
         df[[f"rainfall_lag_{lg}", f"relative_humidity_lag_{lg}"]] = df.groupby(
             spatial_col
-        )[["totalPrecipitation", "2mDewpointTemperature"]].shift(lg)
+        )[["tp_sum", "d2m_mean"]].shift(lg)
     return df
 
 

@@ -19,7 +19,7 @@ data:
 
   case_parse:
     region_types:
-      - "zone"
+      - "corp"
     date_start: "2015-01-01"
     date_end: ""
 
@@ -38,19 +38,15 @@ data:
     netcdf_cache_path: "./datasets/netcdf"        # local zip cache dir; if set, filesystem mode parses zips here
     parsed_output_path: "./datasets/parsednetcdf" # parsed CSVs cached here; re-parse skipped if CSV already exists
     # region_bounds: [13.3, 77.3, 12.7, 77.9]  # [N, W, S, E] or omit for auto from geojson
-    region_type: "zone"                       # zone, corp, ward
+    region_type: "corp"                       # zone, corp, ward
     w_params: ["t2m", "d2m", "tp"]            # NetCDF short variable names for parsing
     threshold_km: 25.0                        # grid-point distance filter from region boundary
     bounds_resolution_deg: 0.1                # auto bounds: snap to this degree grid + padding (~0.25 for ERA5 single-levels)
     start_date: "2015-01-01"                  # inclusive download start (YYYY-MM-DD)
     end_date: "2024-07-01"                    # inclusive download end (YYYY-MM-DD)
-    # cds_variables:                          # optional: override CDS API variable names (default: from GBA_CDS_VARIABLES env)
-    #   - "2m_temperature"
-    #   - "2m_dewpoint_temperature"
-    #   - "total_precipitation"
 
   weather_parse:
-    region_type: "zone"
+    region_type: "corp"
     weather_variables:
       - "2mTemperature"
       - "totalPrecipitation"
@@ -68,9 +64,7 @@ data:
         op: "mean"
       - name: "totalPrecipitation"
         op: "sum"
-
     rolling_n_days: 7
-    
     rolling_agg:
       - name: "2mTemperature"
         op: "mean"
@@ -92,14 +86,14 @@ cutoff:
   weather_min_regions: 5
 
 thresholds:
-  region_type: "zone"
+  region_type: "corp"
   n_weeks: 4
   historical_n_years: 5
   excluded_years: [2020, 2021]
   included_years: []  # optional; non-empty = only use these years for historical thresholds
 
 model:
-  spatial_res: "zone"
+  spatial_res: "corp"
   data_features:
     - "case"
     - "recordDate"
@@ -130,15 +124,6 @@ report:
   caption_primary: "GBA corporations"
   caption_secondary: "GBA zones"
 
-report_distribution:
-  system_name: "Dengue Early Warning System"
-  organization: "ARTPARK, IISc Bengaluru"
-  state: "Karnataka"
-  region: "Greater Bengaluru Area (GBA)"
-  department: "Directorate of Health & Family Welfare, GoK"
-  contact_email: ""       # optional: shown in footer
-  footer_note: ""         # optional: extra disclaimer line
-
 email:
   enabled: true
   "on": ["success"]
@@ -160,4 +145,3 @@ storages:
     kind: filesystem
     filesystem:
       base_path: "./artifacts"
-
