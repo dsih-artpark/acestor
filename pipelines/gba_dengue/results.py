@@ -98,13 +98,22 @@ class ReportResult:
     """``report_path`` is the ``rep_dict`` JSON storage key.
 
     ``tex_path`` / ``latex_bundle_zip_path`` are set when those artifacts are emitted.
-    ``pdf_path`` is set when ``report.compile_pdf`` and LaTeX compilation succeed.
+    ``pdf_path`` / ``maps_zip_path`` are filesystem paths set when those files are produced.
     """
 
     report_path: str
     pdf_path: str | None = None
+    maps_zip_path: str | None = None
     tex_path: str | None = None
     latex_bundle_zip_path: str | None = None
+
+
+@dataclass(frozen=True)
+class SendReportResult:
+    """Outcome of the ``send_report`` email step."""
+
+    sent: bool
+    reason: str  # e.g. "disabled", "not_subscribed", "sent", "smtp_incomplete", "send_failed"
 
 
 @dataclass(frozen=True)

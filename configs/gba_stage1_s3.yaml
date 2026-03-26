@@ -114,6 +114,19 @@ report:
   caption_primary: "GBA corporations"
   caption_secondary: "GBA zones"
 
+email:
+  enabled: true
+  on: ["success"]
+  from: "${SMTP_FROM}"
+  to:
+    - ashutosh.singhai@artpark.in
+  smtp:
+    host: "${SMTP_HOST}"
+    port: 587
+    use_tls: true
+    username: "${SMTP_USERNAME}"
+    password: "${SMTP_PASSWORD}"
+
 logging:
   level: INFO
 

@@ -182,6 +182,7 @@ class GenerateReportStep(BaseStep[GenerateReportInputs, ReportResult]):
         return ReportResult(
             report_path=rep_json,
             pdf_path=pdf_path,
+            maps_zip_path=str(all_maps_zip_path) if all_names else None,
             tex_path=tex_key,
             latex_bundle_zip_path=latex_bundle_key,
         )

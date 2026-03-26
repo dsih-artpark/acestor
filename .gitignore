@@ -36,6 +36,7 @@ cache/
 # Internal / local-only (not published)
 parity/
 execution_steps.txt
+test_email.py
 
 *.log
 

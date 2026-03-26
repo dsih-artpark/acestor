@@ -22,7 +22,7 @@ from pipelines.gba_dengue.steps.combine_predictions import CombinePredictionsSte
 from pipelines.gba_dengue.steps.assess_thresholds import AssessThresholdsStep
 from pipelines.gba_dengue.steps.generate_maps import GenerateMapsStep
 from pipelines.gba_dengue.steps.generate_report import GenerateReportStep
-from pipelines.gba_dengue.steps.notify_run import NotifyRunStep
+from pipelines.gba_dengue.steps.send_report import SendReportStep
 from pipelines.gba_dengue.sources import filesystem as fs_sources
 
 
@@ -42,7 +42,7 @@ def build_pipeline(config: PipelineConfig) -> PipelineDAG:
                                      combine_predictions ──> assess_thresholds
                                      assess_thresholds ──┬──> generate_maps
                                      combine_predictions ┘
-                                     assess_thresholds ──┬──> generate_report ──> notify_run
+                                     assess_thresholds ──┬──> generate_report ──> send_report
                                      generate_maps ──────┤
                                      identify_cutoff_dates ┘
     """
@@ -83,7 +83,7 @@ def build_pipeline(config: PipelineConfig) -> PipelineDAG:
     )
     generate_maps = PipelineStep(name="generate_maps", impl=GenerateMapsStep())
     generate_report = PipelineStep(name="generate_report", impl=GenerateReportStep())
-    notify_run = PipelineStep(name="notify_run", impl=NotifyRunStep())
+    send_report = PipelineStep(name="send_report", impl=SendReportStep())
 
     # --- Wire the DAG ---
 
@@ -108,9 +108,9 @@ def build_pipeline(config: PipelineConfig) -> PipelineDAG:
     # assess + combined predictions -> maps
     [assess_thresholds, combine_predictions] >> generate_maps
 
-    # assess + maps + cutoffs (rep_dict epi/weather dates) -> report -> optional email
+    # assess + maps + cutoffs (rep_dict epi/weather dates) -> report -> send email
     [assess_thresholds, generate_maps, identify_cutoff_dates] >> generate_report
-    generate_report >> notify_run
+    generate_report >> send_report
 
     return PipelineDAG.from_steps(
         [
@@ -127,6 +127,6 @@ def build_pipeline(config: PipelineConfig) -> PipelineDAG:
             assess_thresholds,
             generate_maps,
             generate_report,
-            notify_run,
+            send_report,
         ]
     )
