@@ -349,6 +349,7 @@ class ThresholdsConfig:
     n_weeks: int
     historical_n_years: int | None
     excluded_years: list[int]
+    included_years: list[int]  # empty = no restriction; non-empty = only these years
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any]) -> ThresholdsConfig:
@@ -358,6 +359,7 @@ class ThresholdsConfig:
             n_weeks=int(raw.get("n_weeks", 4)),
             historical_n_years=int(ny) if ny is not None else None,
             excluded_years=[int(y) for y in raw.get("excluded_years", [2020, 2021])],
+            included_years=[int(y) for y in raw.get("included_years", [])],
         )
 
 
@@ -374,6 +376,7 @@ class TrainPredictConfig:
     lag_temp: list[int]
     lag_rf: list[int]
     years_to_exclude: list[int]
+    years_to_include: list[int]  # empty = no restriction; non-empty = only these years
     list_alpha: list[float]
 
     @classmethod
@@ -402,6 +405,7 @@ class TrainPredictConfig:
             years_to_exclude=[
                 int(y) for y in raw.get("years_to_exclude", [2020, 2021])
             ],
+            years_to_include=[int(y) for y in raw.get("years_to_include", [])],
             list_alpha=[float(a) for a in raw.get("list_alpha", [1.0, 2.0])],
         )
 

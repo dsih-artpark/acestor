@@ -29,6 +29,7 @@ def _filter_features(
     feature_cols: list[str],
     spatial_col: str,
     years_to_exclude: list[int],
+    years_to_include: list[int],
 ) -> pd.DataFrame:
     keep = [c for c in feature_cols if c in df.columns]
     keep += [
@@ -39,7 +40,10 @@ def _filter_features(
     keep.append(spatial_col)
     keep = list(dict.fromkeys(keep))
     out = df[keep].copy()
-    out = out[~out["recordYear"].isin(years_to_exclude)]
+    if years_to_include:
+        out = out[out["recordYear"].isin(years_to_include)]
+    if years_to_exclude:
+        out = out[~out["recordYear"].isin(years_to_exclude)]
     return out.dropna().reset_index(drop=True)
 
 
@@ -76,6 +80,7 @@ def negative_binomial_regression(
     lag_temp: list[int],
     lag_rf: list[int],
     years_to_exclude: list[int],
+    years_to_include: list[int],
     predict_upto_date: pd.Timestamp,
 ) -> pd.DataFrame:
     """Run negative-binomial regression and return predictions for the last 4 weeks of weather."""
@@ -94,7 +99,9 @@ def negative_binomial_regression(
     df0 = _lag(df0, spatial_col, lag_temp, lag_rf)
 
     train_data = df0[~df0["recordDate"].isin(last_4)].copy()
-    filtered = _filter_features(train_data, feature_cols, spatial_col, years_to_exclude)
+    filtered = _filter_features(
+        train_data, feature_cols, spatial_col, years_to_exclude, years_to_include
+    )
     encoded = _one_hot(filtered)
     scaled, scaler = _rescale(filtered)
     X_train = sm.add_constant(pd.concat([scaled, encoded], axis=1))

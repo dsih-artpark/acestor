@@ -137,7 +137,7 @@ class ParseCaseDataStep(BaseStep[ParseCaseDataInputs, ParseCaseDataResult]):
             date_end = (
                 pd.Timestamp(cfg.date_end).normalize()
                 if cfg.date_end
-                else pd.Timestamp.today().normalize()
+                else pd.Timestamp(inputs.identify_sampling_day.run_date).normalize()
             )
 
             by_region: dict[str, str] = {}

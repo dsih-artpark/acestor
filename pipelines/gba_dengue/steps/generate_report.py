@@ -56,7 +56,8 @@ class GenerateReportStep(BaseStep[GenerateReportInputs, ReportResult]):
             pd.read_csv(io.StringIO(zone_csv)) if zone_csv.strip() else pd.DataFrame()
         )
 
-        ref_date = pd.Timestamp.today().normalize()
+        co = inputs.identify_cutoff_dates
+        ref_date = pd.Timestamp(co.run_date).normalize()
         corp_details = report_lib.get_relevant_figures_details(best_corp, ref_date)
         zone_details = report_lib.get_relevant_figures_details(best_zone, ref_date)
 
@@ -79,8 +80,6 @@ class GenerateReportStep(BaseStep[GenerateReportInputs, ReportResult]):
                 caption_corp_scope=cfg.caption_primary,
                 caption_zone_scope=cfg.caption_secondary,
             )
-
-        co = inputs.identify_cutoff_dates
         rep_dict = report_lib.build_rep_dict(
             pred_c=pred_c,
             dates_c=list(dates_c) if dates_c is not None else None,
@@ -93,13 +92,14 @@ class GenerateReportStep(BaseStep[GenerateReportInputs, ReportResult]):
             cutoff_case=co.cutoff_case,
             cutoff_weather=co.cutoff_weather,
             epi_data_start_date=epi_start,
+            run_date=co.run_date,
         )
 
-        end_str = pd.Timestamp.today().date().strftime("%Y%m%d")
+        end_str = pd.Timestamp(co.run_date).date().strftime("%Y%m%d")
         month_key = rep_dict["reportmonth"] or "report"
         safe_month = month_key.replace(" ", "_").replace("/", "-")
 
-        pred_raw = rep_dict.get("prediction_date") or str(pd.Timestamp.today().date())
+        pred_raw = rep_dict.get("prediction_date") or co.run_date
         access_date = (
             pd.Timestamp(str(pred_raw).replace("--", "-")).date().strftime("%d-%b-%Y")
         )

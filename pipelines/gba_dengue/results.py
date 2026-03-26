@@ -61,6 +61,7 @@ class CutoffDatesResult:
     cutoff_case: str
     cutoff_weather: str
     sampling_day: str
+    run_date: str
     prediction_dates: list[str] = field(default_factory=list)
 
 

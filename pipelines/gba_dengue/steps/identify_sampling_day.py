@@ -13,7 +13,12 @@ class IdentifySamplingDayStep(BaseStep[NoInputs, SamplingDayResult]):
     input_type: ClassVar[type] = NoInputs
 
     def run(self, context: PipelineContext, inputs: NoInputs) -> SamplingDayResult:
-        run_date = pd.Timestamp.today().normalize()
+        raw_run_date = (context.config or {}).get("run", {}).get("run_date", "")
+        run_date = (
+            pd.Timestamp(str(raw_run_date)).normalize()
+            if raw_run_date
+            else pd.Timestamp.today().normalize()
+        )
         day = sampling.get_day_abbreviation(run_date)
 
         context.write_artifact_json(

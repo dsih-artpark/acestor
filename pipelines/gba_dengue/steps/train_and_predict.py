@@ -93,6 +93,7 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
             lag_temp=cfg.lag_temp,
             lag_rf=cfg.lag_rf,
             years_to_exclude=cfg.years_to_exclude,
+            years_to_include=cfg.years_to_include,
             predict_upto_date=pred_upto,
         )
         nbr_out = zones.merge_predictions_thresholds(
@@ -111,6 +112,7 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
             case_df,
             spatial_col=cfg.spatial_res,
             years_to_exclude=cfg.years_to_exclude,
+            years_to_include=cfg.years_to_include,
             predict_upto_date=tse_upto,
         )
         if not tse_pred.empty:
@@ -133,15 +135,14 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
         classified = zones.classify_into_zones(ensembled, spatial_col=cfg.spatial_res)
         classified["predictionZone"] = classified["predictionZone"].fillna(0)
 
+        run_date = pd.Timestamp(inputs.identify_cutoff_dates.run_date).normalize()
         future_dates = [
-            d
-            for d in classified["startDatePredictedWeek"].unique()
-            if d >= pd.Timestamp.today().normalize()
+            d for d in classified["startDatePredictedWeek"].unique() if d >= run_date
         ]
         month_string = (
             pred_lib.get_month_year_range(list(future_dates)) if future_dates else ""
         )
-        end_str = pd.Timestamp.today().date().strftime("%Y%m%d")
+        end_str = run_date.date().strftime("%Y%m%d")
 
         dest = context.artifact_path(
             f"results/Predictions_{month_string}_{cfg.spatial_res.capitalize()}_{end_str}.csv"

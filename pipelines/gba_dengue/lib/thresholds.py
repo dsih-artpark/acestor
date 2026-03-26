@@ -86,10 +86,13 @@ def historical_threshold_params(
     df: pd.DataFrame,
     n_years: int | None = None,
     excluded_years: list[int] | None = None,
+    included_years: list[int] | None = None,
 ) -> pd.DataFrame:
     """Compute historical (same month + weekday) threshold parameters."""
     if excluded_years is None:
         excluded_years = []
+    if included_years is None:
+        included_years = []
     df = deepcopy(df)
     df["date"] = pd.to_datetime(df["date"])
     df["year"] = df["date"].dt.year
@@ -103,6 +106,8 @@ def historical_threshold_params(
         cond = df["year"] < year
         if n_years is not None:
             cond = cond & (df["year"] >= year - n_years)
+        if included_years:
+            cond = cond & (df["year"].isin(included_years))
         if excluded_years:
             cond = cond & (~df["year"].isin(excluded_years))
         past = df[cond]

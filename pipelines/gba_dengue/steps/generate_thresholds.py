@@ -50,6 +50,7 @@ class GenerateThresholdsStep(BaseStep[GenerateThresholdsInputs, ThresholdsResult
             aligned,
             n_years=cfg.historical_n_years,
             excluded_years=cfg.excluded_years,
+            included_years=cfg.included_years,
         )
         combined = thresholds.combine_thresholds([prev_n, hist])
 

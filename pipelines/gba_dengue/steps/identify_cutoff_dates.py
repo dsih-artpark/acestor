@@ -92,5 +92,6 @@ class IdentifyCutoffDatesStep(BaseStep[IdentifyCutoffDatesInputs, CutoffDatesRes
             cutoff_case=str(cutoff_case.date()),
             cutoff_weather=str(cutoff_weather.date()),
             sampling_day=inputs.identify_sampling_day.sampling_day,
+            run_date=inputs.identify_sampling_day.run_date,
             prediction_dates=prediction_dates,
         )

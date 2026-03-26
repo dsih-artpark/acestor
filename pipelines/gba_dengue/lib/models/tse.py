@@ -13,7 +13,11 @@ import pandas as pd
 
 
 def _process_region(
-    df: pd.DataFrame, spatial_col: str, predict_upto_date, years_to_exclude: list[int]
+    df: pd.DataFrame,
+    spatial_col: str,
+    predict_upto_date,
+    years_to_exclude: list[int],
+    years_to_include: list[int],
 ) -> pd.DataFrame:
     df = df.copy()
     df["IsNaN"] = pd.isna(df["case"])
@@ -31,7 +35,10 @@ def _process_region(
     df["MaxCaseMonthlyHistorical"] = df.groupby([spatial_col, "recordMonth"])[
         "equivCase"
     ].transform("max")
-    df = df[~df["recordYear"].isin(years_to_exclude)]
+    if years_to_include:
+        df = df[df["recordYear"].isin(years_to_include)]
+    if years_to_exclude:
+        df = df[~df["recordYear"].isin(years_to_exclude)]
     df = df[df["recordDate"] <= pd.to_datetime(predict_upto_date)]
     return df.sort_values("recordDate").reset_index(drop=True)
 
@@ -41,6 +48,7 @@ def linear_extrapolation(
     *,
     spatial_col: str,
     years_to_exclude: list[int],
+    years_to_include: list[int],
     predict_upto_date: pd.Timestamp,
 ) -> pd.DataFrame:
     """Extrapolate case counts 2 weeks ahead using a linear trend on the 4-week moving average."""
@@ -55,7 +63,11 @@ def linear_extrapolation(
 
     for region_name, region_data in df.groupby(spatial_col):
         region_data = _process_region(
-            region_data, spatial_col, predict_upto_date, years_to_exclude
+            region_data,
+            spatial_col,
+            predict_upto_date,
+            years_to_exclude,
+            years_to_include,
         )
         if len(region_data) < 2:
             skipped.append(region_name)

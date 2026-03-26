@@ -3,7 +3,7 @@ pipeline:
   title: "Dengue intelligence"
 
 run:
-  run_date: "2026-03-18"
+  run_date: "2026-03-18"  # YYYY-MM-DD; leave empty ("") to use today's date
 
 data:
   case_download:
@@ -81,6 +81,7 @@ thresholds:
   n_weeks: 4
   historical_n_years: 5
   excluded_years: [2020, 2021]
+  included_years: []  # optional; non-empty = only use these years for historical thresholds
 
 model:
   spatial_res: "zone"
@@ -98,6 +99,7 @@ model:
     lag_temp: [12]
     lag_rf: [4]
   years_to_exclude: [2020, 2021]
+  years_to_include: []  # optional; non-empty = only use these years for model training
   list_alpha: [1.0, 2.0]
 
 assess:

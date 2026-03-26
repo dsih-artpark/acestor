@@ -161,6 +161,7 @@ def build_rep_dict(
     cutoff_case: str,
     cutoff_weather: str,
     epi_data_start_date: str,
+    run_date: str | None = None,
 ) -> dict[str, Any]:
     """Structured report payload (dates use ``--`` for LaTeX-friendly display)."""
     dates_c = dates_c or []
@@ -182,7 +183,9 @@ def build_rep_dict(
     rep: dict[str, Any] = {
         "reportmonth": reportmonth,
         "prediction_date": prediction_date,
-        "report_date": str(pd.Timestamp.today().date()).replace("-", "--"),
+        "report_date": str(
+            pd.Timestamp(run_date).date() if run_date else pd.Timestamp.today().date()
+        ).replace("-", "--"),
         "epi_data_start_date": epi_dd,
         "epi_data_end_date": cc,
         "weather_data_end_date": cw,
