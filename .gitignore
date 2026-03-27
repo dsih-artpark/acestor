@@ -39,4 +39,5 @@ execution_steps.txt
 test_email.py
 
 *.log
+logs/
 

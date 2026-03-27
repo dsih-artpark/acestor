@@ -1,221 +1,312 @@
 # acestor
 
-**acestor** is the **production dengue intelligence pipeline**. It ingests case and weather data, estimates risk thresholds, runs forecasting models, produces maps, and emits report artifacts—config-driven, repeatable, and suitable for scheduled or on-demand operation.
+**acestor** is a production dengue intelligence pipeline. It ingests case and weather data, estimates risk thresholds, runs forecasting models, produces maps, and generates report artifacts — all driven from a single YAML config file.
 
 ---
 
-## Why this exists
+## Table of Contents
 
-- **Reproducible runs** from a single YAML configuration and a fixed processing graph.  
-- **Operational flexibility**: run entirely on **local disk** (no cloud storage required) or connect **S3** when you need it.  
-- **Configurable data sources**: weather from **pre-parsed files**, **local NetCDF**, or **Copernicus CDS** (optional).  
-- **Observable outputs**: artifacts per run (predictions, plots, report bundles) under a configurable storage root.
-
----
-
-## Project layout
-
-| Path | Purpose |
-|------|---------|
-| [`acestor/`](acestor/) | Runtime: configuration loading, orchestration, storage backends, CLI entrypoint. |
-| [`pipelines/`](pipelines/) | Dengue pipeline stages, domain logic (`lib/`), typed step outputs, and step config. |
-| [`configs/`](configs/) | Example YAML configurations for local and staged runs. |
-
-Contributor-focused notes (lint, pre-commit) for the Python tree: [`acestor/README.md`](acestor/README.md).
+1. [Prerequisites](#prerequisites)
+2. [Installation](#installation)
+3. [Running the pipeline](#running-the-pipeline)
+4. [Scheduling pipelines](#scheduling-pipelines)
+5. [Configuration guide](#configuration-guide)
+6. [Pipeline stages](#pipeline-stages)
+7. [Project layout](#project-layout)
+8. [Development](#development)
 
 ---
 
-## Requirements
+## Prerequisites
 
-- **Python 3.10+**
-- **[uv](https://docs.astral.sh/uv/)** (recommended) or another PEP 517 installer  
-- **Geospatial & modeling stack**: install with the **`dengue`** optional extra.  
-- **CDS weather download** (optional): **`cds`** extra + CDS API credentials.  
-- **S3** (optional): **`s3`** extra.  
-- **Report stage outputs** (by default): **`rep_dict` JSON**, a **summary `.tex`**, a **LaTeX bundle zip** (`main.tex`, `bibliography.bib`, `Images/`), and **`AllMaps_*.zip`**. Optional **PDF** when `report.compile_pdf: true` and **`pdflatex`** is on `PATH`.
+Before anything else, make sure you have:
+
+- **Python 3.10+** — [python.org](https://www.python.org/downloads/)
+- **uv** — fast Python package manager ([install guide](https://docs.astral.sh/uv/getting-started/installation/))
+- **Geospatial system libraries** — required for `geopandas` / `shapely`:
+  - **Mac**: `brew install gdal proj geos`
+  - **Linux (Debian/Ubuntu)**: `apt-get install gdal-bin libgdal-dev libgeos-dev libproj-dev`
+  - **Windows**: install [OSGeo4W](https://trac.osgeo.org/osgeo4w/) or use WSL
+- **pdflatex** *(optional)* — only needed if `report.compile_pdf: true` in your config
 
 ---
 
 ## Installation
 
-From the repository root:
+**1. Clone the repo**
 
 ```bash
-uv sync --extra dengue
+git clone https://github.com/dsih-artpark/acestor.git acestor-v2
+cd acestor-v2
 ```
 
-Optional extras:
+**2. Install dependencies**
 
 ```bash
 uv sync --extra dengue --extra cds --extra s3
 ```
 
-For contributors (lint, tests, pre-commit):
+| Extra | What it adds |
+|-------|-------------|
+| `dengue` | Geospatial + modeling stack (geopandas, scikit-learn, etc.) |
+| `cds` | Copernicus CDS weather downloads |
+| `s3` | AWS S3 storage backend |
+
+**3. Set up environment variables**
+
+Copy the example env file and fill in your secrets:
 
 ```bash
-make install-dev
-# or: uv sync --all-extras --dev
+cp .env.example .env   # if it exists, otherwise create .env manually
 ```
+
+At minimum, set these if you use CDS downloads or email notifications:
+
+```
+CDS_API_KEY=your-key-here
+SMTP_PASSWORD=your-password-here
+```
+
+> Secrets in YAML configs use `${VAR:-default}` syntax — never commit real keys.
 
 ---
 
-## Quick start: clone → configure → run
+## Running the pipeline
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/dsih-artpark/acestor.git acestor-v2
-   cd acestor-v2
-   ```
-2. **Install dependencies** (from the repo root; requires Python 3.10+ and [uv](https://docs.astral.sh/uv/))
-   ```bash
-   uv sync --extra dengue
-   ```
-   Add `--extra cds` and/or `--extra s3` if you use CDS downloads or S3 storages.
-3. **Pick a config file** — start from an example under [`configs/`](configs/), e.g. `configs/gba_stage1.yaml` (full graph) or `configs/gba_stage1_multiregion_raw_smoke.yaml` (smoke / integration).
-4. **Edit the YAML for your deployment** (same file you pass to the runner). Typical touch points:
-   - **`pipeline:`** — `name`, `title` (used for default report titles).
-   - **`run:`** — `run_date` (and any run metadata you rely on).
-   - **`storages:`** — `artifacts.filesystem.base_path` (required); `raw_case` / `raw_weather` bases so downloads and reads resolve.
-   - **`data:`** — enable/disable downloads, case/weather parse options, paths, **`case_sufficiency`** gate.
-   - **`model:`**, **`thresholds:`**, **`cutoff:`** — modeling and threshold behaviour.
-   - **`assess:`**, **`maps:`**, **`report:`** — assessment, map outputs, report/PDF options.
-   - **Secrets / env** — e.g. `${CDS_API_KEY:-}` in YAML; do not commit real keys.
-5. **Lay out inputs** — place case CSVs, weather files, and GeoJSON trees where your config points (`geojson_base`, `geojson_folder`, etc.).
-6. **Run the pipeline** (default config in the `Makefile` is `configs/gba_stage1.yaml`; override as needed):
-   ```bash
-   make run-dengue-pipeline DENGUE_RUN_ID=my-first-run
-   # or:
-   DENGUE_CONFIG=configs/your_config.yaml make run-dengue-pipeline DENGUE_RUN_ID=my-first-run
-   ```
-   Incremental / integration graph:
-   ```bash
-   make run-dengue-pipeline-incremental DENGUE_RUN_ID=smoke-001
-   ```
-7. **Inspect outputs** — under **`{storages.artifacts.filesystem.base_path}/{run_id}/`** (predictions, `plots/`, `reports/`, `results/` zips, etc.).
-
----
-
-## Pipeline stages (full graph)
-
-Steps run according to the DAG dependencies below (names match logs and the code under `pipelines/gba_dengue/steps/`).
-
-| # | Step | Role |
-|---|------|------|
-| 1 | `identify_sampling_day` | Resolve sampling day / case window metadata for the run. |
-| 2 | `download_case_data` | Copy or fetch case inputs into the run layout (if enabled). |
-| 3 | `download_weather_data` | Copy, CDS, or other weather ingest (if enabled). |
-| 4 | `parse_case_data` | Parse case data (e.g. linelist → daily series by region). |
-| 5 | `validate_case_data_sufficiency` | Optional gate: stop early if case data are too thin. |
-| 6 | `parse_weather_data` | Aggregate / sample weather features aligned to regions. |
-| 7 | `identify_cutoff_dates` | Case/weather cutoffs and prediction-week calendar. |
-| 8 | `generate_thresholds` | Build threshold tables from history and config. |
-| 9 | `train_and_predict` | Fit models and write per-run predictions. |
-| 10 | `combine_predictions` | Single combined predictions table for the run. |
-| 11 | `assess_thresholds` | Threshold assessment and best-method tables (+ figure metadata for reports). |
-| 12 | `generate_maps` | Choropleth map PNGs under the configured plots directory. |
-| 13 | `generate_report` | `rep_dict` JSON, summary LaTeX, bundle zip, maps zip; optional PDF. |
-| 14 | `notify_run` | Optional SMTP **success** notification when top-level `email:` is enabled and `success` is listed in `email.on`. |
-
-**Dependency sketch:** sampling day + case download → parse case → sufficiency gate; sampling day + weather download → parse weather; sufficiency + weather parse → cutoffs → thresholds → train/predict; train + cutoffs → combine → assess; assess + combine → maps; assess + maps + cutoffs → report → **notify_run**.
-
-**Failure email:** if the run stops before `notify_run`, **`python -m acestor.run`** still sends a **failed** notification when `email.enabled` and `failed` is in `email.on` (handled in the CLI after the runner returns). If you embed `PipelineRunner` elsewhere, call `acestor.infra.send_run_notification_email_if_configured` yourself for failures.
-
-The **`run-dengue-pipeline-incremental`** target uses [`pipeline_incremental.py`](pipelines/gba_dengue/pipeline_incremental.py): the same step names, with a slightly different edge into `train_and_predict` (cutoffs + thresholds both feed it—useful for staged tests).
-
-To **change the graph** (add/remove/reorder steps), edit the pipeline builder in [`pipelines/gba_dengue/pipeline.py`](pipelines/gba_dengue/pipeline.py) (or `pipeline_incremental.py`) and, if you add a new module, pass `--pipeline module.path:build_pipeline` to the CLI.
-
----
-
-## Running acestor
-
-Runs are started with the **`acestor.run`** CLI: you pass a **pipeline entrypoint** (which graph to execute) and a **config file**.
-
-### Using Make (recommended)
-
-Full production graph:
-
-```bash
-make run-dengue-pipeline DENGUE_RUN_ID=my-production-run
-```
-
-Staged / integration graph (subset of stages for testing):
-
-```bash
-make run-dengue-pipeline-incremental DENGUE_RUN_ID=smoke-001
-```
-
-The default config path is set in the `Makefile` (`DENGUE_CONFIG`); override with `DENGUE_CONFIG=path/to/config.yaml`.
-
-### Using the CLI directly
+### One-off run (recommended to start with)
 
 ```bash
 uv run python -m acestor.run \
-  --pipeline <module.path:build_function> \
-  --config path/to/config.yaml \
-  --run-id my-run
+  --pipeline pipelines.gba_dengue.pipeline:build_pipeline \
+  --config configs/gba_docker_test.yaml \
+  --run-id my-first-run
 ```
 
-Pipeline entrypoints and example configs live under `pipelines/` and `configs/` (see the `Makefile` for the exact module paths used in production).
+- `--pipeline` — points to the pipeline builder function
+- `--config` — your YAML config file
+- `--run-id` — any string to identify this run; outputs go under `{artifacts_base}/{run-id}/`
 
-Exit code **0** means the run finished with `status=success`; non-zero indicates failure.
+Exit code `0` = success, non-zero = failure.
+
+### Using Make
+
+```bash
+make run-dengue-pipeline DENGUE_RUN_ID=my-run
+
+# With a custom config:
+DENGUE_CONFIG=configs/gba_docker_test.yaml make run-dengue-pipeline DENGUE_RUN_ID=my-run
+
+# Incremental/staged graph (faster, for testing):
+make run-dengue-pipeline-incremental DENGUE_RUN_ID=smoke-001
+```
+
+### Inspecting outputs
+
+Outputs land under `{storages.artifacts.filesystem.base_path}/{run_id}/`:
+
+```
+{run_id}/
+  predictions/
+  plots/
+  reports/
+  results/     ← zipped LaTeX bundle, maps zip
+```
 
 ---
 
-## Configuration overview
+## Scheduling pipelines
 
-- **Pipeline name & run metadata** under `pipeline:` and `run:` (`pipeline.title` feeds default report titles when `report.document_title` is omitted).  
-- **Data paths** under `data:` (case download/parse, weather download/parse, **case sufficiency** gate).  
-- **Model & thresholds** under `model:`, `thresholds:`, `cutoff:`.  
-- **Post-processing** under `assess:`, `maps:`, `report:`.  
-- **Storages** under `storages:` — at minimum configure `artifacts` and any `raw_*` backends you use.
+Use `scripts/run_schedules.py` to run one or more pipelines on a recurring schedule.
+
+### 1. Configure your pipelines
+
+Edit the `PIPELINES` list at the top of [scripts/run_schedules.py](scripts/run_schedules.py):
+
+```python
+PIPELINES = [
+    {
+        "name":     "gba-weekly",
+        "cron":     "0 6 * * 1",   # every Monday at 06:00 UTC
+        "pipeline": "pipelines.gba_dengue.pipeline:build_pipeline",
+        "config":   "configs/gba_stage1_s3.yaml",
+    },
+    # add more pipelines here
+]
+```
+
+Cron expression format: `minute  hour  day  month  day_of_week`
+
+| Example | Meaning |
+|---------|---------|
+| `0 6 * * 1` | Every Monday at 06:00 UTC |
+| `0 8 * * *` | Every day at 08:00 UTC |
+| `*/30 * * * *` | Every 30 minutes |
+
+### 2. Run the scheduler
+
+**Foreground** (useful for testing):
+```bash
+uv run python scripts/run_schedules.py
+```
+
+**Background — Mac/Linux:**
+```bash
+nohup uv run python scripts/run_schedules.py > .acestor/scheduler.out 2>&1 &
+echo $!   # prints the PID — save it to stop the scheduler later
+```
+
+**Background — Windows:**
+```powershell
+Start-Process pythonw -ArgumentList "scripts\run_schedules.py" -WindowStyle Hidden
+```
+
+**Stop the scheduler (Mac/Linux):**
+```bash
+kill <PID>
+```
+
+### 3. View logs
+
+Each run writes its own log file:
+
+```
+logs/
+  gba-weekly/
+    run-20260327_060000.log
+    run-20260403_060000.log
+```
+
+Watch a run live:
+```bash
+tail -f logs/gba-weekly/run-20260327_060000.log
+```
+
+List all runs for a pipeline:
+```bash
+ls -lht logs/gba-weekly/
+```
+
+> If the scheduler was briefly down and missed a scheduled run, it will catch up automatically (within a 1-hour grace window).
+
+### Running in Docker
+
+The Docker image also supports scheduled mode via cron. Build and run:
+
+```bash
+docker build -t acestor .
+docker run -e PIPELINE_CONFIG=configs/gba_stage1_s3.yaml acestor
+```
+
+The container installs the crontab from the config's `schedule:` section and keeps cron running.
+
+---
+
+## Configuration guide
+
+Start from an example config in [`configs/`](configs/) — `gba_docker_test.yaml` is a good starting point.
+
+### Key sections to edit
+
+```yaml
+pipeline:
+  name: dengue
+  title: "Dengue Intelligence"   # used in report titles
+
+run:
+  run_date: "2026-03-18"         # the reference date for this run
+
+storages:
+  artifacts:
+    filesystem:
+      base_path: "/path/to/outputs"   # where all run outputs are written
+
+data:
+  case_download:
+    enabled: true
+    source_path: "datasets/raw_linelist_data/..."
+
+  geojson:
+    base_path: "geojsons/geojsons_GBA"
+
+email:                           # optional — run notifications
+  enabled: false
+  on: [success, failed]
+  smtp_host: smtp.example.com
+  to: [you@example.com]
+
+report:
+  compile_pdf: false             # set true if pdflatex is installed
+```
 
 ### Environment variables in YAML
 
-Values may use `${VAR}` and `${VAR:-default}` (resolved when the config is loaded). Use this for **CDS keys**, SMTP passwords, etc.—never commit secrets.
+Use `${VAR}` or `${VAR:-default}` anywhere in the config — they are resolved at load time:
 
-### Filesystem-first operation
-
-Point `storages.*.filesystem.base_path` at directories you control. Each run writes under **`{artifacts_base}/{run_id}/...`**. No S3 configuration is required for a full local run.
-
-### GeoJSON inputs
-
-Case parsing (non-standardized lat/lon path) expects region geometries under a configurable base directory with subfolders such as `zones/` and `corps/`. Pre-aggregated case CSVs can skip spatial joins when configured appropriately.
+```yaml
+email:
+  smtp_password: "${SMTP_PASSWORD}"
+```
 
 ---
 
-## Operations
+## Pipeline stages
 
-| Topic | Where to configure |
-|--------|-------------------|
-| **Early exit if case data are too thin** | `data.case_sufficiency` (rows, regions, date span). |
-| **Run notifications** | Top-level `email:` — see commented examples in YAML under `configs/`. **Success:** `notify_run` step (end of DAG). **Failure:** CLI (`acestor.run`) after the run; body includes the exception summary when enabled. |
-| **Report artifacts** | Always: JSON + summary `.tex` + LaTeX bundle zip (`results/{bundle_prefix}_*`, default prefix `Report`: `main.tex`, bib, images) + maps zip. **PDF** only if `report.compile_pdf: true` and `pdflatex` is on `PATH`. Titles/captions: set `pipeline.title` and optional `report.document_title`, `report.caption_*_scope`, `report.bundle_prefix`, `maps.figure_title`. |
-| **Matplotlib in threaded runs** | Map generation uses a non-interactive backend so rendering is safe when stages run in parallel. |
+Steps execute in DAG order. Names match logs and code under `pipelines/gba_dengue/steps/`.
+
+| # | Step | What it does |
+|---|------|-------------|
+| 1 | `identify_sampling_day` | Resolves the case window and run metadata |
+| 2 | `download_case_data` | Fetches/copies case inputs |
+| 3 | `download_weather_data` | Fetches/copies weather inputs (CDS or local) |
+| 4 | `parse_case_data` | Parses linelist → daily case series by region |
+| 5 | `validate_case_data_sufficiency` | Optional gate — stops early if data is too thin |
+| 6 | `parse_weather_data` | Aggregates weather features aligned to regions |
+| 7 | `identify_cutoff_dates` | Case/weather cutoffs and prediction calendar |
+| 8 | `generate_thresholds` | Builds threshold tables from history + config |
+| 9 | `train_and_predict` | Fits models, writes predictions |
+| 10 | `combine_predictions` | Single combined predictions table |
+| 11 | `assess_thresholds` | Threshold assessment + figure metadata |
+| 12 | `generate_maps` | Choropleth map PNGs |
+| 13 | `generate_report` | JSON + LaTeX bundle + maps zip + optional PDF |
+| 14 | `notify_run` | Sends success email (if configured) |
 
 ---
 
-## Security & compliance
+## Project layout
 
-- **Do not commit** API keys, CDS credentials, or SMTP passwords.  
-- Treat **prediction outputs and linelist-derived data** according to your institutional data policy.  
-- Historical LaTeX templates may include confidential boilerplate; adapt branding and legal footers for your deployment.
+```
+acestor-v2/
+├── acestor/          # Core runtime: config, orchestration, storage, CLI
+├── pipelines/        # Pipeline stage implementations and DAG builders
+├── configs/          # Example YAML configs
+├── scripts/
+│   ├── run_schedules.py      # Multi-pipeline scheduler
+│   └── install_schedule.py  # Crontab installer (Docker mode)
+├── logs/             # Per-run log files (created at runtime)
+├── Dockerfile
+└── pyproject.toml
+```
 
 ---
 
 ## Development
 
-- **Lint / format / tests**: `make lint`, `make format`, `make test`.
+```bash
+# Install with dev extras
+uv sync --all-extras
 
----
+# Lint, format, test
+make lint
+make format
+make test
+```
 
-## Acknowledgements
-
-acestor is built for **config-driven, testable, production-ready** dengue risk operations.
+Pre-commit hooks: `pre-commit install`
 
 ---
 
 ## Contact
 
-For **ARTPARK** deployments and collaboration, see [artpark.in](https://www.artpark.in/).  
-GitHub repository: [dsih-artpark/acestor](https://github.com/dsih-artpark/acestor).  
-Issue tracker: [github.com/dsih-artpark/acestor/issues](https://github.com/dsih-artpark/acestor/issues).
+For ARTPARK deployments and collaboration: [artpark.in](https://www.artpark.in/)
+GitHub: [dsih-artpark/acestor](https://github.com/dsih-artpark/acestor)
+Issues: [github.com/dsih-artpark/acestor/issues](https://github.com/dsih-artpark/acestor/issues)

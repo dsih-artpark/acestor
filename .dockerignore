@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# Credentials
+.env
+
+# Caches / tooling
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.coverage
+coverage.xml
+*.log
+logs/
+
+# Large data directories — mounted as volumes at runtime
+datasets/
+geojsons/
+artifacts/
+cache/
+runs/
+data/
+
+# Dev/local-only directories not needed in the image
+dengue-model-pipeline-automation - GBA/
+acestor-existing/
+parity/
+
+# Git
+.git/
+.gitignore
+
+# Dev scripts
+test_email.py
+validate_outputs.py
+execution_steps.txt
