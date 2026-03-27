@@ -89,8 +89,12 @@ class DownloadWeatherDataStep(BaseStep[NoInputs, WeatherDownloadResult]):
             paths = source.list_objects(cfg.source_prefix)
 
         downloaded: list[str] = []
-        for src in paths:
+        total = len(paths)
+        for i, src in enumerate(paths, 1):
             filename = src.replace("\\", "/").split("/")[-1]
+            context.log.info(
+                "download_weather_data: copying file [%d/%d] %s", i, total, filename
+            )
             dest = context.artifact_path(f"{cfg.dest_relpath}/{filename}")
             context.artifacts.write(source.read(src), dest)
             downloaded.append(dest)

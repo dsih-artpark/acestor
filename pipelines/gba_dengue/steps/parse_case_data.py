@@ -28,6 +28,10 @@ _RAW_NONSTANDARD_COLS = {
 # Columns present in pre-aggregated zone-level data (already geocoded + aggregated)
 _PRE_AGGREGATED_COLS = {"region_id", "date", "case"}
 
+# Standardized linelist: one date column + any of these admin-ID columns
+_STANDARDIZED_DATE_COL = "metadata.primaryDate"
+_STANDARDIZED_ADMIN_COLS = set(case_data.STANDARDIZED_REGION_ADMIN_COL.values())
+
 # Spatial join common_cols, w_params, operations (fixed for case data)
 _COMMON_COLS = ["region_id", "name", "parent", "parent_name"]
 _W_PARAMS = ["case"]
@@ -97,13 +101,18 @@ class ParseCaseDataStep(BaseStep[ParseCaseDataInputs, ParseCaseDataResult]):
             _section(context.config, "data.case_download")
         )
         case_source = self._build_case_source(case_dl_cfg)
-        raw_dfs = [
-            pd.read_csv(
-                io.BytesIO(self._read_case_bytes(context, case_source, f)),
-                low_memory=False,
+        files = inputs.download_case_data.copied_files
+        raw_dfs = []
+        for i, f in enumerate(files, 1):
+            context.log.info(
+                "parse_case_data: reading file [%d/%d] %s", i, len(files), f
             )
-            for f in inputs.download_case_data.copied_files
-        ]
+            raw_dfs.append(
+                pd.read_csv(
+                    io.BytesIO(self._read_case_bytes(context, case_source, f)),
+                    low_memory=False,
+                )
+            )
 
         first_cols = set(raw_dfs[0].columns)
 
@@ -163,11 +172,41 @@ class ParseCaseDataStep(BaseStep[ParseCaseDataInputs, ParseCaseDataResult]):
                 by_region.update(
                     self._finalize_and_write(context, inputs, daily_rt, region_type)
                 )
+        elif _STANDARDIZED_DATE_COL in first_cols and bool(
+            _STANDARDIZED_ADMIN_COLS & first_cols
+        ):
+            context.log.info(
+                "parse_case_data: detected standardized linelist data "
+                "(metadata.primaryDate + location.adminX.ID), region_types=%s",
+                cfg.region_types,
+            )
+            date_start = (
+                pd.Timestamp(cfg.date_start).normalize() if cfg.date_start else None
+            )
+            date_end = (
+                pd.Timestamp(cfg.date_end).normalize()
+                if cfg.date_end
+                else pd.Timestamp(inputs.identify_sampling_day.run_date).normalize()
+            )
+
+            by_region: dict[str, str] = {}
+            for region_type in cfg.region_types:
+                daily = case_data.aggregate_standardized_data_daily(
+                    raw_dfs,
+                    region_type,
+                    date_start=date_start,
+                    date_end=date_end,
+                )
+                by_region.update(
+                    self._finalize_and_write(context, inputs, daily, region_type)
+                )
         else:
             raise ValueError(
-                f"Unrecognised case data format. Expected either pre-aggregated columns "
-                f"{_PRE_AGGREGATED_COLS} or raw non-standardized columns {_RAW_NONSTANDARD_COLS}. "
-                f"Got: {first_cols}"
+                f"Unrecognised case data format. Expected one of: "
+                f"pre-aggregated {_PRE_AGGREGATED_COLS}, "
+                f"raw non-standardized {_RAW_NONSTANDARD_COLS}, or "
+                f"standardized linelist ('{_STANDARDIZED_DATE_COL}' + location.adminX.ID). "
+                f"Got columns: {first_cols}"
             )
 
         # Single downstream case path: last region_type in config order (matches SOT: corp then zone).

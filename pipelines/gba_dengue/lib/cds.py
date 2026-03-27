@@ -192,8 +192,10 @@ def download_months(
     cds_key: str = "",
 ) -> list[Path]:
     """Download multiple months, return list of downloaded file paths."""
+    from tqdm import tqdm
+
     downloaded: list[Path] = []
-    for year, month in months:
+    for year, month in tqdm(months, desc="Downloading months", unit="month"):
         p = download_month(
             dataset=dataset,
             region_bounds=region_bounds,
@@ -457,10 +459,14 @@ def parse_cached_netcdfs(
                 if months is None or (year, month) in months:
                     nc_files.append((year, month, f))
 
+    from tqdm import tqdm
+
     outputs: list[str] = []
     skipped = 0
     parsed = 0
-    for year, month, nc_path in nc_files:
+    for year, month, nc_path in tqdm(
+        nc_files, desc="Parsing NetCDF files", unit="file"
+    ):
         dest_dir = output_path / str(year)
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / f"{year}_{month:02d}.csv"

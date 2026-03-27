@@ -160,6 +160,106 @@ def concat_daily_dfs(
     return df
 
 
+# ---------------------------------------------------------------------------
+# Standardized input (metadata.primaryDate + location.adminX.ID columns)
+# ---------------------------------------------------------------------------
+
+# Maps region_type → the admin-ID column expected in standardized linelist data.
+# Exposed here so the step can also use it for detection.
+STANDARDIZED_REGION_ADMIN_COL: dict[str, str] = {
+    "state": "location.admin1.ID",
+    "ut": "location.admin1.ID",
+    "district": "location.admin2.ID",
+    "corp": "location.admin2.ID",
+    "subdistrict": "location.admin3.ID",
+    "zone": "location.admin3.ID",
+    "ulb": "location.admin3.ID",
+    "ward": "location.admin5.ID",
+    "village": "location.admin5.ID",
+}
+
+
+def aggregate_standardized_data_daily(
+    dfs: list[pd.DataFrame],
+    region_type: str,
+    date_start: pd.Timestamp | None = None,
+    date_end: pd.Timestamp | None = None,
+) -> pd.DataFrame:
+    """Process standardized linelist DataFrames into daily case counts per region.
+
+    Standardized format has ``metadata.primaryDate`` as the date column and
+    ``location.adminX.ID`` as the region identifier (no lat/lon or spatial join
+    required).  Each row represents one case; this function counts rows per
+    region per day.
+
+    Parameters
+    ----------
+    dfs:
+        List of raw DataFrames, each containing ``metadata.primaryDate`` and the
+        appropriate ``location.adminX.ID`` column for *region_type*.
+    region_type:
+        One of the keys in ``STANDARDIZED_REGION_ADMIN_COL`` (e.g. ``"district"``,
+        ``"zone"``).
+    date_start / date_end:
+        Optional inclusive date bounds applied after parsing.
+
+    Returns
+    -------
+    DataFrame with columns ``region_id``, ``date``, ``case`` where missing dates
+    within each region's range are filled with 0.
+    """
+    admin_col = STANDARDIZED_REGION_ADMIN_COL.get(region_type)
+    if admin_col is None:
+        raise ValueError(
+            f"Unknown region_type={region_type!r} for standardized data. "
+            f"Expected one of: {list(STANDARDIZED_REGION_ADMIN_COL)}"
+        )
+
+    list_dfs = []
+    for df in dfs:
+        if "metadata.primaryDate" not in df.columns or admin_col not in df.columns:
+            continue
+        sub = df[["metadata.primaryDate", admin_col]].copy()
+        sub.rename(
+            columns={"metadata.primaryDate": "date", admin_col: "region_id"},
+            inplace=True,
+        )
+        list_dfs.append(sub)
+
+    if not list_dfs:
+        raise ValueError(
+            f"None of the provided DataFrames contain both 'metadata.primaryDate' and "
+            f"'{admin_col}' (required for region_type={region_type!r})."
+        )
+
+    df = pd.concat(list_dfs, ignore_index=True)
+
+    # Strip trailing Z from ISO-format strings before parsing
+    if df["date"].dtype == object:
+        df["date"] = df["date"].str.replace("Z", "", regex=False)
+    df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.tz_localize(None)
+    df["date"] = pd.to_datetime(df["date"]).dt.date.astype("datetime64[ns]")
+    df = df.dropna(subset=["date", "region_id"])
+
+    if date_start is not None:
+        df = df[df["date"] >= date_start]
+    if date_end is not None:
+        df = df[df["date"] <= date_end]
+
+    # Count rows per region per day (each row = 1 case)
+    df_agg = df.groupby(["region_id", "date"]).size().reset_index(name="case")
+    df_agg = df_agg.sort_values(["region_id", "date"]).reset_index(drop=True)
+
+    # Fill missing dates within each region's range with 0
+    df_agg = df_agg.groupby("region_id", group_keys=False)[
+        ["region_id", "date", "case"]
+    ].apply(_fill_missing_dates)
+    df_agg["case"] = df_agg["case"].fillna(0)
+    df_agg["region_id"] = df_agg["region_id"].ffill()
+
+    return df_agg[["region_id", "date", "case"]].reset_index(drop=True)
+
+
 def load_region_gdf(geojson_folder: str, region_type: str) -> gpd.GeoDataFrame:
     """Load and concat all geojson files for a region type from geojson_folder/{region_type}s/."""
     import os
