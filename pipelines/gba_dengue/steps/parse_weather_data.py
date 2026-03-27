@@ -68,14 +68,10 @@ class ParseWeatherDataStep(BaseStep[ParseWeatherDataInputs, ParseWeatherDataResu
         )
 
         files = inputs.download_weather_data.downloaded_files
-        raw_dfs = []
-        for i, f in enumerate(files, 1):
-            context.log.info(
-                "parse_weather_data: reading file [%d/%d] %s", i, len(files), f
-            )
-            raw_dfs.append(
-                pd.read_csv(io.BytesIO(self._read_bytes(context, f)), low_memory=False)
-            )
+        raw_dfs = [
+            pd.read_csv(io.BytesIO(self._read_bytes(context, f)), low_memory=False)
+            for f in files
+        ]
         if not raw_dfs:
             dest = context.artifact_path(
                 f"datasets/weather_{cfg.region_type}_sampled.csv"

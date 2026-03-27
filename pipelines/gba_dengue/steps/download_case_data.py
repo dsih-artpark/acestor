@@ -76,11 +76,7 @@ class DownloadCaseDataStep(BaseStep[NoInputs, CaseDownloadResult]):
 
         copied: list[str] = []
         backend = (cfg.source_backend or "filesystem").strip().lower()
-        total = len(paths)
-        for i, src in enumerate(paths, 1):
-            context.log.info(
-                "download_case_data: validating file [%d/%d] %s", i, total, src
-            )
+        for src in paths:
             try:
                 data = source.read(src)
             except FileNotFoundError as exc:

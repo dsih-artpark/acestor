@@ -1,0 +1,126 @@
+pipeline:
+  name: dengue
+  title: "Dengue intelligence — district test"
+
+run:
+  run_date: "2024-12-18"
+
+data:
+  case_download:
+    enabled: true
+    source_backend: "filesystem"
+    source_path: "datasets/raw_linelist_data/test_standardized_district"
+
+  case_parse:
+    region_types:
+      - "district"
+    date_start: "2015-01-01"
+    date_end: "2024-12-18"
+
+  geojson:
+    base_path: "geojsons/geojsons_GBA"
+
+  case_sufficiency:
+    enabled: true
+    min_total_rows: 30
+    min_distinct_regions: 2
+    min_date_span_days: 14
+
+  weather_download:
+    enabled: false
+    source_mode: "filesystem"
+    netcdf_cache_path: "./datasets/netcdf"
+    parsed_output_path: "./datasets/parsednetcdf"
+    region_type: "zone"
+    w_params: ["t2m", "d2m", "tp"]
+    threshold_km: 25.0
+    bounds_resolution_deg: 0.1
+    start_date: "2015-01-01"
+    end_date: "2024-12-18"
+
+  weather_parse:
+    region_type: "zone"
+    weather_variables:
+      - "2mTemperature"
+      - "totalPrecipitation"
+      - "2mDewpointTemperature"
+    daily_agg:
+      - name: "2mTemperature"
+        op: "mean"
+      - name: "2mTemperature"
+        op: "max"
+        output_name: "2mTemperature_max"
+      - name: "2mTemperature"
+        op: "min"
+        output_name: "2mTemperature_min"
+      - name: "2mDewpointTemperature"
+        op: "mean"
+      - name: "totalPrecipitation"
+        op: "sum"
+    rolling_agg:
+      - name: "2mTemperature"
+        op: "mean"
+      - name: "2mTemperature_max"
+        op: "mean"
+      - name: "2mTemperature_min"
+        op: "mean"
+      - name: "2mDewpointTemperature"
+        op: "mean"
+      - name: "totalPrecipitation"
+        op: "sum"
+    rolling_n_days: 7
+    sampling_rate: 7
+    intermediate_col_rename:
+      "2mTemperature_max": "t2m_max"
+      "2mTemperature_min": "t2m_min"
+      "2mTemperature": "t2m_mean"
+      "2mDewpointTemperature": "d2m_mean"
+      "totalPrecipitation": "tp_sum"
+
+cutoff:
+  case_min_regions: 2
+  weather_min_regions: 2
+
+thresholds:
+  region_type: "district"
+  n_weeks: 4
+  historical_n_years: 5
+  excluded_years: [2020, 2021]
+
+model:
+  spatial_res: "district"
+  data_features:
+    - "case"
+    - "recordDate"
+    - "recordYear"
+    - "recordMonth"
+    - "ISOWeek"
+    - "t2m_mean"
+    - "tp_sum"
+    - "d2m_mean"
+  lag:
+    lag_temp: [12]
+    lag_rf: [4]
+  years_to_exclude: [2020, 2021]
+  list_alpha: [1.0, 2.0]
+
+assess:
+  total_corp_regions: 3
+  total_zone_regions: 3
+
+maps:
+  output_dir: "plots"
+  figure_title: "Dengue risk map — district"
+
+report:
+  output_dir: "reports"
+  compile_pdf: false
+
+logging:
+  level: INFO
+
+storages:
+  artifacts:
+    kind: filesystem
+    filesystem:
+      base_path: "./artifacts"

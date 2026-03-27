@@ -102,17 +102,13 @@ class ParseCaseDataStep(BaseStep[ParseCaseDataInputs, ParseCaseDataResult]):
         )
         case_source = self._build_case_source(case_dl_cfg)
         files = inputs.download_case_data.copied_files
-        raw_dfs = []
-        for i, f in enumerate(files, 1):
-            context.log.info(
-                "parse_case_data: reading file [%d/%d] %s", i, len(files), f
+        raw_dfs = [
+            pd.read_csv(
+                io.BytesIO(self._read_case_bytes(context, case_source, f)),
+                low_memory=False,
             )
-            raw_dfs.append(
-                pd.read_csv(
-                    io.BytesIO(self._read_case_bytes(context, case_source, f)),
-                    low_memory=False,
-                )
-            )
+            for f in files
+        ]
 
         first_cols = set(raw_dfs[0].columns)
 

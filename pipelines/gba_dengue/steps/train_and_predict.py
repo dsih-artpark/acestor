@@ -52,16 +52,19 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
             df["recordDate"] = pd.to_datetime(df["recordDate"])
             df["recordYear"] = df["recordDate"].dt.year
             df["ISOWeek"] = df["recordDate"].dt.isocalendar().week.astype(int)
-            # Normalise spatial column to cfg.spatial_res
-            for cand, target in [
-                ("location.admin3.ID", "zone"),
-                ("location.admin2.ID", "corp"),
-                ("location.admin4.ID", "ward"),
-                ("region_id", cfg.spatial_res),
+            # Normalise spatial column to cfg.spatial_res.
+            # Any location.adminX.ID or region_id column is renamed to cfg.spatial_res
+            # so downstream code can always join on cfg.spatial_res regardless of data format.
+            for cand in [
+                "location.admin1.ID",
+                "location.admin2.ID",
+                "location.admin3.ID",
+                "location.admin4.ID",
+                "location.admin5.ID",
+                "region_id",
             ]:
                 if cand in df.columns and cand != cfg.spatial_res:
-                    new_name = target if target != cfg.spatial_res else cfg.spatial_res
-                    df.rename(columns={cand: new_name}, inplace=True)
+                    df.rename(columns={cand: cfg.spatial_res}, inplace=True)
                     break
 
         merged = case_df.merge(
