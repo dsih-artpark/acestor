@@ -43,18 +43,25 @@ class GenerateReportStep(BaseStep[GenerateReportInputs, ReportResult]):
             str(case_parse.get("date_start", "2021-11-09")).strip() or "2021-11-09"
         )
 
-        corp_csv = context.artifacts.read_text(
-            inputs.assess_thresholds.best_method_corp_csv
-        )
-        zone_csv = context.artifacts.read_text(
-            inputs.assess_thresholds.best_method_zone_csv
-        )
-        best_corp = (
-            pd.read_csv(io.StringIO(corp_csv)) if corp_csv.strip() else pd.DataFrame()
-        )
-        best_zone = (
-            pd.read_csv(io.StringIO(zone_csv)) if zone_csv.strip() else pd.DataFrame()
-        )
+        # Map the first two detected region types to the primary/secondary report slots.
+        regions = list(inputs.assess_thresholds.best_method_by_region.keys())
+        primary_region = regions[0] if regions else None
+        secondary_region = regions[1] if len(regions) > 1 else None
+
+        def _read_best(region: str | None) -> pd.DataFrame:
+            if region is None:
+                return pd.DataFrame()
+            csv_text = context.artifacts.read_text(
+                inputs.assess_thresholds.best_method_by_region[region]
+            )
+            return (
+                pd.read_csv(io.StringIO(csv_text))
+                if csv_text.strip()
+                else pd.DataFrame()
+            )
+
+        best_corp = _read_best(primary_region)
+        best_zone = _read_best(secondary_region)
 
         co = inputs.identify_cutoff_dates
         ref_date = pd.Timestamp(co.run_date).normalize()
@@ -66,7 +73,7 @@ class GenerateReportStep(BaseStep[GenerateReportInputs, ReportResult]):
             pred_c, dates_c, fnames_c, caps_c = corp_details
             caps_c = report_lib.postprocess_captions_for_rep(
                 caps_c,
-                kind="corp",
+                kind=primary_region or "corp",
                 caption_corp_scope=cfg.caption_primary,
                 caption_zone_scope=cfg.caption_secondary,
             )
@@ -76,7 +83,7 @@ class GenerateReportStep(BaseStep[GenerateReportInputs, ReportResult]):
             pred_z, dates_z, fnames_z, caps_z = zone_details
             caps_z = report_lib.postprocess_captions_for_rep(
                 caps_z,
-                kind="zone",
+                kind=secondary_region or "zone",
                 caption_corp_scope=cfg.caption_primary,
                 caption_zone_scope=cfg.caption_secondary,
             )

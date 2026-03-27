@@ -429,15 +429,16 @@ class TrainPredictConfig:
 
 @dataclass(frozen=True)
 class AssessConfig:
-    total_corp_regions: int
-    total_zone_regions: int
+    total_regions_by_type: dict[str, int]  # {region_type: total_count}
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any]) -> AssessConfig:
-        return cls(
-            total_corp_regions=int(raw.get("total_corp_regions", 5)),
-            total_zone_regions=int(raw.get("total_zone_regions", 10)),
-        )
+        totals: dict[str, int] = {}
+        for region in ("corp", "zone", "ward", "district", "subdistrict"):
+            key = f"total_{region}_regions"
+            if key in raw:
+                totals[region] = int(raw[key])
+        return cls(total_regions_by_type=totals)
 
 
 # ---------------------------------------------------------------------------

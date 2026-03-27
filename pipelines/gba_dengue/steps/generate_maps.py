@@ -36,8 +36,13 @@ class GenerateMapsStep(BaseStep[GenerateMapsInputs, MapsResult]):
         )
         df = pd.read_csv(io.StringIO(pred_csv))
 
+        known_regions = ["corp", "zone", "ward", "district", "subdistrict"]
+        present_regions = [
+            r for r in known_regions if df["regionID"].str.startswith(r).any()
+        ]
+
         generated: list[str] = []
-        for region in ["corp", "zone"]:
+        for region in present_regions:
             region_df = df[df["regionID"].str.startswith(region)].reset_index(drop=True)
             if region_df.empty:
                 continue

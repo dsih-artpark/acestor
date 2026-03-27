@@ -18,7 +18,13 @@ import pandas as pd
 COLOR_MAPPING = {1: "green", 2: "yellow", 3: "orange", 4: "red", 0: "w"}
 ZONE_LABEL = {1: "Low", 2: "Low Medium", 3: "Medium", 4: "High"}
 
-REGION_LABEL = {"corp": "Corp", "zone": "Zone", "ward": "Ward"}
+REGION_LABEL = {
+    "corp": "Corp",
+    "zone": "Zone",
+    "ward": "Ward",
+    "district": "District",
+    "subdistrict": "Subdistrict",
+}
 MODEL_LABEL = {
     "negativeBinomialRegression": "Negative Binomial Regression",
     "ensembleModel": "Ensemble Model",

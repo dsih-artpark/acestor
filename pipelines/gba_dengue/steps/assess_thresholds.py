@@ -34,30 +34,27 @@ class AssessThresholdsStep(BaseStep[AssessThresholdsInputs, ThresholdAssessmentR
         )
         df = pd.read_csv(io.StringIO(pred_csv))
 
-        _, best_corp = thresholds.assess_thresholds(
-            df, region_prefix="corp", total_regions_overall=cfg.total_corp_regions
-        )
-        _, best_zone = thresholds.assess_thresholds(
-            df, region_prefix="zone", total_regions_overall=cfg.total_zone_regions
-        )
-
-        # SOT: generate_LaTeX_fig_captions before writing best-method CSVs
-        # (AssessThresholdPerformance.py L145–149).
-        if len(best_corp) > 0:
-            best_corp = report_lib.add_latex_figure_metadata(best_corp)
-        if len(best_zone) > 0:
-            best_zone = report_lib.add_latex_figure_metadata(best_zone)
+        # Detect which region types are actually present in the combined predictions.
+        known_regions = ["corp", "zone", "ward", "district", "subdistrict"]
+        present_regions = [
+            r for r in known_regions if df["regionID"].str.startswith(r).any()
+        ]
 
         end_str = pd.Timestamp.today().date().strftime("%Y%m%d")
-        corp_dest = context.artifact_path(f"dumps/best_method_corp_{end_str}.csv")
-        zone_dest = context.artifact_path(f"dumps/best_method_zone_{end_str}.csv")
-        context.artifacts.write_text(best_corp.to_csv(index=False), corp_dest)
-        context.artifacts.write_text(best_zone.to_csv(index=False), zone_dest)
-        context.log.info(
-            "assess_thresholds: corp=%d zone=%d rows", len(best_corp), len(best_zone)
-        )
+        best_method_by_region: dict[str, str] = {}
 
-        return ThresholdAssessmentResult(
-            best_method_corp_csv=corp_dest,
-            best_method_zone_csv=zone_dest,
-        )
+        for region in present_regions:
+            total = cfg.total_regions_by_type.get(region, 10)
+            _, best = thresholds.assess_thresholds(
+                df, region_prefix=region, total_regions_overall=total
+            )
+            # SOT: generate_LaTeX_fig_captions before writing best-method CSVs
+            # (AssessThresholdPerformance.py L145–149).
+            if len(best) > 0:
+                best = report_lib.add_latex_figure_metadata(best)
+            dest = context.artifact_path(f"dumps/best_method_{region}_{end_str}.csv")
+            context.artifacts.write_text(best.to_csv(index=False), dest)
+            best_method_by_region[region] = dest
+            context.log.info("assess_thresholds: %s=%d rows", region, len(best))
+
+        return ThresholdAssessmentResult(best_method_by_region=best_method_by_region)

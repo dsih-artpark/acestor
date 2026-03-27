@@ -85,8 +85,7 @@ class CombinedPredictionsResult:
 
 @dataclass(frozen=True)
 class ThresholdAssessmentResult:
-    best_method_corp_csv: str
-    best_method_zone_csv: str
+    best_method_by_region: dict[str, str]  # {region_type: csv_path}
 
 
 @dataclass(frozen=True)
