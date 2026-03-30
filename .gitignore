@@ -25,6 +25,8 @@ build/
 
 *.md
 !README.md
+!docs/
+!docs/*.md
 
 
 runs/

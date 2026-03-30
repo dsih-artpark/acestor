@@ -14,6 +14,8 @@
 6. [Pipeline stages](#pipeline-stages)
 7. [Project layout](#project-layout)
 8. [Development](#development)
+9. [Config reference](docs/CONFIG_REFERENCE.md)
+10. [Troubleshooting](docs/TROUBLESHOOTING.md)
 
 ---
 
@@ -188,22 +190,17 @@ ls -lht logs/gba-weekly/
 
 > If the scheduler was briefly down and missed a scheduled run, it will catch up automatically (within a 1-hour grace window).
 
-### Running in Docker
+### Deployment
 
-The Docker image also supports scheduled mode via cron. Build and run:
-
-```bash
-docker build -t acestor .
-docker run -e PIPELINE_CONFIG=configs/gba_stage1_s3.yaml acestor
-```
-
-The container installs the crontab from the config's `schedule:` section and keeps cron running.
+For production deployment on Docker or AWS EC2 — including systemd setup, IAM roles, S3 artifact storage, and log monitoring — see **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**.
 
 ---
 
 ## Configuration guide
 
 Start from an example config in [`configs/`](configs/) — `gba_docker_test.yaml` is a good starting point.
+
+For a full reference of every config key, see **[docs/CONFIG_REFERENCE.md](docs/CONFIG_REFERENCE.md)**.
 
 ### Key sections to edit
 
