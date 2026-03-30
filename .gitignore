@@ -17,6 +17,7 @@ coverage.xml
 
 runs/
 dengue-model-pipeline-automation - GBA/
+drive-download-20260327T104821Z-3-001*
 acestor-existing/
 dist/
 build/
@@ -31,6 +32,7 @@ data/
 artifacts/
 deng
 datasets/
+ap_datasets
 cache/
 
 # Internal / local-only (not published)

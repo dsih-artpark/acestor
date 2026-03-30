@@ -64,7 +64,9 @@ class GenerateReportStep(BaseStep[GenerateReportInputs, ReportResult]):
         best_zone = _read_best(secondary_region)
 
         co = inputs.identify_cutoff_dates
-        ref_date = pd.Timestamp(co.run_date).normalize()
+        # Use data cutoff (not run_date) as the reference so that predictions
+        # which land before today are still included in the report.
+        ref_date = pd.Timestamp(co.cutoff).normalize()
         corp_details = report_lib.get_relevant_figures_details(best_corp, ref_date)
         zone_details = report_lib.get_relevant_figures_details(best_zone, ref_date)
 
