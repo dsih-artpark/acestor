@@ -64,11 +64,34 @@ class GenerateReportStep(BaseStep[GenerateReportInputs, ReportResult]):
         best_zone = _read_best(secondary_region)
 
         co = inputs.identify_cutoff_dates
-        # Use data cutoff (not run_date) as the reference so that predictions
-        # which land before today are still included in the report.
-        ref_date = pd.Timestamp(co.cutoff).normalize()
+        ref_date = pd.Timestamp(co.run_date).normalize()
         corp_details = report_lib.get_relevant_figures_details(best_corp, ref_date)
         zone_details = report_lib.get_relevant_figures_details(best_zone, ref_date)
+
+        if corp_details is None and zone_details is None:
+            context.log.warning(
+                "generate_report: no predictions available on or after run_date=%s "
+                "(latest data cutoff is %s). Skipping report generation.",
+                co.run_date,
+                co.cutoff,
+            )
+            rep_json = context.artifact_path(
+                f"{cfg.output_dir}/rep_dict_{pd.Timestamp(co.run_date).date().strftime('%Y%m%d')}.json"
+            )
+            context.artifacts.write_text(
+                json.dumps(
+                    {
+                        "skipped": True,
+                        "reason": "no_predictions",
+                        "cutoff": co.cutoff,
+                        "run_date": co.run_date,
+                    },
+                    indent=2,
+                )
+                + "\n",
+                rep_json,
+            )
+            return ReportResult(report_path=rep_json)
 
         pred_c = dates_c = fnames_c = caps_c = None
         if corp_details:

@@ -30,6 +30,9 @@ class GenerateMapsStep(BaseStep[GenerateMapsInputs, MapsResult]):
         cfg = MapsConfig.from_raw(_section(context.config, "maps"))
         plots_dir = str(context.artifact_fs_path(cfg.output_dir))
         geojson_base = geojson_sources.get_geojson_base_dir()
+        run_date = str(
+            (_section(context.config, "run") or {}).get("run_date", "")
+        ).strip()
 
         pred_csv = context.artifacts.read_text(
             inputs.combine_predictions.combined_csv_path
@@ -63,6 +66,7 @@ class GenerateMapsStep(BaseStep[GenerateMapsInputs, MapsResult]):
                             geojson_base=geojson_base,
                             output_dir=plots_dir,
                             figure_title=cfg.figure_title,
+                            run_date=run_date,
                         )
                         if path:
                             generated.append(path)

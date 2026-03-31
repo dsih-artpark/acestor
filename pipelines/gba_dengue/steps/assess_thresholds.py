@@ -40,7 +40,14 @@ class AssessThresholdsStep(BaseStep[AssessThresholdsInputs, ThresholdAssessmentR
             r for r in known_regions if df["regionID"].str.startswith(r).any()
         ]
 
-        end_str = pd.Timestamp.today().date().strftime("%Y%m%d")
+        run_date = str(
+            (_section(context.config, "run") or {}).get("run_date", "")
+        ).strip()
+        end_str = (
+            pd.Timestamp(run_date).date().strftime("%Y%m%d")
+            if run_date
+            else pd.Timestamp.today().date().strftime("%Y%m%d")
+        )
         best_method_by_region: dict[str, str] = {}
 
         for region in present_regions:
@@ -51,7 +58,7 @@ class AssessThresholdsStep(BaseStep[AssessThresholdsInputs, ThresholdAssessmentR
             # SOT: generate_LaTeX_fig_captions before writing best-method CSVs
             # (AssessThresholdPerformance.py L145–149).
             if len(best) > 0:
-                best = report_lib.add_latex_figure_metadata(best)
+                best = report_lib.add_latex_figure_metadata(best, run_date=run_date)
             dest = context.artifact_path(f"dumps/best_method_{region}_{end_str}.csv")
             context.artifacts.write_text(best.to_csv(index=False), dest)
             best_method_by_region[region] = dest

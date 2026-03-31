@@ -1,49 +1,56 @@
 # Deployment Guide
 
-How to deploy the acestor dengue pipeline in production — both Docker-only and on AWS EC2.
+Three supported deployment scenarios:
+
+| Scenario | Where to run | Files |
+|---|---|---|
+| [A — Docker (any server)](#option-a-docker-any-server) | Any Linux machine with Docker | `Dockerfile` |
+| [B — Docker on AWS EC2](#option-b-docker-on-aws-ec2) | EC2 instance | `deployment/ec2/` |
+| [C — Native on AWS EC2](#option-c-native-on-aws-ec2-no-docker) | EC2 instance | `deployment/ec2-native/` |
+
+In all scenarios the pipeline runs as a **long-lived scheduler process** (`scripts/run_schedules.py` using APScheduler). The schedule is defined inside that file — edit it before deploying:
+
+```python
+# scripts/run_schedules.py
+PIPELINES = [
+    {
+        "name":     "ap-weekly",
+        "cron":     "30 0 * * 2",   # every Tuesday 00:30 UTC (06:00 IST)
+        "pipeline": "pipelines.gba_dengue.pipeline:build_pipeline",
+        "config":   "configs/ap_district.yaml",
+    },
+]
+```
 
 ---
 
-## Option A: Docker (local or any Linux server)
+## Option A: Docker (any server)
 
-### 1. Build the image
+### Prerequisites
 
-```bash
-docker build -t acestor .
-```
+- Docker installed on the host
 
-### 2. Prepare your config and secrets
+### 1. Configure the schedule
 
-Copy your config (e.g. `configs/gba_stage1_s3.yaml`) into a directory the container can mount.
-Create a `.env` file for secrets:
+Edit `scripts/run_schedules.py` — set the correct `cron` expression and `config` path for your pipeline.
 
-```env
-AWS_ACCESS_KEY_ID=...
-AWS_SECRET_ACCESS_KEY=...
-AWS_REGION=ap-south-1
-SMTP_HOST=smtp.example.com
-SMTP_PORT=587
-SMTP_USER=...
-SMTP_PASS=...
-```
-
-### 3. Run a single pipeline execution
+### 2. Build the image
 
 ```bash
-docker run --rm \
-  --env-file .env \
-  -v $(pwd)/configs:/app/configs:ro \
-  -v $(pwd)/artifacts:/app/artifacts \
-  acestor \
-  python -m acestor.run \
-    --pipeline pipelines.gba_dengue.pipeline:build_pipeline \
-    --config /app/configs/gba_stage1_s3.yaml \
-    --run-id $(date +%Y%m%d)
+git clone https://github.com/your-org/acestor-v2.git
+cd acestor-v2
+docker build -t acestor:latest .
 ```
 
-### 4. Run on a schedule (APScheduler mode)
+### 3. Configure secrets
 
-The container can run `scripts/run_schedules.py` to keep a long-lived scheduler process alive:
+```bash
+cp deployment/ec2/env.example .env
+chmod 600 .env
+# Edit .env — fill in CONFIG_PATH, SMTP credentials, S3 bucket names if applicable
+```
+
+### 4. Start the scheduler
 
 ```bash
 docker run -d \
@@ -53,118 +60,191 @@ docker run -d \
   -v $(pwd)/configs:/app/configs:ro \
   -v $(pwd)/artifacts:/app/artifacts \
   -v $(pwd)/logs:/app/logs \
-  acestor \
-  python scripts/run_schedules.py
+  acestor:latest \
+  uv run python scripts/run_schedules.py
 ```
 
-Logs per run are written to `logs/{pipeline-name}/{run-id}.log` inside the mounted volume.
+The container restarts automatically on crash or reboot (`--restart unless-stopped`).
+
+### 5. Monitor
+
+```bash
+docker logs -f acestor-scheduler
+ls -lt logs/
+```
 
 ---
 
-## Option B: AWS EC2
+## Option B: Docker on AWS EC2
 
-### Recommended setup
+### Recommended instance
 
 | Component | Choice |
 |---|---|
-| Instance | `t3.medium` (2 vCPU, 4 GB RAM) — sufficient for district-level runs |
+| Instance | `t3.medium` (2 vCPU, 4 GB RAM) |
 | OS | Amazon Linux 2023 or Ubuntu 22.04 LTS |
-| Storage | 30 GB gp3 root volume (artifacts + logs) |
-| IAM Role | Attach an instance role with S3 read/write access — no static keys needed |
-| Security group | No inbound ports required (outbound HTTPS for S3 + SMTP only) |
+| Storage | 30 GB gp3 root volume |
+| IAM Role | Instance role with S3 read/write — no static keys needed |
+| Security group | Outbound HTTPS only (S3 + SMTP) |
 
-### 1. Provision the instance
+### 1. Provision and SSH in
 
 ```bash
-# Launch via AWS console or CLI, then SSH in
 ssh -i your-key.pem ec2-user@<instance-ip>
 ```
 
-### 2. Install Docker
+### 2. Clone the repo and install Docker
 
 ```bash
-# Amazon Linux 2023
-sudo dnf install -y docker
-sudo systemctl enable --now docker
-sudo usermod -aG docker ec2-user
-# Log out and back in for group to take effect
+git clone https://github.com/your-org/acestor-v2.git /opt/acestor
+cd /opt/acestor
+sudo bash deployment/ec2/setup.sh
+# Log out and back in for docker group membership to take effect
 ```
 
+### 3. Configure the schedule
+
+Edit `scripts/run_schedules.py` with your pipeline's cron expression and config path.
+
+### 4. Build the image
+
 ```bash
-# Ubuntu 22.04
-sudo apt update && sudo apt install -y docker.io
-sudo systemctl enable --now docker
-sudo usermod -aG docker ubuntu
+cd /opt/acestor
+docker build -t acestor:latest .
 ```
 
-### 3. Clone the repo and build
+### 5. Configure secrets
 
 ```bash
-git clone https://github.com/your-org/acestor-v2.git
-cd acestor-v2
-docker build -t acestor .
-```
-
-### 4. Configure secrets
-
-If using an IAM instance role for S3, you don't need `AWS_*` keys — the SDK picks them up automatically. Only add SMTP credentials:
-
-```bash
-cat > .env <<EOF
-SMTP_HOST=smtp.example.com
-SMTP_PORT=587
-SMTP_USER=alerts@example.com
-SMTP_PASS=yourpassword
-EOF
+cp deployment/ec2/env.example .env
 chmod 600 .env
+# Edit .env — set CONFIG_PATH and SMTP credentials
+# AWS credentials not needed if using IAM instance role
 ```
 
-### 5. Start the scheduler as a systemd service
-
-Create `/etc/systemd/system/acestor.service`:
-
-```ini
-[Unit]
-Description=Acestor Dengue Pipeline Scheduler
-After=docker.service
-Requires=docker.service
-
-[Service]
-Restart=on-failure
-RestartSec=30
-WorkingDirectory=/home/ec2-user/acestor-v2
-ExecStart=docker run --rm \
-  --name acestor-scheduler \
-  --env-file /home/ec2-user/acestor-v2/.env \
-  -v /home/ec2-user/acestor-v2/configs:/app/configs:ro \
-  -v /home/ec2-user/acestor-v2/artifacts:/app/artifacts \
-  -v /home/ec2-user/acestor-v2/logs:/app/logs \
-  acestor python scripts/run_schedules.py
-ExecStop=docker stop acestor-scheduler
-
-[Install]
-WantedBy=multi-user.target
-```
+### 6. Test a manual start
 
 ```bash
+bash deployment/ec2/deploy.sh
+docker logs -f acestor-scheduler
+```
+
+### 7. Manage with systemd (recommended for production)
+
+systemd will restart the scheduler container on crash or EC2 reboot:
+
+```bash
+sudo cp deployment/ec2/acestor.service /etc/systemd/system/
+# If repo is not at /opt/acestor, edit the paths in the service file first
 sudo systemctl daemon-reload
 sudo systemctl enable --now acestor
 sudo systemctl status acestor
 ```
 
-### 6. Tail live logs
+### 8. Monitor
 
 ```bash
-# Scheduler process log
+# Scheduler process
 sudo journalctl -u acestor -f
 
-# Per-run pipeline logs
-tail -f logs/gba-weekly/run-$(date +%Y%m%d)*.log
+# Per-run logs written by run_schedules.py
+ls -lt /opt/acestor/logs/
 ```
 
-### 7. Artifact storage
+### 9. Update the pipeline
 
-By default artifacts are written to the local volume. For persistence across instance replacements, point the config to S3:
+```bash
+cd /opt/acestor
+git pull
+docker build -t acestor:latest .
+sudo systemctl restart acestor
+```
+
+---
+
+## Option C: Native on AWS EC2 (no Docker)
+
+Use this when Docker is unavailable or you prefer a direct Python environment.
+
+### 1. Provision and SSH in
+
+```bash
+ssh -i your-key.pem ec2-user@<instance-ip>
+```
+
+### 2. Clone the repo
+
+```bash
+git clone https://github.com/your-org/acestor-v2.git /opt/acestor
+cd /opt/acestor
+```
+
+### 3. Install all dependencies
+
+```bash
+sudo bash deployment/ec2-native/setup.sh
+```
+
+This installs on the host:
+
+| Dependency | Purpose |
+|---|---|
+| Python 3.12 | Runtime |
+| [uv](https://github.com/astral-sh/uv) | Python env management |
+| GDAL, GEOS, PROJ, spatialindex | Geospatial processing (geopandas) |
+| texlive (latex-extra) | PDF report generation |
+| All Python packages | Via `uv sync` from `uv.lock` |
+
+### 4. Configure the schedule
+
+Edit `scripts/run_schedules.py` with your cron expression and config path.
+
+### 5. Configure secrets
+
+```bash
+cp deployment/ec2-native/env.example .env
+chmod 600 .env
+# Edit .env
+```
+
+### 6. Test a manual start
+
+```bash
+bash deployment/ec2-native/run.sh
+# Press Ctrl+C to stop
+```
+
+### 7. Manage with systemd
+
+```bash
+# If the deploy user is not ec2-user, edit User= in acestor.service first
+sudo cp deployment/ec2-native/acestor.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now acestor
+sudo systemctl status acestor
+```
+
+### 8. Monitor
+
+```bash
+sudo journalctl -u acestor -f
+ls -lt /opt/acestor/logs/
+```
+
+### 9. Update the pipeline
+
+```bash
+cd /opt/acestor
+git pull
+~/.local/bin/uv sync --frozen --extra dengue --extra cds --extra s3
+sudo systemctl restart acestor
+```
+
+---
+
+## Artifact storage on S3
+
+For persistence across instance replacements, configure S3 artifact storage in your pipeline YAML:
 
 ```yaml
 storages:
@@ -172,25 +252,18 @@ storages:
     kind: s3
     s3:
       bucket: your-bucket
-      base_prefix: artifacts/
+      base_prefix: acestor/artifacts/
 ```
 
----
-
-## Updating the pipeline
-
-```bash
-cd acestor-v2
-git pull
-docker build -t acestor .
-sudo systemctl restart acestor
-```
+With an IAM instance role attached to the EC2 instance, no credentials are needed in `.env`.
 
 ---
 
 ## Health check
 
 There is no HTTP endpoint. Monitor via:
+
 - `sudo systemctl status acestor` — confirms the scheduler process is running
-- `ls -lt logs/gba-weekly/` — confirms runs are executing on schedule
-- Email notifications (configure `email:` in the pipeline config) — confirms end-to-end success
+- `sudo journalctl -u acestor -n 50` — last 50 log lines
+- `ls -lt logs/` — confirms runs are executing on schedule
+- Email notifications — configure `email:` in your pipeline YAML for end-to-end confirmation

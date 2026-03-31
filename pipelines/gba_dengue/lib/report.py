@@ -43,7 +43,7 @@ def _week_for_fig_filename(val) -> str:
 
 
 def add_latex_figure_metadata(
-    df: pd.DataFrame, *, figtype: str = "png"
+    df: pd.DataFrame, *, figtype: str = "png", run_date: str = ""
 ) -> pd.DataFrame:
     """Mirror SOT ``generate_LaTeX_fig_captions`` (AssessThresholdPerformance.py L99–135).
 
@@ -70,7 +70,11 @@ def add_latex_figure_metadata(
         lambda x: dict_text_thresh.get(x, x)
     )
 
-    end_string = pd.Timestamp.today().date().strftime("%Y%m%d")
+    end_string = (
+        pd.Timestamp(run_date).date().strftime("%Y%m%d")
+        if run_date
+        else pd.Timestamp.today().date().strftime("%Y%m%d")
+    )
 
     def _fig_name_row(row: pd.Series) -> str:
         region_type = row["region_type"]
@@ -176,16 +180,16 @@ def build_rep_dict(
         if dates_c
         else get_month_year_range_from_strings(dates_z)
     )
-    prediction_date = pred_c or pred_z or ""
+    prediction_date = str(
+        pd.Timestamp(run_date).date() if run_date else pd.Timestamp.today().date()
+    ).replace("-", "--")
     cc = str(cutoff_case).replace("-", "--")
     cw = str(cutoff_weather).replace("-", "--")
     epi_dd = str(epi_data_start_date).replace("-", "--")
     rep: dict[str, Any] = {
         "reportmonth": reportmonth,
         "prediction_date": prediction_date,
-        "report_date": str(
-            pd.Timestamp(run_date).date() if run_date else pd.Timestamp.today().date()
-        ).replace("-", "--"),
+        "report_date": str(pd.Timestamp.today().date()).replace("-", "--"),
         "epi_data_start_date": epi_dd,
         "epi_data_end_date": cc,
         "weather_data_end_date": cw,
@@ -730,8 +734,7 @@ def compile_latex_bundle_zip(
             except FileNotFoundError:
                 return False
 
-        if not _run(latex_bin, "-interaction=nonstopmode", "main.tex"):
-            return None
+        _run(latex_bin, "-interaction=nonstopmode", "main.tex")
         _run("bibtex", "main")
         _run(latex_bin, "-interaction=nonstopmode", "main.tex")
         _run(latex_bin, "-interaction=nonstopmode", "main.tex")

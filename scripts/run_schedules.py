@@ -21,7 +21,7 @@ LOGS_DIR = ROOT / "logs"
 PIPELINES = [
     {
         "name": "gba-weekly",
-        "cron": "*/2 * * * *",  # every 2 minutes
+        "cron": "*/1 * * * *",  # every 1m
         "pipeline": "pipelines.gba_dengue.pipeline:build_pipeline",
         "config": "configs/gba_stage1_s3.yaml",
     },

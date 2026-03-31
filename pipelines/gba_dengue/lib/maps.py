@@ -45,6 +45,7 @@ def gen_plot(
     geojson_base: str,
     output_dir: str = "plots",
     figure_title: str = "Dengue risk map",
+    run_date: str = "",
 ) -> str:
     """Generate a choropleth risk-map PNG and return its path."""
     geojson_folder = os.path.join(
@@ -114,14 +115,19 @@ def gen_plot(
     plt.legend(
         handles=patches,
         title="Dengue Risk Levels",
-        loc="lower left",
-        bbox_to_anchor=(0.655, 0.7),
+        loc="upper left",
+        bbox_to_anchor=(1.02, 1),
+        borderaxespad=0,
     ).get_frame().set_edgecolor("black")
 
     ax.axis("off")
     plt.suptitle(f"{figure_title}\n({thisdate})", x=0.52, y=0.95)
 
-    end_str = pd.Timestamp.today().date().strftime("%Y%m%d")
+    end_str = (
+        pd.Timestamp(run_date).date().strftime("%Y%m%d")
+        if run_date
+        else pd.Timestamp.today().date().strftime("%Y%m%d")
+    )
     fname = f"{REGION_LABEL.get(region, region)}s_{thisdate}_{MODEL_LABEL.get(model, model)}_{THRESHOLD_LABEL.get(threshold, threshold)}_{end_str}.png"
     out_path = os.path.join(output_dir, fname)
     fig.savefig(out_path, bbox_inches="tight")

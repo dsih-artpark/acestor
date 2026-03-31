@@ -80,7 +80,14 @@ class DownloadWeatherDataStep(BaseStep[NoInputs, WeatherDownloadResult]):
     def _copy_from_storage(
         self, context: PipelineContext, cfg: WeatherDownloadConfig
     ) -> WeatherDownloadResult:
-        """Filesystem mode: copy pre-existing CSVs from a configured storage."""
+        """Copy or reference pre-existing CSVs depending on backend.
+
+        Filesystem backend: return filesystem:// references (no copy).
+        S3 / other backends: download files into the artifact store.
+        """
+        from pathlib import Path
+
+        backend = (cfg.source_backend or "filesystem").strip().lower()
         source = self.source or self._build_source(cfg)
         if source is None:
             source = context.require_storage(cfg.source_storage)
@@ -89,15 +96,36 @@ class DownloadWeatherDataStep(BaseStep[NoInputs, WeatherDownloadResult]):
             paths = source.list_objects(cfg.source_prefix)
 
         downloaded: list[str] = []
-        for src in paths:
-            filename = src.replace("\\", "/").split("/")[-1]
-            dest = context.artifact_path(f"{cfg.dest_relpath}/{filename}")
-            context.artifacts.write(source.read(src), dest)
-            downloaded.append(dest)
 
-        context.log.info(
-            "download_weather_data: copied %d files from storage", len(downloaded)
-        )
+        if backend == "filesystem" and cfg.source_path:
+            # Local files — return references directly, no I/O needed.
+            for src in paths:
+                full_path = str(Path(cfg.source_path) / src)
+                downloaded.append(f"filesystem://{full_path}")
+            context.log.info(
+                "download_weather_data: referencing %d files from storage",
+                len(downloaded),
+            )
+        elif backend == "s3":
+            # S3 backend — validate files exist (triggers S3Source cache) and return s3:// refs.
+            for src in paths:
+                source.read(src)  # warms local cache if cache_enabled
+                downloaded.append(f"s3://{src}")
+            context.log.info(
+                "download_weather_data: referencing %d files from S3 (cached locally)",
+                len(downloaded),
+            )
+        else:
+            # Other remote backend — copy into artifacts.
+            for src in paths:
+                filename = src.replace("\\", "/").split("/")[-1]
+                dest = context.artifact_path(f"{cfg.dest_relpath}/{filename}")
+                context.artifacts.write(source.read(src), dest)
+                downloaded.append(dest)
+            context.log.info(
+                "download_weather_data: copied %d files from storage", len(downloaded)
+            )
+
         return WeatherDownloadResult(enabled=True, downloaded_files=downloaded)
 
     def _parse_from_local_netcdf_cache(

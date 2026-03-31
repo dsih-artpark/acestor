@@ -276,6 +276,8 @@ class WeatherParseConfig:
     sampling_rate: int
     # Column rename map applied when writing agg_daily / agg_Ndays intermediate files
     intermediate_col_rename: dict[str, str]
+    write_agg_daily: bool
+    write_agg_ndays: bool
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any]) -> WeatherParseConfig:
@@ -331,6 +333,8 @@ class WeatherParseConfig:
             rolling_n_days=rolling_n_days,
             sampling_rate=sampling_rate,
             intermediate_col_rename=intermediate_col_rename,
+            write_agg_daily=bool(raw.get("write_agg_daily", True)),
+            write_agg_ndays=bool(raw.get("write_agg_ndays", True)),
         )
 
 

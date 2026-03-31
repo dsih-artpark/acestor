@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import io
+import os
 from dataclasses import dataclass
 from typing import ClassVar
 
 import pandas as pd
 
 from acestor import BaseStep, PipelineContext
-from pipelines.gba_dengue.configs import WeatherParseConfig, _section
+from acestor.core.sources import FileSystemSource, S3Source
+from pipelines.gba_dengue.configs import (
+    WeatherDownloadConfig,
+    WeatherParseConfig,
+    _section,
+)
 from pipelines.gba_dengue.lib import weather
 from pipelines.gba_dengue.lib.case_data import get_latest_sampling_day
 from pipelines.gba_dengue.results import (
@@ -25,6 +31,35 @@ class ParseWeatherDataInputs:
 
 class ParseWeatherDataStep(BaseStep[ParseWeatherDataInputs, ParseWeatherDataResult]):
     input_type: ClassVar[type] = ParseWeatherDataInputs
+
+    def _build_weather_source(self, cfg: WeatherDownloadConfig):
+        backend = (cfg.source_backend or "filesystem").strip().lower()
+        source_path = (cfg.source_path or "").strip()
+        if source_path and backend == "s3" and source_path.startswith("s3://"):
+            bucket_and_prefix = source_path[len("s3://") :]
+            bucket, _, prefix = bucket_and_prefix.partition("/")
+            return S3Source(
+                bucket=bucket,
+                base_prefix=prefix,
+                aws_profile=(os.getenv("AWS_PROFILE", "").strip() or None),
+                region=(os.getenv("AWS_REGION", "").strip() or None),
+                cache_enabled=cfg.cache_enabled,
+                cache_dir=cfg.cache_dir,
+                strategy=cfg.cache_strategy,
+            )
+        if source_path and backend == "filesystem":
+            return FileSystemSource(base_path=source_path)
+        if backend == "s3" and cfg.s3_bucket:
+            return S3Source(
+                bucket=cfg.s3_bucket,
+                base_prefix=cfg.s3_prefix,
+                aws_profile=(os.getenv("AWS_PROFILE", "").strip() or None),
+                region=(os.getenv("AWS_REGION", "").strip() or None),
+                cache_enabled=cfg.cache_enabled,
+                cache_dir=cfg.cache_dir,
+                strategy=cfg.cache_strategy,
+            )
+        return FileSystemSource(base_path=cfg.filesystem_base_path or "")
 
     def _write_intermediate(
         self,
@@ -51,13 +86,16 @@ class ParseWeatherDataStep(BaseStep[ParseWeatherDataInputs, ParseWeatherDataResu
             dest = context.artifact_path(rel)
             context.artifacts.write_text(grp.to_csv(index=False), dest)
 
-    def _read_bytes(self, context: PipelineContext, ref: str) -> bytes:
+    def _read_bytes(self, context: PipelineContext, source, ref: str) -> bytes:
         if ref.startswith("filesystem://"):
             with open(ref[len("filesystem://") :], "rb") as fh:
                 return fh.read()
         if ref.startswith("fs://"):
             with open(ref[len("fs://") :], "rb") as fh:
                 return fh.read()
+        if ref.startswith("s3://"):
+            return source.read(ref[len("s3://") :])
+        # Backward compatibility for older runs that wrote artifact keys.
         return context.artifacts.read(ref)
 
     def run(
@@ -66,10 +104,16 @@ class ParseWeatherDataStep(BaseStep[ParseWeatherDataInputs, ParseWeatherDataResu
         cfg = WeatherParseConfig.from_raw(
             _section(context.config, "data.weather_parse")
         )
+        dl_cfg = WeatherDownloadConfig.from_raw(
+            _section(context.config, "data.weather_download")
+        )
+        source = self._build_weather_source(dl_cfg)
 
         files = inputs.download_weather_data.downloaded_files
         raw_dfs = [
-            pd.read_csv(io.BytesIO(self._read_bytes(context, f)), low_memory=False)
+            pd.read_csv(
+                io.BytesIO(self._read_bytes(context, source, f)), low_memory=False
+            )
             for f in files
         ]
         if not raw_dfs:
@@ -108,12 +152,26 @@ class ParseWeatherDataStep(BaseStep[ParseWeatherDataInputs, ParseWeatherDataResu
             rolling_agg=cfg.rolling_agg,
         )
 
-        self._write_intermediate(
-            context, daily, cfg.region_type, "agg_daily", cfg.intermediate_col_rename
-        )
-        self._write_intermediate(
-            context, rolling, cfg.region_type, "agg_Ndays", cfg.intermediate_col_rename
-        )
+        run_date = pd.Timestamp(inputs.identify_sampling_day.run_date).normalize()
+        daily = daily[pd.to_datetime(daily["date"]) <= run_date]
+        rolling = rolling[pd.to_datetime(rolling["date"]) <= run_date]
+
+        if cfg.write_agg_daily:
+            self._write_intermediate(
+                context,
+                daily,
+                cfg.region_type,
+                "agg_daily",
+                cfg.intermediate_col_rename,
+            )
+        if cfg.write_agg_ndays:
+            self._write_intermediate(
+                context,
+                rolling,
+                cfg.region_type,
+                "agg_Ndays",
+                cfg.intermediate_col_rename,
+            )
 
         max_date = pd.Timestamp(rolling["date"].max())
         latest_day = get_latest_sampling_day(

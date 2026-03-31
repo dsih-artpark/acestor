@@ -183,6 +183,8 @@ data:
 | `rolling_agg` | list[{name, op}] | mean/sum defaults | Aggregations applied over rolling window |
 | `sampling_rate` | int | `7` | Sample every N days (7 = weekly) |
 | `intermediate_col_rename` | dict | see above | Renames columns in intermediate files |
+| `write_agg_daily` | bool | `true` | Write `agg_daily` intermediate CSVs to artifacts. Set `false` to skip (e.g. hindcast batch runs) |
+| `write_agg_ndays` | bool | `true` | Write `agg_Ndays` rolling-aggregate intermediate CSVs to artifacts. Set `false` to skip |
 
 ---
 

@@ -1,44 +1,20 @@
 # Deployment
 
-This project keeps deployment simple with two options:
+See **[docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md)** for the full deployment guide covering:
 
-1. Docker (local / any VM)
-2. EC2 (Docker-based)
+- **Option A** — Docker on any Linux server
+- **Option B** — Docker on AWS EC2 (`deployment/ec2/`)
+- **Option C** — Native Python on AWS EC2, no Docker (`deployment/ec2-native/`)
 
-## Docker deployment
+## Quick reference
 
-Build image:
-
-```bash
-docker build -t acestor:latest .
-```
-
-Run pipeline:
-
-```bash
-docker run --rm \
-  -v "$(pwd)/configs:/app/configs" \
-  -v "$(pwd)/geojsons:/app/geojsons" \
-  -v "$(pwd)/artifacts:/app/artifacts" \
-  --env-file .env \
-  acestor:latest \
-  --pipeline pipelines.gba_dengue.pipeline:build_pipeline \
-  --config configs/dengue_s3_env.yaml \
-  --run-id docker-run-001
-```
-
-## EC2 deployment (Docker)
-
-Use files in `deployment/ec2/`:
-
-- `env.example` - environment variables for runtime
-- `deploy.sh` - build + run helper
-- `acestor.service` - optional systemd service template
-
-Typical flow on EC2:
-
-```bash
-cp deployment/ec2/env.example .env
-# edit .env
-bash deployment/ec2/deploy.sh
-```
+| File | Purpose |
+|---|---|
+| `ec2/setup.sh` | Install Docker on EC2 (AL2023 or Ubuntu) |
+| `ec2/deploy.sh` | Build image + start scheduler container |
+| `ec2/acestor.service` | systemd service — keeps scheduler container alive |
+| `ec2/env.example` | Environment variable template |
+| `ec2-native/setup.sh` | Install Python, GDAL, texlive, uv natively |
+| `ec2-native/run.sh` | Start scheduler natively (no Docker) |
+| `ec2-native/acestor.service` | systemd service — keeps scheduler process alive |
+| `ec2-native/env.example` | Environment variable template |

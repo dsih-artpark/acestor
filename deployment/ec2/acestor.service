@@ -1,13 +1,26 @@
 [Unit]
-Description=acestor dengue pipeline (Docker one-shot)
-After=docker.service
+Description=Acestor Dengue Pipeline Scheduler (Docker)
+After=docker.service network-online.target
 Requires=docker.service
 
 [Service]
-Type=oneshot
+Type=simple
+Restart=always
+RestartSec=30
 WorkingDirectory=/opt/acestor
-ExecStart=/usr/bin/bash /opt/acestor/deployment/ec2/deploy.sh
-RemainAfterExit=true
+ExecStartPre=-/usr/bin/docker stop acestor-scheduler
+ExecStartPre=-/usr/bin/docker rm   acestor-scheduler
+ExecStart=/usr/bin/docker run \
+  --name acestor-scheduler \
+  --rm \
+  --env-file /opt/acestor/.env \
+  -v /opt/acestor/configs:/app/configs:ro \
+  -v /opt/acestor/artifacts:/app/artifacts \
+  -v /opt/acestor/logs:/app/logs \
+  acestor:latest \
+  uv run python scripts/run_schedules.py
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
