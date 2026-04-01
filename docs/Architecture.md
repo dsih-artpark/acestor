@@ -1,4 +1,4 @@
-# GBA Dengue Pipeline — Architecture
+# Dengue Pipeline — Architecture
 
 ## Diagram
 
