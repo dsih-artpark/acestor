@@ -24,7 +24,7 @@ data:
     date_end: ""   # inclusive end; empty → use today
 
   geojson:
-    base_path: "geojsons/geojsons_GBA"  # layout: {base_path}/{region_type}s/*.geojson
+    base_path: "datasets/geojsons/geojsons_GBA"  # layout: {base_path}/{region_type}s/*.geojson
 
   # Early exit if sampled case data is too thin (cf. main.py can_run_predictions).
   case_sufficiency:

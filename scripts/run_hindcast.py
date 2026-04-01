@@ -97,7 +97,7 @@ def main() -> None:
                 "-m",
                 "acestor.run",
                 "--pipeline",
-                "pipelines.gba_dengue.pipeline:build_pipeline",
+                "pipelines.dengue.pipeline:build_pipeline",
                 "--config",
                 tmp_path,
                 "--run-id",

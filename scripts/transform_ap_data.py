@@ -489,7 +489,7 @@ def main() -> None:
         log.info("Done. Now run the pipeline:")
         log.info(
             "  uv run python -m acestor.run "
-            "--pipeline pipelines.gba_dengue.pipeline:build_pipeline "
+            "--pipeline pipelines.dengue.pipeline:build_pipeline "
             "--config configs/ap_district.yaml"
         )
 

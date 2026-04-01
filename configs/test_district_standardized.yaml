@@ -18,7 +18,7 @@ data:
     date_end: "2024-12-18"
 
   geojson:
-    base_path: "geojsons/geojsons_GBA"
+    base_path: "datasets/geojsons/geojsons_GBA"
 
   case_sufficiency:
     enabled: true

@@ -81,7 +81,7 @@ Prepend the TeX binary directory when invoking the pipeline:
 
 ```bash
 PATH="/Library/TeX/texbin:$PATH" uv run python -m acestor.run \
-  --pipeline pipelines.gba_dengue.pipeline:build_pipeline \
+  --pipeline pipelines.dengue.pipeline:build_pipeline \
   --config configs/ap_district.yaml \
   --run-id ap-v1
 ```

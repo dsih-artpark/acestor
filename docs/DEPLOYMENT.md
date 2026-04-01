@@ -16,7 +16,7 @@ PIPELINES = [
     {
         "name":     "ap-weekly",
         "cron":     "30 0 * * 2",   # every Tuesday 00:30 UTC (06:00 IST)
-        "pipeline": "pipelines.gba_dengue.pipeline:build_pipeline",
+        "pipeline": "pipelines.dengue.pipeline:build_pipeline",
         "config":   "configs/ap_district.yaml",
     },
 ]

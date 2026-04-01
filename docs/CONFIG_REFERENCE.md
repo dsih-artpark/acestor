@@ -107,7 +107,7 @@ data:
 ```yaml
 data:
   geojson:
-    base_path: "geojsons/geojsons_GBA"
+    base_path: "datasets/geojsons/geojsons_GBA"
 ```
 
 | Key | Type | Default | Notes |

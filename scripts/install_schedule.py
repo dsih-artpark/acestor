@@ -11,7 +11,7 @@ from pathlib import Path
 
 cfg = yaml.safe_load(Path(sys.argv[1]).read_text()).get("schedule", {})
 cron = cfg.get("cron", "0 6 * * 1")
-pipe = cfg.get("pipeline", "pipelines.gba_dengue.pipeline:build_pipeline")
+pipe = cfg.get("pipeline", "pipelines.dengue.pipeline:build_pipeline")
 config = cfg.get("config", sys.argv[1])
 root = Path(__file__).resolve().parent.parent
 logs_dir = root / "logs"

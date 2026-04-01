@@ -22,7 +22,7 @@ PIPELINES = [
     {
         "name": "gba-weekly",
         "cron": "*/1 * * * *",  # every 1m
-        "pipeline": "pipelines.gba_dengue.pipeline:build_pipeline",
+        "pipeline": "pipelines.dengue.pipeline:build_pipeline",
         "config": "configs/gba_stage1_s3.yaml",
     },
     # {

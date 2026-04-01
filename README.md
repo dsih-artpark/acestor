@@ -14,8 +14,9 @@
 6. [Pipeline stages](#pipeline-stages)
 7. [Project layout](#project-layout)
 8. [Development](#development)
-9. [Config reference](docs/CONFIG_REFERENCE.md)
-10. [Troubleshooting](docs/TROUBLESHOOTING.md)
+9. [Architecture](docs/Architecture.md)
+10. [Config reference](docs/CONFIG_REFERENCE.md)
+11. [Troubleshooting](docs/TROUBLESHOOTING.md)
 
 ---
 
@@ -79,7 +80,7 @@ SMTP_PASSWORD=your-password-here
 
 ```bash
 uv run python -m acestor.run \
-  --pipeline pipelines.gba_dengue.pipeline:build_pipeline \
+  --pipeline pipelines.dengue.pipeline:build_pipeline \
   --config configs/gba_docker_test.yaml \
   --run-id my-first-run
 ```
@@ -129,7 +130,7 @@ PIPELINES = [
     {
         "name":     "gba-weekly",
         "cron":     "0 6 * * 1",   # every Monday at 06:00 UTC
-        "pipeline": "pipelines.gba_dengue.pipeline:build_pipeline",
+        "pipeline": "pipelines.dengue.pipeline:build_pipeline",
         "config":   "configs/gba_stage1_s3.yaml",
     },
     # add more pipelines here
@@ -223,7 +224,7 @@ data:
     source_path: "datasets/raw_linelist_data/..."
 
   geojson:
-    base_path: "geojsons/geojsons_GBA"
+    base_path: "datasets/geojsons/geojsons_GBA"
 
 email:                           # optional — run notifications
   enabled: false
@@ -248,7 +249,7 @@ email:
 
 ## Pipeline stages
 
-Steps execute in DAG order. Names match logs and code under `pipelines/gba_dengue/steps/`.
+Steps execute in DAG order. Names match logs and code under `pipelines/dengue/steps/`.
 
 | # | Step | What it does |
 |---|------|-------------|

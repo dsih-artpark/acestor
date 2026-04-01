@@ -155,7 +155,7 @@ email:
 schedule:
   cron: "0 6 * * 1"          # Every Monday at 6:00 AM (set TZ=Asia/Kolkata on host)
   timezone: "Asia/Kolkata"   # informational — configure TZ on the host/container
-  pipeline: "pipelines.gba_dengue.pipeline:build_pipeline"
+  pipeline: "pipelines.dengue.pipeline:build_pipeline"
   config: "configs/gba_stage1_s3.yaml"
   # Docker-mode extras (only needed when running with --mode docker):
   # image: "dengue-pipeline:latest"

@@ -26,18 +26,18 @@ test:
 	uv run pytest
 
 # --- Dengue production pipeline (see README) ---
-DENGUE_CONFIG ?= configs/gba_stage1.yaml
+DENGUE_CONFIG ?= configs/stage1.yaml
 DENGUE_RUN_ID ?= local
 
 run-dengue-pipeline:
 	uv run python -m acestor.run \
-	  --pipeline pipelines.gba_dengue.pipeline:build_pipeline \
+	  --pipeline pipelines.dengue.pipeline:build_pipeline \
 	  --config $(DENGUE_CONFIG) \
 	  --run-id $(DENGUE_RUN_ID)
 
 run-dengue-pipeline-incremental:
 	uv run python -m acestor.run \
-	  --pipeline pipelines.gba_dengue.pipeline_incremental:build_pipeline \
+	  --pipeline pipelines.dengue.pipeline_incremental:build_pipeline \
 	  --config $(DENGUE_CONFIG) \
 	  --run-id $(DENGUE_RUN_ID)
 
