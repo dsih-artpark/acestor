@@ -99,12 +99,18 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
             years_to_include=cfg.years_to_include,
             predict_upto_date=pred_upto,
         )
+        thresholds_csv = context.artifacts.read_text(
+            inputs.generate_thresholds.thresholds_csv_path
+        )
+        precomputed_thresholds = pd.read_csv(io.StringIO(thresholds_csv))
+
         nbr_out = zones.merge_predictions_thresholds(
             case_df,
             nbr_pred,
             spatial_col=cfg.spatial_res,
             list_alpha=cfg.list_alpha,
             to_date=pred_upto - pd.Timedelta(days=28),
+            precomputed_thresholds=precomputed_thresholds,
         )
 
         prediction_dfs = [nbr_out]
@@ -125,6 +131,7 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
                 spatial_col=cfg.spatial_res,
                 list_alpha=cfg.list_alpha,
                 to_date=tse_upto - pd.Timedelta(days=14),
+                precomputed_thresholds=precomputed_thresholds,
             )
             prediction_dfs.append(tse_out)
 
@@ -137,6 +144,9 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
 
         classified = zones.classify_into_zones(ensembled, spatial_col=cfg.spatial_res)
         classified["predictionZone"] = classified["predictionZone"].fillna(0)
+        if "Mean" in classified.columns and "StdDev" in classified.columns:
+            degenerate = (classified["Mean"] == 0) & (classified["StdDev"] == 0)
+            classified.loc[degenerate, "predictionZone"] = pd.NA
 
         run_date = pd.Timestamp(inputs.identify_cutoff_dates.run_date).normalize()
         future_dates = [

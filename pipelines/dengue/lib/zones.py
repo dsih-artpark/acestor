@@ -81,6 +81,22 @@ def mu_sigma(
     return pd.concat([hist, prev], ignore_index=True)
 
 
+def _add_threshold_levels(df: pd.DataFrame, list_alpha: list[float]) -> pd.DataFrame:
+    """Add Zero, Inf, and T{alpha} threshold columns to a df with Mean and StdDev."""
+    out = df.copy()
+    out["date"] = pd.to_datetime(out["date"])
+    out["Zero"] = 0.0
+    out["Inf"] = np.inf
+    alphas = [0.0] + list(list_alpha)
+    for a in alphas:
+        out[f"T{a:.2f}"] = out["Mean"] + a * out["StdDev"]
+    epsilon = 1e-6
+    for i, a in enumerate(alphas[1:], start=1):
+        out[f"T{a:.2f}"] += i * epsilon
+    out["ISOWeek"] = out["date"].dt.isocalendar().week.astype(int)
+    return out
+
+
 def compute_thresholds(
     case_data: pd.DataFrame,
     *,
@@ -90,22 +106,7 @@ def compute_thresholds(
 ) -> pd.DataFrame:
     """Compute thresholds at each alpha level."""
     df = mu_sigma(case_data, spatial_col=spatial_col, to_date=to_date)
-    thresholds = df.copy()
-    thresholds["Zero"] = 0.0
-    thresholds["Inf"] = np.inf
-
-    alphas = [0.0] + list(list_alpha)
-    for a in alphas:
-        thresholds[f"T{a:.2f}"] = thresholds["Mean"] + a * thresholds["StdDev"]
-
-    epsilon = 1e-6
-    for i, a in enumerate(alphas[1:], start=1):
-        thresholds[f"T{a:.2f}"] += i * epsilon
-
-    thresholds["ISOWeek"] = (
-        pd.to_datetime(thresholds["date"]).dt.isocalendar().week.astype(int)
-    )
-    return thresholds
+    return _add_threshold_levels(df, list_alpha)
 
 
 # ---------------------------------------------------------------------------
@@ -153,11 +154,20 @@ def merge_predictions_thresholds(
     list_alpha: list[float],
     to_date=None,
     n_days: int = 28,
+    precomputed_thresholds: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """Merge model predictions with computed thresholds."""
-    thresholds = compute_thresholds(
-        case_data, spatial_col=spatial_col, list_alpha=list_alpha, to_date=to_date
-    )
+    """Merge model predictions with computed thresholds.
+
+    If *precomputed_thresholds* is provided (a df with region_id, date, Mean,
+    StdDev, threshold_method columns), it is used directly instead of
+    recomputing thresholds inline from *case_data*.
+    """
+    if precomputed_thresholds is not None:
+        thresholds = _add_threshold_levels(precomputed_thresholds, list_alpha)
+    else:
+        thresholds = compute_thresholds(
+            case_data, spatial_col=spatial_col, list_alpha=list_alpha, to_date=to_date
+        )
     if to_date:
         thresholds = thresholds[thresholds["date"] == pd.Timestamp(to_date)]
 
