@@ -84,7 +84,7 @@ model:
     lag_rf: [4]
   years_to_exclude: []
   years_to_include: []
-  list_alpha: [1.0, 2.0]
+  list_alpha: [2.0, 3.0]
 
 assess:
   total_district_regions: 26   # AP has 26 districts (post-2022 reorganisation)
