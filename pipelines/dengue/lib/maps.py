@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 from pathlib import Path
 
@@ -63,8 +64,12 @@ def gen_plot(
             code = color_df.loc[color_df["regionID"] == rname, "predictionZone"].values[
                 0
             ]
-            gdf["color"] = COLOR_MAPPING.get(int(code), "w")
-            gdf["hatch"] = ""
+            if code is not None and not (isinstance(code, float) and math.isnan(code)):
+                gdf["color"] = COLOR_MAPPING.get(int(code), "w")
+                gdf["hatch"] = ""
+            else:
+                gdf["color"] = "lightgray"
+                gdf["hatch"] = ""
         else:
             gdf["color"] = "w"
             gdf["hatch"] = "////"

@@ -453,13 +453,14 @@ def gen_full_report_tex(rep_dict: dict[str, Any]) -> str:
     disclaimer = (
         r"\clearpage"
         "\n"
+        r"\noindent\textbf{\textit{Note}}: This is a beta version and should not be used for operational decisions."
+        "\n\n"
         r"\noindent\textbf{\textit{Disclaimer}}: These risk maps indicate qualitative risks based on "
         "preliminary analysis using available data, which includes historical case patterns and trends, "
-        r"and weather parameters (see the section on~\nameref{sec:Data}). The predictions for Greater Bengaluru "
-        "Authority (GBA) do NOT include case counts for the area of Bengaluru Urban district outside of GBA, "
-        "and the projections for the same can be found separately. The risk map is only intended to serve "
-        "as a guide for prioritising interventions such as Source Reduction Activities (SRA). Careful "
-        "interpretation must be taken of any results herein and their practical significance to policy. "
+        r"and weather parameters (see the section on~\nameref{sec:Data}). "
+        "The risk map is only intended to serve as a guide for prioritising interventions such as "
+        "Source Reduction Activities (SRA). Careful interpretation must be taken of any results herein "
+        "and their practical significance to policy. "
         r"Please share feedback, if any, at: \href{mailto:onehealth@artpark.in}{onehealth@artpark.in}."
     )
 
@@ -479,7 +480,7 @@ def gen_full_report_tex(rep_dict: dict[str, Any]) -> str:
     data_section = (
         r"\section{Data}\label{sec:Data}"
         "\n"
-        "We use the following datasets, aggregated to weekly frequency at corp-level spatial resolution:\n"
+        "We use the following datasets, aggregated to weekly frequency:\n"
         r"\begin{enumerate}[leftmargin=*]"
         "\n"
         rf"\item Epidemiological Data: Yearly dengue line list data from {epi_start} till {epi_end}."
@@ -492,11 +493,6 @@ def gen_full_report_tex(rep_dict: dict[str, Any]) -> str:
         r"\item Socio-economic Data: Population data from the 15th decadal census of India (2011) and the area of the corp."
         "\n"
         r"\end{enumerate}"
-        "\n"
-        "Recall that we do not include the cases of Bengaluru Urban outside of the Greater Bengaluru "
-        "Authority (GBA) in the epidemiological data. We examine GBA cases separately because "
-        "(a)~the city of Bengaluru has GBA with a separate jurisdiction and governance structure, and "
-        r"(b)~the city of Bengaluru forms 20\% of the population of Karnataka."
     )
 
     model_section = (
@@ -526,7 +522,7 @@ def gen_full_report_tex(rep_dict: dict[str, Any]) -> str:
     # Zone figures in appendix
     appendix_lines = [r"\newpage", r"\section{Appendix}\label{sec: Appendix}"]
     appendix_lines.append(
-        "The following are the risk maps based on the data available for different (10) zones:"
+        "The following are the risk maps based on the data available for different regions:"
     )
     for i, (img, cap, lbl) in enumerate(zip(fnames_z, caps_z, labels_z)):
         appendix_lines.append(_fig_block(img, cap, lbl))

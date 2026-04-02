@@ -44,10 +44,10 @@ def ensemble_predictions(
     *,
     spatial_col: str,
 ) -> pd.DataFrame:
-    """Merge NBR + TSE predictions into an ensemble by taking the max prediction."""
+    """Merge NBR + TSE predictions into an ensemble by taking the mean prediction."""
     combined = pd.concat(dfs, ignore_index=True)
     group_cols = [c for c in combined.columns if c not in ("prediction", "model")]
-    ensembled = combined.groupby(group_cols)["prediction"].max().reset_index()
+    ensembled = combined.groupby(group_cols)["prediction"].mean().reset_index()
     ensembled["model"] = "ensembleModel"
     return ensembled
 
