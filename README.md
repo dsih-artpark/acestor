@@ -4,6 +4,11 @@
 
 ---
 
+<p align="center">
+  <img src="docs/pipeline_diagram.svg" width="40%" alt="Pipeline Diagram" />
+</p>
+
+
 ## Table of Contents
 
 1. [Prerequisites](#prerequisites)
@@ -39,8 +44,8 @@ Before anything else, make sure you have:
 **1. Clone the repo**
 
 ```bash
-git clone https://github.com/dsih-artpark/acestor.git acestor-v2
-cd acestor-v2
+git clone https://github.com/dsih-artpark/acestor.git
+cd acestor
 ```
 
 **2. Install dependencies**

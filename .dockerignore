@@ -24,22 +24,30 @@ logs/
 
 # Large data directories — mounted as volumes at runtime
 datasets/
+ap_datasets/
 geojsons/
 artifacts/
 cache/
 runs/
 data/
 
+# Large local downloads
+drive-download-*/
+
 # Dev/local-only directories not needed in the image
 dengue-model-pipeline-automation - GBA/
 acestor-existing/
 parity/
+configs-example/
+docs/
 
 # Git
 .git/
 .gitignore
 
-# Dev scripts
+# Dev scripts & docs
 test_email.py
 validate_outputs.py
 execution_steps.txt
+*.md
+!README.md

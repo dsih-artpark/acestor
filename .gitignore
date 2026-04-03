@@ -27,6 +27,7 @@ build/
 !README.md
 !docs/
 !docs/*.md
+configs-example/
 
 
 runs/
@@ -41,7 +42,8 @@ cache/
 parity/
 execution_steps.txt
 test_email.py
+validate_outputs.py
 
 *.log
 logs/
-
+.DS_Store
