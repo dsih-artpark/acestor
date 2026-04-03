@@ -1,0 +1,212 @@
+"""Tests for pipelines.dengue.lib.models (NBR helpers and TSE)."""
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from pipelines.dengue.lib.models.nbr import _lag, _filter_features, _one_hot, _rescale
+from pipelines.dengue.lib.models.tse import _process_region, linear_extrapolation
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_merged_df(n_weeks=20, n_regions=3, start="2022-01-05"):
+    np.random.seed(42)
+    rows = []
+    dates = pd.date_range(start, periods=n_weeks, freq="7D")
+    for region in [f"r{i}" for i in range(n_regions)]:
+        for d in dates:
+            rows.append(
+                {
+                    "location.admin2.ID": region,
+                    "recordDate": d,
+                    "recordYear": d.year,
+                    "recordMonth": d.month,
+                    "ISOWeek": d.isocalendar().week,
+                    "case": float(np.random.randint(0, 10)),
+                    "t2m_mean": 25.0,
+                    "tp_sum": 5.0,
+                    "d2m_mean": 18.0,
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------
+# NBR helpers
+# ---------------------------------------------------------------------------
+
+
+def test_lag_adds_temp_and_rf_columns():
+    df = _make_merged_df()
+    result = _lag(df.copy(), "location.admin2.ID", lag_temp=[12], lag_rf=[4])
+    assert "temp_lag_12" in result.columns
+    assert "rainfall_lag_4" in result.columns
+    assert "relative_humidity_lag_4" in result.columns
+
+
+def test_lag_shifts_by_correct_amount():
+    df = _make_merged_df(n_regions=1)
+    original_temp = df["t2m_mean"].reset_index(drop=True)
+    result = _lag(df.copy(), "location.admin2.ID", lag_temp=[1], lag_rf=[1])
+    result = result.reset_index(drop=True)
+    # first row should be NaN after a lag-1 shift
+    assert pd.isna(result["temp_lag_1"].iloc[0])
+    # second row should equal the first row's original temperature
+    assert result["temp_lag_1"].iloc[1] == pytest.approx(original_temp.iloc[0])
+
+
+def test_filter_features_drops_rows_with_nan():
+    df = _make_merged_df()
+    df = _lag(df, "location.admin2.ID", lag_temp=[12], lag_rf=[4])
+    feature_cols = [
+        "case",
+        "recordYear",
+        "recordMonth",
+        "ISOWeek",
+        "t2m_mean",
+        "tp_sum",
+        "d2m_mean",
+    ]
+    result = _filter_features(df, feature_cols, "location.admin2.ID", [], [])
+    assert result.isna().sum().sum() == 0
+
+
+def test_filter_features_excludes_years():
+    df = _make_merged_df(n_weeks=52, start="2022-01-05")
+    df = _lag(df, "location.admin2.ID", lag_temp=[12], lag_rf=[4])
+    feature_cols = ["case", "recordYear", "recordMonth", "ISOWeek"]
+    result = _filter_features(
+        df,
+        feature_cols,
+        "location.admin2.ID",
+        years_to_exclude=[2022],
+        years_to_include=[],
+    )
+    assert 2022 not in result["recordYear"].values
+
+
+def test_filter_features_includes_years():
+    df = _make_merged_df(n_weeks=104, start="2022-01-05")
+    df = _lag(df, "location.admin2.ID", lag_temp=[12], lag_rf=[4])
+    feature_cols = ["case", "recordYear", "recordMonth", "ISOWeek"]
+    result = _filter_features(
+        df,
+        feature_cols,
+        "location.admin2.ID",
+        years_to_exclude=[],
+        years_to_include=[2022],
+    )
+    assert set(result["recordYear"].unique()).issubset({2022})
+
+
+def test_one_hot_encodes_iso_week():
+    df = pd.DataFrame({"ISOWeek": [1, 2, 3, 1]})
+    result = _one_hot(df)
+    assert result.shape[0] == 4
+    assert result.shape[1] == 3  # 3 unique weeks
+    # All values must be binary (0 or 1)
+    assert set(result.values.flatten().tolist()).issubset({0, 1})
+
+
+def test_rescale_returns_values_in_0_1():
+    df = pd.DataFrame(
+        {
+            "rainfall_lag_4": [0.0, 5.0, 10.0],
+            "relative_humidity_lag_4": [10.0, 15.0, 20.0],
+            "temp_lag_12": [20.0, 25.0, 30.0],
+        }
+    )
+    scaled, _ = _rescale(df)
+    assert scaled.min().min() >= 0.0
+    assert scaled.max().max() <= 1.0
+
+
+def test_rescale_with_existing_scaler():
+    df = pd.DataFrame(
+        {
+            "rainfall_lag_4": [0.0, 5.0, 10.0],
+            "relative_humidity_lag_4": [10.0, 15.0, 20.0],
+            "temp_lag_12": [20.0, 25.0, 30.0],
+        }
+    )
+    scaled1, scaler = _rescale(df)
+    scaled2, _ = _rescale(df, scaler=scaler)
+    assert scaled2.shape == df.shape
+    # Re-applying the fitted scaler must produce identical values (not a re-fit)
+    np.testing.assert_array_almost_equal(scaled2.values, scaled1.values)
+
+
+# ---------------------------------------------------------------------------
+# TSE helpers
+# ---------------------------------------------------------------------------
+
+
+def test_process_region_adds_moving_avg():
+    df = _make_merged_df(n_weeks=10, n_regions=1)
+    region_df = df[df["location.admin2.ID"] == "r0"].copy()
+    result = _process_region(
+        region_df,
+        spatial_col="location.admin2.ID",
+        predict_upto_date=pd.Timestamp("2022-03-09"),
+        years_to_exclude=[],
+        years_to_include=[],
+    )
+    assert "4wMovingAvg" in result.columns
+    assert "MaxCaseMonthlyHistorical" in result.columns
+
+
+def test_process_region_filters_to_predict_upto():
+    df = _make_merged_df(n_weeks=20, n_regions=1)
+    cutoff = pd.Timestamp("2022-03-01")
+    result = _process_region(
+        df[df["location.admin2.ID"] == "r0"].copy(),
+        spatial_col="location.admin2.ID",
+        predict_upto_date=cutoff,
+        years_to_exclude=[],
+        years_to_include=[],
+    )
+    assert (result["recordDate"] <= cutoff).all()
+
+
+def test_linear_extrapolation_returns_dataframe():
+    df = _make_merged_df(n_weeks=20, n_regions=2)
+    result = linear_extrapolation(
+        df,
+        spatial_col="location.admin2.ID",
+        years_to_exclude=[],
+        years_to_include=[],
+        predict_upto_date=pd.Timestamp("2022-05-25"),
+    )
+    assert isinstance(result, pd.DataFrame)
+
+
+def test_linear_extrapolation_output_columns():
+    df = _make_merged_df(n_weeks=20, n_regions=2)
+    result = linear_extrapolation(
+        df,
+        spatial_col="location.admin2.ID",
+        years_to_exclude=[],
+        years_to_include=[],
+        predict_upto_date=pd.Timestamp("2022-05-25"),
+    )
+    assert "prediction" in result.columns
+    assert "model" in result.columns
+    assert len(result) > 0
+    assert (result["model"] == "timeSeriesExtrapolation").all()
+
+
+def test_linear_extrapolation_predictions_non_negative():
+    df = _make_merged_df(n_weeks=20, n_regions=2)
+    result = linear_extrapolation(
+        df,
+        spatial_col="location.admin2.ID",
+        years_to_exclude=[],
+        years_to_include=[],
+        predict_upto_date=pd.Timestamp("2022-05-25"),
+    )
+    assert len(result) > 0
+    assert (result["prediction"] >= 0).all()
