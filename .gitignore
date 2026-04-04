@@ -13,6 +13,7 @@ env/
 .pytest_cache/
 .coverage
 coverage.xml
+htmlcov/
 
 
 runs/
@@ -25,6 +26,7 @@ build/
 
 *.md
 !README.md
+!CONTRIBUTING.md
 !docs/
 !docs/*.md
 configs-example/

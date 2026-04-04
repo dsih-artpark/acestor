@@ -45,6 +45,7 @@ dev = [
     "black",
     "pre-commit",
     "pytest",
+    "pytest-cov",
 ]
 
 [project.scripts]
@@ -53,6 +54,20 @@ acestor-run = "acestor.run:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=acestor --cov=pipelines/dengue/lib --cov-report=term-missing --cov-report=html"
+
+[tool.coverage.run]
+omit = ["*/.venv/*", "*/tests/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+]
 
 [tool.black]
 target-version = ["py310"]

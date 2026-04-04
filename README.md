@@ -200,6 +200,18 @@ ls -lht logs/gba-weekly/
 
 For production deployment on Docker or AWS EC2 — including systemd setup, IAM roles, S3 artifact storage, and log monitoring — see **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**.
 
+### Docker Image
+
+A pre-built Docker image is available on Docker Hub:
+
+```bash
+docker pull dsihartpark/acestor:latest
+```
+
+https://hub.docker.com/repository/docker/dsihartpark/acestor
+
+Images are tagged by version (e.g., `dsihartpark/acestor:1.0.0`) and built automatically on every GitHub release tag.
+
 ---
 
 ## Configuration guide
