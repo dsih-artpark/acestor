@@ -1,11 +1,30 @@
 Acestor Documentation
 =====================
 
-**Acestor** is a production dengue intelligence pipeline. It ingests case and weather data, estimates risk thresholds, runs forecasting models, produces choropleth maps, and generates report artifacts — all driven from a single YAML configuration file.
+**Acestor** is a production dengue intelligence pipeline. It ingests case and weather data, estimates risk thresholds, runs forecasting models, produces choropleth maps, and generates automated report artifacts — all driven from a single YAML configuration file.
 
-The pipeline is built around a **14-step DAG** that executes steps concurrently where possible. Each step reads typed inputs from upstream steps and writes its outputs to an artifact store.
+.. grid:: 2
 
-.. list-table:: Pipeline Stages
+    .. grid-item-card:: Get Started
+        :link: quickstart
+        :link-type: doc
+
+        New here? Run your first pipeline in 5 minutes.
+
+    .. grid-item-card:: GitHub
+        :link: https://github.com/dsih-artpark/acestor
+        :link-type: url
+
+        Browse the source code, open issues, and contribute.
+
+----
+
+Pipeline Stages
+---------------
+
+The pipeline is a **14-step DAG** — steps run concurrently where dependencies allow.
+
+.. list-table::
    :header-rows: 1
    :widths: 5 30 65
 
@@ -56,19 +75,36 @@ The pipeline is built around a **14-step DAG** that executes steps concurrently 
      - Sends success/failure email (if configured)
 
 .. toctree::
-   :maxdepth: 2
-   :caption: Contents:
    :hidden:
+   :caption: Getting Started
 
+   quickstart
    installation
-   usage
-   configuration
-   data_specification
-   output_format
 
 .. toctree::
-   :maxdepth: 1
-   :caption: Links:
    :hidden:
+   :caption: User Guide
 
-   GitHub Repository <https://github.com/dsih-artpark/acestor>
+   usage
+   configuration
+   deployment
+
+.. toctree::
+   :hidden:
+   :caption: Reference
+
+   data_specification
+   output_format
+   config_reference
+
+.. toctree::
+   :hidden:
+   :caption: Help
+
+   troubleshooting
+
+.. toctree::
+   :hidden:
+   :caption: Links
+
+   GitHub <https://github.com/dsih-artpark/acestor>
