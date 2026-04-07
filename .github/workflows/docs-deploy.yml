@@ -9,7 +9,7 @@ jobs:
   deploy_docs:
     runs-on: ubuntu-latest
     environment:
-      name: ${{ github.ref_name }}_api
+      name: production_api
 
     steps:
       - name: Deploy Docs
