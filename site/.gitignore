@@ -1,0 +1,6 @@
+# Sphinx build outputs
+_build/
+_autosummary/
+
+# Sphinx cache
+.doctrees/

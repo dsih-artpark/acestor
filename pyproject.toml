@@ -71,3 +71,10 @@ exclude_lines = [
 
 [tool.black]
 target-version = ["py310"]
+
+[dependency-groups]
+dev = []
+docs = [
+    "furo>=2025.12.19",
+    "sphinx>=8.1.3",
+]

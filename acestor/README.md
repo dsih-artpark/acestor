@@ -1,4 +1,4 @@
-# acestor (Python package)
+# acestor-core (Python package)
 
 This directory is the **runtime package** for **acestor**—the production dengue pipeline described in the [repository README](../README.md).
 
