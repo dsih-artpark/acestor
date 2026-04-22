@@ -69,6 +69,16 @@ class IdentifyCutoffDatesStep(BaseStep[IdentifyCutoffDatesInputs, CutoffDatesRes
             cutoff_case, cutoff_weather
         )
 
+        if not prediction_dates:
+            raise ValueError(
+                f"No prediction dates available. "
+                f"Data cutoff is {cutoff_ts.date()} but run_date is "
+                f"{inputs.identify_sampling_day.run_date} — the cutoff is on or after "
+                f"the run date, so there are no future weeks to predict. "
+                f"Either set run_date to a date well before {cutoff_ts.date()}, "
+                f"or run dengue_prep to pull in more recent data."
+            )
+
         context.write_artifact_json(
             "cutoffs.json",
             {
