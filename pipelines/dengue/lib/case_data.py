@@ -174,6 +174,7 @@ STANDARDIZED_REGION_ADMIN_COL: dict[str, str] = {
     "subdistrict": "location.admin3.ID",
     "zone": "location.admin3.ID",
     "ulb": "location.admin3.ID",
+    "mandal": "location.admin4.ID",
     "ward": "location.admin5.ID",
     "village": "location.admin5.ID",
 }
@@ -346,6 +347,7 @@ _REGION_ADMIN_COL: dict[str, str] = {
     "ward": "location.admin5.ID",
     "district": "location.admin2.ID",
     "subdistrict": "location.admin3.ID",
+    "mandal": "location.admin4.ID",
 }
 
 

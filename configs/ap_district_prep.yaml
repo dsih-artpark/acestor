@@ -1,0 +1,45 @@
+pipeline:
+  name: dengue_prep
+  title: "Dengue Data Prep — Andhra Pradesh"
+
+run:
+  run_date: ""
+
+data:
+  region_type: "district"
+
+  date_range:
+    start: "2021-09-01"
+    # end: "2026-04-10"
+    # end: ""   # leave blank → defaults to today's date
+
+  geojson:
+    base_path: "ap_datasets/geojsons/geojsons_AP"
+
+  case_download:
+    enabled: true
+    source_path: "ap_datasets/raw_case"   # path to folder containing IHIP files (.xlsx/.xls/.csv)
+
+  case_parse:
+    region_types:
+      - "district"
+    date_column: "Sample Collected Date"          # column in IHIP file to use as case date
+    lgd_code_column: "District Code"              # if present, use LGD code lookup (skips spatial join)
+                                                  # remove/comment out to use lat/lon spatial join instead
+    lat_column: "Latitude"  # Default "Latitude"  # latitude column for spatial join fallback
+    lon_column: "Longitude" # Defailt "Longitude" # longitude column for spatial join fallback
+
+  weather_download:
+    enabled: true
+    source_mode: "openmeteo"    # openmeteo | cds | filesystem
+    parsed_output_path: "datasets/openmeteo_ap"
+    convert_units: true      # set true to convert OpenMeteo °C→K, mm→m (ERA5 units)
+
+logging:
+  level: INFO
+
+storages:
+  artifacts:
+    kind: filesystem
+    filesystem:
+      base_path: "./artifacts/ap_prep"

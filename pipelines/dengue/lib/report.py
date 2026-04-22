@@ -8,6 +8,7 @@ as a hard dependency; see ``compile_latex`` if you supply a ``.tex`` tree.
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import subprocess
 import zipfile
@@ -15,6 +16,8 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+
+log = logging.getLogger(__name__)
 
 
 # --- SOT-aligned: AssessThresholdPerformance.generate_LaTeX_fig_captions ----------
@@ -726,8 +729,14 @@ def compile_latex_bundle_zip(
                 r = subprocess.run(
                     list(cmd), cwd=tmp_dir, capture_output=True, text=True
                 )
+                if r.returncode != 0:
+                    log.debug("%s exited %d: %s", cmd[0], r.returncode, r.stderr[:500])
                 return r.returncode == 0
             except FileNotFoundError:
+                log.warning("LaTeX binary not found: %s — is LaTeX installed?", cmd[0])
+                return False
+            except Exception as exc:
+                log.warning("Unexpected error running %s: %s", cmd[0], exc)
                 return False
 
         _run(latex_bin, "-interaction=nonstopmode", "main.tex")

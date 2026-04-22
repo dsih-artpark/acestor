@@ -273,14 +273,23 @@ def read_geojson(
 def get_region_gdfs(
     geojson_folder: str | Path, region_type: str
 ) -> list[gpd.GeoDataFrame]:
-    """Load per-region GeoDataFrames from geojson_folder/{region_type}s/."""
-    folder = Path(geojson_folder) / f"{region_type}s"
-    result = []
-    for root, _, files in os.walk(folder):
-        for fname in files:
-            if fname.startswith(region_type) and fname.endswith(".geojson"):
-                result.append(read_geojson(Path(root) / fname))
-    return result
+    """Load per-region GeoDataFrames from geojson_folder/{region_type}s/ (or {region_type}/).
+
+    Uses glob for file discovery (reliable across all platforms/directory sizes).
+    Returns one GeoDataFrame per GeoJSON file, reprojected to EPSG:4326.
+    """
+    import glob as _glob
+
+    base = Path(geojson_folder)
+    # Try plural then singular folder name
+    for folder in (base / f"{region_type}s", base / region_type):
+        files = sorted(_glob.glob(str(folder / "*.geojson")))
+        if files:
+            break
+    else:
+        files = []
+
+    return [read_geojson(f) for f in files]
 
 
 def get_region_centroids(gdf: gpd.GeoDataFrame) -> Any:
@@ -359,15 +368,16 @@ def estimate_at_centroids(
     rd = region_data.copy()
     rd["time"] = pd.to_datetime(rd["time"])
     cols = ["time", "latitude", "longitude"] + target_vars
-    return (
-        rd.groupby("time")[cols]
-        .apply(
-            compute_hourly_estimates,
-            region_centroid=region_centroid,
-            target_vars=target_vars,
-        )
-        .reset_index()
+    result = rd.groupby("time")[cols].apply(
+        compute_hourly_estimates,
+        region_centroid=region_centroid,
+        target_vars=target_vars,
     )
+    # pandas >= 2.2 includes the groupby key in the result frame; drop it before
+    # reset_index to avoid "cannot insert time, already exists".
+    if "time" in result.columns:
+        result = result.drop(columns=["time"])
+    return result.reset_index()
 
 
 def process_month_file(
@@ -470,7 +480,7 @@ def parse_cached_netcdfs(
         dest_dir = output_path / str(year)
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / f"{year}_{month:02d}.csv"
-        if dest.exists():
+        if dest.exists() and sum(1 for _ in dest.open()) > 1:
             outputs.append(str(dest))
             skipped += 1
             continue

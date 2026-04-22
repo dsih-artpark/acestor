@@ -39,7 +39,7 @@ class GenerateMapsStep(BaseStep[GenerateMapsInputs, MapsResult]):
         )
         df = pd.read_csv(io.StringIO(pred_csv))
 
-        known_regions = ["corp", "zone", "ward", "district", "subdistrict"]
+        known_regions = ["corp", "zone", "ward", "district", "subdistrict", "mandal"]
         present_regions = [
             r for r in known_regions if df["regionID"].str.startswith(r).any()
         ]

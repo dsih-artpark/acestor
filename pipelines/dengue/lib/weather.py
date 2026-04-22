@@ -197,6 +197,7 @@ def rename_columns_for_output(
         "corp": "location.admin2.ID",
         "district": "location.admin2.ID",
         "subdistrict": "location.admin3.ID",
+        "mandal": "location.admin4.ID",
     }.get(region_type, "location.admin2.ID")
 
     out = df.copy()
