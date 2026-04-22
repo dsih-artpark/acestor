@@ -339,6 +339,27 @@ class WeatherParseConfig:
 
 
 # ---------------------------------------------------------------------------
+# Prepared data (read by load_prepared_case_data / load_prepared_weather_data)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PreparedDataConfig:
+    """Location of prepared_data written by the dengue_prep pipeline (or dropped manually)."""
+
+    base_dir: str  # e.g. "prepared_data"
+    region_type: str  # e.g. "district"
+
+    @classmethod
+    def from_raw(cls, raw: Mapping[str, Any]) -> PreparedDataConfig:
+        return cls(
+            base_dir=str(raw.get("base_dir", "prepared_data")).strip()
+            or "prepared_data",
+            region_type=str(raw.get("region_type", "district")).strip() or "district",
+        )
+
+
+# ---------------------------------------------------------------------------
 # Cutoff dates
 # ---------------------------------------------------------------------------
 

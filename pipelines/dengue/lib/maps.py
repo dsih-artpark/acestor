@@ -25,6 +25,7 @@ REGION_LABEL = {
     "ward": "Ward",
     "district": "District",
     "subdistrict": "Subdistrict",
+    "mandal": "Mandal",
 }
 MODEL_LABEL = {
     "negativeBinomialRegression": "Negative Binomial Regression",
@@ -49,9 +50,10 @@ def gen_plot(
     run_date: str = "",
 ) -> str:
     """Generate a choropleth risk-map PNG and return its path."""
-    geojson_folder = os.path.join(
-        geojson_base, f"{REGION_LABEL.get(region, region).lower()}s"
-    )
+    label = REGION_LABEL.get(region, region).lower()
+    geojson_folder = os.path.join(geojson_base, f"{label}s")
+    if not os.path.isdir(geojson_folder):
+        geojson_folder = os.path.join(geojson_base, label)
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
     gdf_list = []

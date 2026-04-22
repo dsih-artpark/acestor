@@ -1,6 +1,6 @@
 pipeline:
   name: dengue
-  title: "Dengue Early Warning System — Andhra Pradesh"
+  title: "Dengue Early Warning System — Andhra Pradesh (Mandal)"
 
 run:
   run_date: ""   # leave blank to use today's date
@@ -8,11 +8,11 @@ run:
 data:
   prepared_data:
     base_dir: "prepared_data"     # written by dengue_prep pipeline (or placed manually)
-    region_type: "district"
+    region_type: "mandal"
 
   case_parse:
     region_types:
-      - "district"
+      - "mandal"
     date_start: "2021-09-01"
     date_end: ""
 
@@ -26,7 +26,7 @@ data:
     base_path: "ap_datasets/geojsons/geojsons_AP"
 
   weather_parse:
-    region_type: "district"
+    region_type: "mandal"
     weather_variables:
       - "2mTemperature"
       - "totalPrecipitation"
@@ -49,14 +49,14 @@ cutoff:
   weather_min_regions: 5
 
 thresholds:
-  region_type: "district"
+  region_type: "mandal"
   n_weeks: 4
   historical_n_years: 4   # ERA5 data covers 2022–2026 (~4 years)
   excluded_years: []
   included_years: []
 
 model:
-  spatial_res: "district"
+  spatial_res: "mandal"
   data_features:
     - "case"
     - "recordDate"
@@ -74,23 +74,23 @@ model:
   list_alpha: [2.0, 3.0]
 
 assess:
-  total_district_regions: 26   # AP has 26 districts (post-2022 reorganisation)
+  total_mandal_regions: 689   # AP has 689 mandals
 
 maps:
   output_dir: "plots"
-  figure_title: "Andhra Pradesh Dengue Risk Map"
+  figure_title: "Andhra Pradesh Dengue Risk Map (Mandal)"
 
 report:
   output_dir: "reports"
   compile_pdf: true
-  caption_primary: "AP districts"
+  caption_primary: "AP mandals"
   caption_secondary: ""
 
 report_distribution:
   system_name: "Dengue Early Warning System"
   organization: "ARTPARK, IISc Bengaluru"
   state: "Andhra Pradesh"
-  region: "Andhra Pradesh (26 Districts)"
+  region: "Andhra Pradesh (689 Mandals)"
   department: "Directorate of Public Health & Family Welfare, GoAP"
   contact_email: ""
   footer_note: ""
@@ -105,4 +105,4 @@ storages:
   artifacts:
     kind: filesystem
     filesystem:
-      base_path: "./artifacts/ap"
+      base_path: "./artifacts/ap_mandal"

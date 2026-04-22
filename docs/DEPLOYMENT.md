@@ -8,14 +8,22 @@ Three supported deployment scenarios:
 | [B — Docker on AWS EC2](#option-b-docker-on-aws-ec2) | EC2 instance | `deployment/ec2/` |
 | [C — Native on AWS EC2](#option-c-native-on-aws-ec2-no-docker) | EC2 instance | `deployment/ec2-native/` |
 
+This repo has two pipelines — `dengue_prep` (data preparation) and `dengue` (forecasting). See [RUNNING_PIPELINES.md](RUNNING_PIPELINES.md) for how they relate and how to run them together.
+
 In all scenarios the pipeline runs as a **long-lived scheduler process** (`scripts/run_schedules.py` using APScheduler). The schedule is defined inside that file — edit it before deploying:
 
 ```python
 # scripts/run_schedules.py
 PIPELINES = [
     {
+        "name":     "ap-prep-daily",
+        "cron":     "0 1 * * *",    # every day at 01:00 UTC — refresh prepared_data
+        "pipeline": "pipelines.dengue_prep.pipeline:build_pipeline",
+        "config":   "configs/ap_district_prep.yaml",
+    },
+    {
         "name":     "ap-weekly",
-        "cron":     "30 0 * * 2",   # every Tuesday 00:30 UTC (06:00 IST)
+        "cron":     "30 2 * * 2",   # every Tuesday 02:30 UTC (08:00 IST) — run forecast
         "pipeline": "pipelines.dengue.pipeline:build_pipeline",
         "config":   "configs/ap_district.yaml",
     },

@@ -30,6 +30,8 @@ build/
 !docs/
 !docs/*.md
 configs-example/
+prepared_data/
+diagnostic_report/
 
 
 runs/

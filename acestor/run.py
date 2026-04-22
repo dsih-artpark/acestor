@@ -74,7 +74,12 @@ def main(argv: list[str] | None = None) -> int:
     runner = PipelineRunner(dag=dag, context=context)
 
     result = runner.run()
-    print(f"Run {result.run_id} finished with status={result.status}")
+    if result.status == "failed":
+        print(f"\n[FAILED] Run '{result.run_id}' did not complete.")
+        print(f"  Reason: {result.failure_detail}")
+        print()
+    else:
+        print(f"Run {result.run_id} finished with status={result.status}")
 
     # Failure notifications: the DAG may not reach ``notify_run``, so handle here.
     if result.status == "failed":

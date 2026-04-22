@@ -1,0 +1,44 @@
+pipeline:
+  name: dengue_prep
+  title: "Dengue Data Prep — Andhra Pradesh (Mandal)"
+
+run:
+  run_date: ""
+
+data:
+  region_type: "mandal"
+
+  date_range:
+    start: "2022-01-01"
+    end: "2026-03-28"   # ERA5 local data coverage — extend once OpenMeteo quota resets
+
+  geojson:
+    base_path: "ap_datasets/geojsons/geojsons_AP"
+
+  case_download:
+    enabled: true
+    source_path: "ap_datasets/raw_case"   # path to folder containing IHIP files (.xlsx/.xls/.csv)
+
+  case_parse:
+    region_types:
+      - "mandal"
+    date_column: "Sample Collected Date"          # column in IHIP file to use as case date
+    # lgd_code_column not set — mandal-level LGD codes rarely appear in IHIP files,
+    # so we fall back to lat/lon spatial join against mandal GeoJSONs.
+    lat_column: "Latitude"   # latitude column for spatial join
+    lon_column: "Longitude"  # longitude column for spatial join
+
+  weather_download:
+    enabled: true
+    source_mode: "openmeteo"    # openmeteo | cds | filesystem
+    parsed_output_path: "datasets/openmeteo_ap"
+    convert_units: true      # set true to convert OpenMeteo °C→K, mm→m (ERA5 units)
+
+logging:
+  level: INFO
+
+storages:
+  artifacts:
+    kind: filesystem
+    filesystem:
+      base_path: "./artifacts/ap_prep_mandal"

@@ -33,6 +33,53 @@ run:
 
 ---
 
+## `data.prepared_data` *(dengue pipeline)*
+
+Location of prepared case and weather data produced by the dengue_prep pipeline.
+
+```yaml
+data:
+  prepared_data:
+    base_dir: "prepared_data"
+    region_type: "mandal"
+```
+
+| Key | Type | Default | Notes |
+|---|---|---|---|
+| `base_dir` | string | `"prepared_data"` | Root directory; files resolved as `{base_dir}/{region_type}/cases_daily.csv` etc. |
+| `region_type` | string | `"district"` | Region granularity to load |
+
+---
+
+## `data.region_type` *(dengue_prep pipeline)*
+
+Top-level region type for data preparation. Propagates into `case_parse`, `weather_download`, and `weather_parse` if those sections don't override it.
+
+```yaml
+data:
+  region_type: "mandal"
+```
+
+---
+
+## `data.date_range` *(dengue_prep pipeline)*
+
+Date range for data preparation. Propagates into `case_parse` (as `date_start`/`date_end`) and `weather_download` (as `start_date`/`end_date`) if those sections don't set their own values.
+
+```yaml
+data:
+  date_range:
+    start: "2022-01-01"
+    end: "2026-03-28"   # empty → today (OpenMeteo capped at ERA5 5-day lag)
+```
+
+| Key | Type | Default | Notes |
+|---|---|---|---|
+| `start` | YYYY-MM-DD | — | Earliest date to include |
+| `end` | YYYY-MM-DD | today | Latest date; empty → today |
+
+---
+
 ## `data.case_download`
 
 Controls where raw case CSV files are read from.
@@ -76,7 +123,7 @@ data:
 | `date_start` | **required** YYYY-MM-DD | — | Earliest case date to include |
 | `date_end` | YYYY-MM-DD | run_date | Latest case date; empty → run_date |
 
-**Accepted region types:** `corp`, `zone`, `ward`, `district`, `subdistrict`
+**Accepted region types:** `corp`, `zone`, `ward`, `district`, `subdistrict`, `mandal`
 
 ---
 
@@ -122,25 +169,28 @@ data:
 data:
   weather_download:
     enabled: true
-    source_backend: "filesystem"
-    source_path: "ap_datasets/parsednetcdf/district"
+    source_mode: "openmeteo"   # openmeteo | cds | filesystem
+    parsed_output_path: "datasets/openmeteo_ap"
+    convert_units: true        # convert OpenMeteo °C→K and mm→m to match ERA5 units
     region_type: "district"
 ```
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
 | `enabled` | bool | `false` | Must be `true` for weather data to flow into the pipeline |
-| `source_backend` | `"filesystem"` \| `"s3"` | `"filesystem"` | |
+| `source_mode` | `"openmeteo"` \| `"cds"` \| `"filesystem"` | `"filesystem"` | `"openmeteo"` — free ERA5 via Open-Meteo archive API; `"cds"` — ERA5-Land via Copernicus (requires API key); `"filesystem"` — read pre-downloaded CSVs |
+| `source_backend` | `"filesystem"` \| `"s3"` | `"filesystem"` | Backend for `"filesystem"` mode |
 | `source_path` | string | `""` | Directory of pre-parsed CSVs, or `s3://bucket/prefix` |
-| `source_mode` | `"filesystem"` \| `"cds"` | `"filesystem"` | `"cds"` downloads from Copernicus API |
-| `netcdf_cache_path` | string | `""` | Path to local `.zip`/`.nc` cache for NetCDF parsing mode |
-| `parsed_output_path` | string | `""` | Where parsed per-region CSVs are written (NetCDF/CDS mode) |
-| `region_type` | string | `"zone"` | Subfolder used when looking up GeoJSON boundaries |
-| `w_params` | list[string] | `["t2m","d2m","tp"]` | NetCDF variable short names |
-| `threshold_km` | float | `25.0` | Max distance from region boundary for ERA5 grid-point filtering |
-| `bounds_resolution_deg` | float | `0.1` | Grid snap resolution for auto-computed region bounds |
-| `start_date` | YYYY-MM-DD | `"2015-01-01"` | CDS download start |
-| `end_date` | YYYY-MM-DD | run_date | CDS download end |
+| `parsed_output_path` | string | `""` | Root directory where monthly CSVs are written. For openmeteo/CDS modes, files land at `{parsed_output_path}/{region_type}/{year}/{year}_{mm}.csv` |
+| `convert_units` | bool | `false` | OpenMeteo mode only: convert °C→K for temperature/dew-point and mm→m for precipitation to match ERA5 units. Set `true` when mixing with CDS data |
+| `chunk_months` | int | `12` | OpenMeteo mode only: months of data per API call. Reduce if hitting rate limits |
+| `region_type` | string | `"zone"` | Region type to download weather for; must match `data.region_type` |
+| `netcdf_cache_path` | string | `""` | CDS mode: path to local `.zip`/`.nc` cache |
+| `w_params` | list[string] | `["t2m","d2m","tp"]` | CDS/NetCDF mode: variable short names to extract |
+| `threshold_km` | float | `25.0` | CDS mode: max distance from region boundary for ERA5 grid-point filtering |
+| `bounds_resolution_deg` | float | `0.1` | CDS mode: grid snap resolution for auto-computed region bounds |
+| `start_date` | YYYY-MM-DD | `"2015-01-01"` | Download start date |
+| `end_date` | YYYY-MM-DD | run_date | Download end date; empty → today (OpenMeteo is capped at ERA5 lag of 5 days) |
 
 ---
 

@@ -86,7 +86,7 @@ class PipelineRunner:
             status = "failed"
             failure_detail = f"{type(exc).__name__}: {exc}"
             if logger is not None:
-                logger.exception("Run %s failed", self.context.run_id)
+                logger.error("Run %s failed: %s", self.context.run_id, exc)
 
         end_ts = datetime.now(timezone.utc).isoformat()
         if logger is not None:
