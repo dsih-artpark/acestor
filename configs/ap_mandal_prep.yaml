@@ -27,11 +27,14 @@ data:
     # so we fall back to lat/lon spatial join against mandal GeoJSONs.
     lat_column: "Latitude"   # latitude column for spatial join
     lon_column: "Longitude"  # longitude column for spatial join
+    filters:                                        # AND across entries, OR within each values list
+      - column: "Confirmed Diagnosis"
+        values: ["Dengue"]
 
   weather_download:
     enabled: true
     source_mode: "openmeteo"    # openmeteo | cds | filesystem
-    parsed_output_path: "datasets/openmeteo_ap"
+    parsed_output_path: "datasets/ap-weather"
     convert_units: true      # set true to convert OpenMeteo °C→K, mm→m (ERA5 units)
 
 logging:

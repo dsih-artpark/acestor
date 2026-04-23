@@ -28,6 +28,9 @@ data:
                                                   # remove/comment out to use lat/lon spatial join instead
     lat_column: "Latitude"  # Default "Latitude"  # latitude column for spatial join fallback
     lon_column: "Longitude" # Defailt "Longitude" # longitude column for spatial join fallback
+    filters:                                        # AND across entries, OR within each values list
+      - column: "Confirmed Diagnosis"
+        values: ["Dengue"]
 
   weather_download:
     enabled: true

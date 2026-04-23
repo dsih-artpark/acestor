@@ -1,6 +1,13 @@
 # acestor
 
-**acestor** is a production dengue intelligence pipeline. It ingests case and weather data, estimates risk thresholds, runs forecasting models, produces maps, and generates report artifacts — all driven from a single YAML config file.
+**acestor** is a production dengue intelligence system built around two pipelines:
+
+| Pipeline | Purpose |
+|---|---|
+| **`dengue_prep`** | Downloads and prepares raw case and weather data into `prepared_data/` |
+| **`dengue`** | Reads from `prepared_data/`, runs forecasting models, produces maps and reports |
+
+Both are driven from a single YAML config file each and can be run independently or scheduled together.
 
 ---
 
@@ -13,15 +20,17 @@
 
 1. [Prerequisites](#prerequisites)
 2. [Installation](#installation)
-3. [Running the pipeline](#running-the-pipeline)
+3. [Running the pipelines](#running-the-pipelines)
 4. [Scheduling pipelines](#scheduling-pipelines)
 5. [Configuration guide](#configuration-guide)
 6. [Pipeline stages](#pipeline-stages)
 7. [Project layout](#project-layout)
 8. [Development](#development)
 9. [Architecture](docs/Architecture.md)
-10. [Config reference](docs/CONFIG_REFERENCE.md)
-11. [Troubleshooting](docs/TROUBLESHOOTING.md)
+10. [dengue_prep pipeline](docs/DENGUE_PREP.md)
+11. [Running & scheduling both pipelines](docs/RUNNING_PIPELINES.md)
+12. [Config reference](docs/CONFIG_REFERENCE.md)
+13. [Troubleshooting](docs/TROUBLESHOOTING.md)
 
 ---
 
@@ -79,14 +88,23 @@ SMTP_PASSWORD=your-password-here
 
 ---
 
-## Running the pipeline
+## Running the pipelines
 
-### One-off run (recommended to start with)
+Run `dengue_prep` first to prepare data, then `dengue` to produce a forecast.
+For full details — including how to chain them and schedule both — see **[docs/RUNNING_PIPELINES.md](docs/RUNNING_PIPELINES.md)**.
+
+### Quick start
 
 ```bash
+# Step 1 — prepare data
+uv run python -m acestor.run \
+  --pipeline pipelines.dengue_prep.pipeline:build_pipeline \
+  --config configs/ap_district_prep.yaml
+
+# Step 2 — run forecast
 uv run python -m acestor.run \
   --pipeline pipelines.dengue.pipeline:build_pipeline \
-  --config configs/gba_docker_test.yaml \
+  --config configs/ap_district.yaml \
   --run-id my-first-run
 ```
 
@@ -102,7 +120,7 @@ Exit code `0` = success, non-zero = failure.
 make run-dengue-pipeline DENGUE_RUN_ID=my-run
 
 # With a custom config:
-DENGUE_CONFIG=configs/gba_docker_test.yaml make run-dengue-pipeline DENGUE_RUN_ID=my-run
+DENGUE_CONFIG=configs/ap_district.yaml make run-dengue-pipeline DENGUE_RUN_ID=my-run
 
 # Incremental/staged graph (faster, for testing):
 make run-dengue-pipeline-incremental DENGUE_RUN_ID=smoke-001
@@ -266,24 +284,35 @@ email:
 
 ## Pipeline stages
 
+### dengue_prep
+
+Steps execute in DAG order. Names match logs and code under `pipelines/dengue_prep/steps/`.
+
+| # | Step | What it does |
+|---|------|-------------|
+| 1 | `download_case_data` | Locates raw case files (filesystem or S3) |
+| 2 | `parse_case_data` | Parses IHIP files → daily case counts by region, upserts into `prepared_data/` |
+| 3 | `download_weather_data` | Downloads weather from OpenMeteo, CDS, or pre-parsed source |
+| 4 | `parse_weather_data` | Aggregates to daily weather features, upserts into `prepared_data/` |
+
+### dengue
+
 Steps execute in DAG order. Names match logs and code under `pipelines/dengue/steps/`.
 
 | # | Step | What it does |
 |---|------|-------------|
 | 1 | `identify_sampling_day` | Resolves the case window and run metadata |
-| 2 | `download_case_data` | Fetches/copies case inputs |
-| 3 | `download_weather_data` | Fetches/copies weather inputs (CDS or local) |
-| 4 | `parse_case_data` | Parses linelist → daily case series by region |
-| 5 | `validate_case_data_sufficiency` | Optional gate — stops early if data is too thin |
-| 6 | `parse_weather_data` | Aggregates weather features aligned to regions |
-| 7 | `identify_cutoff_dates` | Case/weather cutoffs and prediction calendar |
-| 8 | `generate_thresholds` | Builds threshold tables from history + config |
-| 9 | `train_and_predict` | Fits models, writes predictions |
-| 10 | `combine_predictions` | Single combined predictions table |
-| 11 | `assess_thresholds` | Threshold assessment + figure metadata |
-| 12 | `generate_maps` | Choropleth map PNGs |
-| 13 | `generate_report` | JSON + LaTeX bundle + maps zip + optional PDF |
-| 14 | `notify_run` | Sends success email (if configured) |
+| 2 | `parse_case_data` | Loads prepared daily case series from `prepared_data/` |
+| 3 | `validate_case_data_sufficiency` | Optional gate — stops early if data is too thin |
+| 4 | `parse_weather_data` | Loads prepared daily weather features from `prepared_data/` |
+| 5 | `identify_cutoff_dates` | Case/weather cutoffs and prediction calendar |
+| 6 | `generate_thresholds` | Builds threshold tables from history + config |
+| 7 | `train_and_predict` | Fits models, writes predictions |
+| 8 | `combine_predictions` | Single combined predictions table |
+| 9 | `assess_thresholds` | Threshold assessment + figure metadata |
+| 10 | `generate_maps` | Choropleth map PNGs |
+| 11 | `generate_report` | JSON + LaTeX bundle + maps zip + optional PDF |
+| 12 | `notify_run` | Sends success email (if configured) |
 
 ---
 
@@ -291,13 +320,16 @@ Steps execute in DAG order. Names match logs and code under `pipelines/dengue/st
 
 ```
 acestor-v2/
-├── acestor/          # Core runtime: config, orchestration, storage, CLI
-├── pipelines/        # Pipeline stage implementations and DAG builders
-├── configs/          # Example YAML configs
+├── acestor/                  # Core runtime: config, orchestration, storage, CLI
+├── pipelines/
+│   ├── dengue_prep/          # Data preparation pipeline (download + parse)
+│   └── dengue/               # Forecast pipeline (model + maps + report)
+├── configs/                  # Example YAML configs (ap_district.yaml, ap_district_prep.yaml, …)
+├── docs/                     # Guides: Architecture, DENGUE_PREP, RUNNING_PIPELINES, CONFIG_REFERENCE, …
 ├── scripts/
-│   ├── run_schedules.py      # Multi-pipeline scheduler
-│   └── install_schedule.py  # Crontab installer (Docker mode)
-├── logs/             # Per-run log files (created at runtime)
+│   ├── run_schedules.py      # Multi-pipeline APScheduler process
+│   └── install_schedule.py  # Crontab installer (single-pipeline alternative)
+├── logs/                     # Per-run log files (created at runtime)
 ├── Dockerfile
 └── pyproject.toml
 ```

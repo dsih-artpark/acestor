@@ -113,12 +113,24 @@ To add a new weather source, add a `_download_from_<name>` method to
 ## DAG
 
 ```
-identify_sampling_day ──┬──> parse_case_data
-download_case_data  ────┘
-
-identify_sampling_day ──┬──> parse_weather_data
-download_weather_data ──┘
+download_case_data    ──> parse_case_data
+download_weather_data ──> parse_weather_data
 ```
+
+The two branches run in parallel.
+
+---
+
+## Pipeline stages
+
+Steps execute in DAG order. Names match logs and code under `pipelines/dengue_prep/steps/`.
+
+| Step name | Class | What it does |
+|---|---|---|
+| `download_case_data` | `PrepDownloadCaseDataStep` | Locates raw case files (filesystem or S3) and returns a list of file references |
+| `parse_case_data` | `PrepParseCaseDataStep` | Reads IHIP-format files, maps rows to `region_id` via LGD code or spatial join, aggregates to daily case counts, upserts into `prepared_data/{region_type}/cases_daily.csv` |
+| `download_weather_data` | `PrepDownloadWeatherDataStep` | Downloads weather from OpenMeteo, CDS, or pre-parsed filesystem/S3 source |
+| `parse_weather_data` | `PrepParseWeatherDataStep` | Aggregates hourly weather CSVs to daily totals, applies date filter, upserts into `prepared_data/{region_type}/weather_daily.csv` |
 
 ---
 

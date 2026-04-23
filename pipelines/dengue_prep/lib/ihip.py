@@ -237,6 +237,7 @@ def parse_ihip_files(
     lgd_code_column: str | None = None,
     lat_column: str = DEFAULT_LATITUDE_COLUMN,
     lon_column: str = DEFAULT_LONGITUDE_COLUMN,
+    filters: list[dict] | None = None,
 ) -> pd.DataFrame:
     """Read all IHIP files from folder, aggregate to (date, region_id, case_count).
 
@@ -252,6 +253,9 @@ def parse_ihip_files(
             mapping instead of spatial join. Example: "District Code".
         lat_column: Column name for latitude (used in spatial join). Defaults to "Latitude".
         lon_column: Column name for longitude (used in spatial join). Defaults to "Longitude".
+        filters: List of {column, values} dicts. Rows must match ALL entries (AND);
+            within each entry any value in the list matches (OR).
+            Example: [{"column": "Confirmed Diagnosis", "values": ["Dengue"]}]
 
     Returns:
         DataFrame with columns: date (datetime), region_id (str), case_count (int)
@@ -278,6 +282,27 @@ def parse_ihip_files(
     for path in files:
         df = _read_file(path)
         _validate_columns(df, date_column, path)
+
+        # Row filters — AND across entries, OR within each entry's values list
+        for f in filters or []:
+            col, vals = f["column"], f["values"]
+            if col not in df.columns:
+                log.warning(
+                    "ihip parser: file %r is missing filter column %r — skipping this filter.",
+                    path.name,
+                    col,
+                )
+                continue
+            before = len(df)
+            df = df[df[col].isin(vals)].copy()
+            log.info(
+                "ihip parser: file %r filtered %r in %r → kept %d/%d rows",
+                path.name,
+                col,
+                vals,
+                len(df),
+                before,
+            )
         method = _detect_resolution_method(
             df, lgd_code_column, lat_column, lon_column, path
         )

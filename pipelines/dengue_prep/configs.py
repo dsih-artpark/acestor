@@ -99,6 +99,9 @@ class PrepCaseParseConfig:
     )
     lat_column: str  # latitude column name for spatial join fallback
     lon_column: str  # longitude column name for spatial join fallback
+    filters: list[
+        dict[str, Any]
+    ]  # [{column: str, values: [str, ...]}, ...]; AND across entries, OR within values
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any]) -> PrepCaseParseConfig:
@@ -112,6 +115,17 @@ class PrepCaseParseConfig:
         def _s(v: Any) -> str:
             return "" if v is None else str(v).strip()
 
+        raw_filters = raw.get("filters", [])
+        filters: list[dict[str, Any]] = []
+        for entry in raw_filters:
+            col = _s(entry.get("column", ""))
+            vals_raw = entry.get("values", [])
+            vals = [
+                str(v) for v in (vals_raw if isinstance(vals_raw, list) else [vals_raw])
+            ]
+            if col and vals:
+                filters.append({"column": col, "values": vals})
+
         return cls(
             region_types=region_types,
             date_start=_s(raw.get("date_start", "")),
@@ -121,6 +135,7 @@ class PrepCaseParseConfig:
             lgd_code_column=_s(raw.get("lgd_code_column", "")),
             lat_column=_s(raw.get("lat_column", "Latitude")) or "Latitude",
             lon_column=_s(raw.get("lon_column", "Longitude")) or "Longitude",
+            filters=filters,
         )
 
 

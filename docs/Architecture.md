@@ -1,3 +1,11 @@
+# Pipeline Architecture
+
+> This page covers the **dengue** forecast pipeline.
+> For the data preparation pipeline, see [DENGUE_PREP.md](DENGUE_PREP.md).
+> For running and scheduling both together, see [RUNNING_PIPELINES.md](RUNNING_PIPELINES.md).
+
+---
+
 # Dengue Pipeline — Architecture
 
 ## Diagram
