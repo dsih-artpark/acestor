@@ -1,0 +1,71 @@
+pipeline:
+  name: dengue
+  title: "Dengue Early Warning System — Andhra Pradesh"
+
+run:
+  run_date: ""   # leave blank → today
+
+data:
+  prepared_data:          # defaults: base_dir="prepared_data", region_type="district"
+    base_dir: "prepared_data"
+    region_type: "district"
+
+  geojson:
+    base_path: "ap_datasets/geojsons/geojsons_AP"   # required for map generation
+
+  case_parse:             # region_types and date_end are required fields (even if empty)
+    region_types:
+      - "district"
+    date_start: "2021-09-01"
+    date_end: ""          # empty → run_date
+
+  # case_sufficiency defaults (enabled=true, min_rows=30, regions=2, span=14) are fine — omitted
+
+  weather_parse:          # only region_type differs from default ("zone")
+    region_type: "district"
+
+thresholds:               # only region_type differs from default ("zone")
+  region_type: "district"
+  excluded_years: []      # default is [2020, 2021] — override to include all years
+
+model:
+  spatial_res: "district"
+  data_features:          # uses renamed columns (t2m_mean etc.) — must match intermediate_col_rename
+    - "case"
+    - "recordDate"
+    - "recordYear"
+    - "recordMonth"
+    - "ISOWeek"
+    - "t2m_mean"
+    - "tp_sum"
+    - "d2m_mean"
+  list_alpha: [2.0, 3.0]  # default is [1.0, 2.0]
+
+assess:
+  total_district_regions: 26   # AP has 26 districts (default would be 10)
+
+maps:
+  figure_title: "Andhra Pradesh Dengue Risk Map"   # default is "Dengue risk map"
+
+report:
+  compile_pdf: true            # default is false
+  caption_primary: "AP districts"
+  caption_secondary: ""        # default is "zones" — override to empty
+
+report_distribution:
+  system_name: "Dengue Early Warning System"
+  organization: "ARTPARK, IISc Bengaluru"
+  state: "Andhra Pradesh"
+  region: "Andhra Pradesh (26 Districts)"
+  department: "Directorate of Public Health & Family Welfare, GoAP"
+  contact_email: ""
+  footer_note: ""
+
+logging:
+  level: INFO   # required — if omitted, all logs are silently discarded
+
+storages:
+  artifacts:
+    kind: filesystem
+    filesystem:
+      base_path: "./artifacts/ap"

@@ -96,6 +96,7 @@ class PrepParseCaseDataStep(BaseStep[PrepParseCaseDataInputs, PrepCaseParseResul
                 lgd_code_column=cfg.lgd_code_column or None,
                 lat_column=cfg.lat_column,
                 lon_column=cfg.lon_column,
+                filters=cfg.filters or None,
             )
 
             # Apply date range filter — only if set in config

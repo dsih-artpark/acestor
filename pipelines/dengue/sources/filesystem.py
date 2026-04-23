@@ -10,7 +10,7 @@ from acestor.core.sources import FileSystemSource
 # build_pipeline() so the value from data.geojson.base_path in the YAML
 # (or GBA_FS_GEOJSONS_BASE env var) is applied before any step runs.
 fs_geojsons = FileSystemSource(
-    base_path=os.getenv("GBA_FS_GEOJSONS_BASE", "datasets/geojsons/geojsons_GBA"),
+    base_path=os.getenv("GBA_FS_GEOJSONS_BASE", ""),
     cache_enabled=False,
     cache_dir="",
     strategy="cloud",
