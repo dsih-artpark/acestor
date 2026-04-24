@@ -78,7 +78,7 @@ def aggregate_daily(
     # Convert GMT → IST (+5h30m) before daily grouping, matching SOT
     # merge_file_daily_data: thisdf["time"] += timedelta(hours=5.5)
     df["date"] = (
-        pd.to_datetime(df["date"]) + pd.Timedelta(hours=5, minutes=30)
+        pd.to_datetime(df["date"], format="mixed") + pd.Timedelta(hours=5, minutes=30)
     ).dt.normalize()
     df["date"] = df["date"].dt.date.astype("datetime64[ns]")
     # Remove boundary dates: first and last contain partial-day data due to IST offset

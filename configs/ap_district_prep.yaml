@@ -34,8 +34,9 @@ data:
 
   weather_download:
     enabled: true
-    source_mode: "openmeteo"    # openmeteo | cds | filesystem
-    parsed_output_path: "datasets/openmeteo_ap"
+    source_mode: "filesystem"    # openmeteo | cds | filesystem
+    source_path: "datasets/ap-weather"  # used if source_mode=filesystem; path to folder containing raw weather files
+    parsed_output_path: "datasets/ap-weather"
     convert_units: true      # set true to convert OpenMeteo °C→K, mm→m (ERA5 units)
 
 logging:

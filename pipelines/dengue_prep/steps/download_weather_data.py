@@ -99,6 +99,8 @@ class PrepDownloadWeatherDataStep(BaseStep[NoInputs, PrepWeatherDownloadResult])
 
         if backend == "filesystem" and cfg.source_path:
             for src in paths:
+                if not str(src).endswith(".csv"):
+                    continue
                 full_path = str(Path(cfg.source_path) / src)
                 downloaded.append(f"filesystem://{full_path}")
         elif backend == "s3":
@@ -256,6 +258,7 @@ class PrepDownloadWeatherDataStep(BaseStep[NoInputs, PrepWeatherDownloadResult])
         Incremental: skips months whose CSV already exists and has data.
         """
         from pipelines.dengue_prep.lib.openmeteo import (
+            delete_recent_months,
             download_range,
             get_missing_chunks,
             get_missing_months,
@@ -300,6 +303,10 @@ class PrepDownloadWeatherDataStep(BaseStep[NoInputs, PrepWeatherDownloadResult])
                 openmeteo_max.date(),
             )
             end = openmeteo_max
+
+        # Always re-fetch the current and previous month — their CSVs may be
+        # partial (month still in progress or ERA5 lag). Mirrors CDS behaviour.
+        delete_recent_months(output_path, n=1)
 
         chunk_months = int(cfg.chunk_months) if hasattr(cfg, "chunk_months") else 12
         chunks = get_missing_chunks(start, end, output_path, chunk_months=chunk_months)
