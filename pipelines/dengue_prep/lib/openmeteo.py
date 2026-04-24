@@ -126,7 +126,7 @@ def _fetch_multi(
         "start_date": start_date,
         "end_date": end_date,
         "daily": ",".join(_DAILY_VARS),
-        "timezone": "UTC",
+        "timezone": "Asia/Kolkata",
     }
     last_exc: Exception | None = None
     for attempt in range(1, retries + 1):

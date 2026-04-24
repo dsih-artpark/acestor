@@ -198,6 +198,11 @@ class PrepParseWeatherDataStep(
                 n_before_filter - len(daily),
             )
 
+        # Drop regions with LGD code 0 — these are invalid/placeholder entries
+        # (e.g. Yanam, a Union Territory enclave, gets coded as district_0 in ERA5 data
+        # but has no case data and incomplete weather coverage, breaking Pipeline 2).
+        daily = daily[~daily["region_id"].str.endswith("_0")]
+
         dest = Path(out_cfg.base_dir) / cfg.region_type / "weather_daily.csv"
         total = _write_csv(dest, daily, key_cols=["region_id", "date"])
         context.log.info(
