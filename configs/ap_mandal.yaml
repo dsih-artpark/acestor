@@ -96,7 +96,7 @@ report_distribution:
   footer_note: ""
 
 logging:
-  level: INFO
+  level: DEBUG
 
 email:
   enabled: false

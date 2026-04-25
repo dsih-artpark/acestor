@@ -6,10 +6,13 @@ Translated from GBA ``GenerateThresholds.py`` and ``utils.py``
 
 from __future__ import annotations
 
+import logging
 from copy import deepcopy
 
 import numpy as np
 import pandas as pd
+
+log = logging.getLogger(__name__)
 
 
 def align_dates_all_regions(df: pd.DataFrame) -> pd.DataFrame:
@@ -21,6 +24,19 @@ def align_dates_all_regions(df: pd.DataFrame) -> pd.DataFrame:
     def _fill(group: pd.DataFrame) -> pd.DataFrame:
         group = group.set_index("date").reindex(full_range).reset_index()
         group.rename(columns={"index": "date"}, inplace=True)
+        n_missing = group["case"].isna().sum()
+        if n_missing:
+            region_id = (
+                group["region_id"].dropna().iloc[0]
+                if group["region_id"].dropna().any()
+                else "unknown"
+            )
+            log.debug(
+                "thresholds: region '%s' — filled %d missing date(s) with case=0 "
+                "(genuine zeros vs reporting gaps are indistinguishable at this stage)",
+                region_id,
+                n_missing,
+            )
         group["case"] = group["case"].fillna(0)
         group["region_id"] = group["region_id"].ffill().bfill()
         return group
@@ -113,6 +129,17 @@ def historical_threshold_params(
         past = df[cond]
 
         if past.empty:
+            log.warning(
+                "thresholds: year %d has no usable historical past data "
+                "(n_years=%s, included_years=%s, excluded_years=%s) → "
+                "Mean=NaN, StdDev=NaN for all %d rows — thresholds will be degenerate "
+                "and these regions will appear light gray on maps",
+                year,
+                n_years,
+                included_years,
+                excluded_years,
+                len(current),
+            )
             current["Mean"] = np.nan
             current["StdDev"] = np.nan
         else:
@@ -161,6 +188,20 @@ def assess_thresholds(
         total_regions = df_date["regionID"].nunique()
         counts = df_date.groupby("regionID")["thresholdMethod"].nunique()
         complete_ids = counts[counts == total_threshold_types].index
+        incomplete_ids = [
+            r for r in df_date["regionID"].unique() if r not in complete_ids
+        ]
+        if incomplete_ids:
+            log.warning(
+                "thresholds: assess date=%s — %d of %d region(s) lack all %d threshold "
+                "method(s) → excluded from method-comparison (only regions with all methods "
+                "are used to pick the best threshold): %s",
+                date_val,
+                len(incomplete_ids),
+                total_regions,
+                total_threshold_types,
+                incomplete_ids,
+            )
         df_complete = df_date[df_date["regionID"].isin(complete_ids)]
 
         agg_c = (

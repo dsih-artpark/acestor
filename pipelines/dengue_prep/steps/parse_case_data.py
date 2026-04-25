@@ -101,10 +101,22 @@ class PrepParseCaseDataStep(BaseStep[PrepParseCaseDataInputs, PrepCaseParseResul
 
             # Apply date range filter — only if set in config
             daily["date"] = pd.to_datetime(daily["date"])
+            n_before_filter = len(daily)
             if date_start is not None:
                 daily = daily[daily["date"] >= date_start]
             if date_end is not None:
                 daily = daily[daily["date"] <= date_end]
+            if date_start is not None or date_end is not None:
+                context.log.info(
+                    "parse_case_data: region_type=%s date filter [%s → %s]: "
+                    "%d rows → %d rows (dropped %d)",
+                    region_type,
+                    date_start.date() if date_start else "unbounded",
+                    date_end.date() if date_end else "unbounded",
+                    n_before_filter,
+                    len(daily),
+                    n_before_filter - len(daily),
+                )
 
             if daily.empty:
                 context.log.warning(

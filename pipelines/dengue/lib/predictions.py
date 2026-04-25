@@ -5,8 +5,11 @@ Translated from GBA ``CombineAllPredictions.py`` and ``run_zone.py`` / ``run_cor
 
 from __future__ import annotations
 
+import logging
 
 import pandas as pd
+
+log = logging.getLogger(__name__)
 
 COLS_OF_INTEREST = [
     "dateOfComputingPrediction",
@@ -46,8 +49,35 @@ def ensemble_predictions(
 ) -> pd.DataFrame:
     """Merge NBR + TSE predictions into an ensemble by taking the mean prediction."""
     combined = pd.concat(dfs, ignore_index=True)
+    rows_before = len(combined)
     group_cols = [c for c in combined.columns if c not in ("prediction", "model")]
+
+    # Warn about any NaN values in groupby keys — pandas silently drops those rows.
+    nan_key_cols = [c for c in group_cols if combined[c].isna().any()]
+    if nan_key_cols:
+        for col in nan_key_cols:
+            affected = combined.loc[combined[col].isna(), spatial_col].unique().tolist()
+            log.warning(
+                "ensemble_predictions: column '%s' has NaN values for %d region(s) %s "
+                "— pandas groupby will silently DROP these rows, removing them from the "
+                "ensemble output entirely",
+                col,
+                len(affected),
+                affected,
+            )
+
     ensembled = combined.groupby(group_cols)["prediction"].mean().reset_index()
+    rows_after = len(ensembled)
+    if rows_before != rows_after:
+        log.warning(
+            "ensemble_predictions: %d row(s) were silently dropped by groupby "
+            "(%d → %d) due to NaN keys in columns: %s",
+            rows_before - rows_after,
+            rows_before,
+            rows_after,
+            nan_key_cols,
+        )
+
     ensembled["model"] = "ensembleModel"
     return ensembled
 

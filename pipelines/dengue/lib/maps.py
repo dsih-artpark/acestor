@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 import os
 from pathlib import Path
@@ -9,12 +10,14 @@ from pathlib import Path
 import geopandas as gpd
 import matplotlib
 
+log = logging.getLogger(__name__)
+
 # Pipeline runner executes steps in worker threads; macOS GUI backend raises.
 matplotlib.use("Agg")
 
-import matplotlib.patches as mpatches
-import matplotlib.pyplot as plt
-import pandas as pd
+import matplotlib.patches as mpatches  # noqa: E402
+import matplotlib.pyplot as plt  # noqa: E402
+import pandas as pd  # noqa: E402
 
 COLOR_MAPPING = {1: "green", 2: "yellow", 3: "orange", 4: "red", 0: "w"}
 ZONE_LABEL = {1: "Low", 2: "Low Medium", 3: "Medium", 4: "High"}
@@ -57,6 +60,16 @@ def gen_plot(
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
     gdf_list = []
+    no_prediction: list[str] = (
+        []
+    )  # in GeoJSON, not in predictions at all → white + hatch
+    nan_zone: list[str] = (
+        []
+    )  # in predictions, zone is NaN (degenerate Mean=StdDev=0) → light gray
+    zone_zero: list[str] = (
+        []
+    )  # in predictions, zone = 0 (no threshold pair matched) → white
+
     for fname in os.listdir(geojson_folder):
         if not fname.endswith(".geojson"):
             continue
@@ -67,15 +80,46 @@ def gen_plot(
                 0
             ]
             if code is not None and not (isinstance(code, float) and math.isnan(code)):
-                gdf["color"] = COLOR_MAPPING.get(int(code), "w")
+                zone = int(code)
+                gdf["color"] = COLOR_MAPPING.get(zone, "w")
                 gdf["hatch"] = ""
+                if zone == 0:
+                    zone_zero.append(rname)
             else:
                 gdf["color"] = "lightgray"
                 gdf["hatch"] = ""
+                nan_zone.append(rname)
         else:
             gdf["color"] = "w"
             gdf["hatch"] = "////"
+            no_prediction.append(rname)
         gdf_list.append(gdf)
+
+    ctx = f"[{region} | {thisdate} | {model} | {threshold}]"
+    if no_prediction:
+        log.warning(
+            "generate_maps %s: %d region(s) have NO prediction → white/hatched "
+            "(not in combined predictions CSV — check case data, weather coverage, or NBR/TSE drop): %s",
+            ctx,
+            len(no_prediction),
+            no_prediction,
+        )
+    if nan_zone:
+        log.warning(
+            "generate_maps %s: %d region(s) have predictionZone=NaN → light gray "
+            "(degenerate thresholds: Mean=0, StdDev=0 — historically zero reported cases): %s",
+            ctx,
+            len(nan_zone),
+            nan_zone,
+        )
+    if zone_zero:
+        log.warning(
+            "generate_maps %s: %d region(s) have predictionZone=0 → white/no-hatch "
+            "(prediction did not fall within any threshold pair — check threshold computation): %s",
+            ctx,
+            len(zone_zero),
+            zone_zero,
+        )
 
     if not gdf_list:
         return ""

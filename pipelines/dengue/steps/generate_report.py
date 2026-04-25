@@ -65,6 +65,12 @@ class GenerateReportStep(BaseStep[GenerateReportInputs, ReportResult]):
 
         co = inputs.identify_cutoff_dates
         ref_date = pd.Timestamp(co.run_date).normalize()
+        context.log.info(
+            "generate_report: ref_date=%s (run_date=%s) — only predictions on or after "
+            "this date will appear in the report",
+            ref_date.date(),
+            co.run_date,
+        )
         corp_details = report_lib.get_relevant_figures_details(best_corp, ref_date)
         zone_details = report_lib.get_relevant_figures_details(best_zone, ref_date)
 
@@ -129,6 +135,11 @@ class GenerateReportStep(BaseStep[GenerateReportInputs, ReportResult]):
 
         end_str = pd.Timestamp(co.run_date).date().strftime("%Y%m%d")
         month_key = rep_dict["reportmonth"] or "report"
+        if not rep_dict["reportmonth"]:
+            context.log.warning(
+                "generate_report: reportmonth is empty (no prediction dates in rep_dict) → "
+                "output files will use 'report' as the month token instead of a real month string"
+            )
         safe_month = month_key.replace(" ", "_").replace("/", "-")
 
         pred_raw = rep_dict.get("prediction_date") or co.run_date
@@ -154,6 +165,13 @@ class GenerateReportStep(BaseStep[GenerateReportInputs, ReportResult]):
                 plots_dir=plots_dir,
                 filenames=all_names,
                 destination_zip=all_maps_zip_path,
+            )
+        else:
+            context.log.warning(
+                "generate_report: no map filenames collected (all_names is empty) → "
+                "maps zip will not be created; corp_details=%s zone_details=%s",
+                corp_details is not None,
+                zone_details is not None,
             )
 
         tex_fs = context.artifact_fs_path(

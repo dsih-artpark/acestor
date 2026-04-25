@@ -7,10 +7,13 @@ All functions are pure: they accept DataFrames / scalars and return DataFrames.
 from __future__ import annotations
 
 import datetime as dt
+import logging
 from typing import Literal
 
 import geopandas as gpd
 import pandas as pd
+
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -106,9 +109,18 @@ def aggregate_all_data_daily(
             case_gdf = case_gdf[case_gdf["date"] >= date_start]
         if date_end is not None:
             case_gdf = case_gdf[case_gdf["date"] <= date_end]
+        n_before = len(case_gdf)
         case_gdf = case_gdf[
             case_gdf[["longitude", "latitude"]].notnull().all(axis=1)
         ].reset_index(drop=True)
+        n_dropped = n_before - len(case_gdf)
+        if n_dropped:
+            log.warning(
+                "case_data: dropped %d of %d row(s) missing geocoordinates (longitude/latitude NaN) "
+                "— these cases cannot be spatially assigned to any region and will be excluded",
+                n_dropped,
+                n_before,
+            )
         if case_gdf.empty:
             continue
 
@@ -127,6 +139,13 @@ def aggregate_all_data_daily(
         df_agg = df_agg.groupby("region_id", group_keys=False)[
             ["region_id", "date"] + extra_cols + w_params
         ].apply(_fill_missing_dates)
+        n_zero_filled = df_agg[w_params].isna().sum().sum()
+        if n_zero_filled:
+            log.debug(
+                "case_data: zero-filled %d missing case value(s) after date-range expansion "
+                "(dates with no reported cases are assumed zero — verify against source data)",
+                n_zero_filled,
+            )
         df_agg[w_params] = df_agg[w_params].fillna(0)
         df_agg[common_cols] = df_agg[common_cols].ffill()
         results.append(df_agg)
@@ -155,6 +174,14 @@ def concat_daily_dfs(
     df = df.groupby("region_id", group_keys=False)[
         ["region_id", "date"] + extra_cols + w_params
     ].apply(_fill_missing_dates)
+    n_zero_filled = df[w_params].isna().sum().sum()
+    if n_zero_filled:
+        log.debug(
+            "case_data: concat_daily_dfs zero-filled %d missing case value(s) after "
+            "cross-file date-range alignment (dates absent in one file but present in "
+            "another are assumed zero)",
+            n_zero_filled,
+        )
     df[w_params] = df[w_params].fillna(0)
     df[common_cols] = df[common_cols].ffill()
     return df
@@ -240,7 +267,16 @@ def aggregate_standardized_data_daily(
         df["date"] = df["date"].str.replace("Z", "", regex=False)
     df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.tz_localize(None)
     df["date"] = pd.to_datetime(df["date"]).dt.date.astype("datetime64[ns]")
+    n_before_dropna = len(df)
     df = df.dropna(subset=["date", "region_id"])
+    n_dropped_dropna = n_before_dropna - len(df)
+    if n_dropped_dropna:
+        log.warning(
+            "case_data: dropped %d of %d row(s) with unparseable date or missing region_id "
+            "— check source data for malformed dates or unknown admin codes",
+            n_dropped_dropna,
+            n_before_dropna,
+        )
 
     if date_start is not None:
         df = df[df["date"] >= date_start]
@@ -255,6 +291,13 @@ def aggregate_standardized_data_daily(
     df_agg = df_agg.groupby("region_id", group_keys=False)[
         ["region_id", "date", "case"]
     ].apply(_fill_missing_dates)
+    n_zero_filled = df_agg["case"].isna().sum()
+    if n_zero_filled:
+        log.debug(
+            "case_data: aggregate_standardized_data_daily zero-filled %d missing date(s) with case=0 "
+            "(dates within a region's range that had no reported cases)",
+            n_zero_filled,
+        )
     df_agg["case"] = df_agg["case"].fillna(0)
     df_agg["region_id"] = df_agg["region_id"].ffill()
 

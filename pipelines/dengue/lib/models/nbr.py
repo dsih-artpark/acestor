@@ -5,11 +5,14 @@ Translated from GBA ``models/nbr.py``.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 
 import pandas as pd
 import statsmodels.api as sm
 from sklearn.preprocessing import MinMaxScaler, OneHotEncoder
+
+log = logging.getLogger(__name__)
 
 
 def _lag(
@@ -111,6 +114,25 @@ def negative_binomial_regression(
     results = model.fit(method="lbfgs")
 
     test_data = df0[df0["recordDate"].isin(last_4)].copy().reset_index(drop=True)
+
+    lag_feat_cols = [
+        c
+        for c in ["rainfall_lag_4", "relative_humidity_lag_4", "temp_lag_12"]
+        if c in test_data.columns
+    ]
+    for region, grp in test_data.groupby(spatial_col):
+        nan_feats = [c for c in lag_feat_cols if grp[c].isna().any()]
+        if nan_feats:
+            dates = grp.loc[grp[nan_feats].isna().any(axis=1), "recordDate"].tolist()
+            log.warning(
+                "NBR: region '%s' has NaN in lag feature(s) %s on %d prediction date(s) %s "
+                "→ MinMaxScaler.transform() will fail; check weather data coverage for this region",
+                region,
+                nan_feats,
+                len(dates),
+                [str(d.date()) for d in dates],
+            )
+
     test_encoded = _one_hot(test_data)
     test_scaled, _ = _rescale(test_data, scaler)
     X_test = sm.add_constant(pd.concat([test_scaled, test_encoded], axis=1))

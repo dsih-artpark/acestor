@@ -144,9 +144,34 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
 
         classified = zones.classify_into_zones(ensembled, spatial_col=cfg.spatial_res)
         classified["predictionZone"] = classified["predictionZone"].fillna(0)
+
+        zone_zero_mask = classified["predictionZone"] == 0
+        if zone_zero_mask.any():
+            zone_zero_regions = sorted(
+                classified.loc[zone_zero_mask, cfg.spatial_res].unique().tolist()
+            )
+            context.log.warning(
+                "train_and_predict: %d region(s) have predictionZone=0 after zone "
+                "assignment (prediction fell outside all threshold pairs — will appear "
+                "white/no-hatch on maps): %s",
+                len(zone_zero_regions),
+                zone_zero_regions,
+            )
+
         if "Mean" in classified.columns and "StdDev" in classified.columns:
             degenerate = (classified["Mean"] == 0) & (classified["StdDev"] == 0)
             classified.loc[degenerate, "predictionZone"] = pd.NA
+            if degenerate.any():
+                deg_regions = sorted(
+                    classified.loc[degenerate, cfg.spatial_res].unique().tolist()
+                )
+                context.log.warning(
+                    "train_and_predict: %d region(s) have degenerate thresholds "
+                    "(Mean=0, StdDev=0 — historically zero reported cases) → "
+                    "predictionZone=NA, will appear light gray on maps: %s",
+                    len(deg_regions),
+                    deg_regions,
+                )
 
         run_date = pd.Timestamp(inputs.identify_cutoff_dates.run_date).normalize()
         future_dates = [

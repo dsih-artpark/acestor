@@ -11,9 +11,12 @@ dewpoint **mean** per day, precipitation **sum** per day (see SOT ``w_params`` /
 
 from __future__ import annotations
 
+import logging
 from typing import Literal
 
 import pandas as pd
+
+log = logging.getLogger(__name__)
 
 _COL_ALIASES: dict[str, str] = {
     "t2m": "2mTemperature",
@@ -81,6 +84,12 @@ def aggregate_daily(
     # Remove boundary dates: first and last contain partial-day data due to IST offset
     all_dates = sorted(df["date"].unique())
     if len(all_dates) > 2:
+        dropped_boundary = [all_dates[0], all_dates[-1]]
+        log.debug(
+            "weather: trimmed boundary dates %s after GMT→IST conversion "
+            "(partial-day rows — first/last dates contain incomplete data due to the +5h30m shift)",
+            [str(d) for d in dropped_boundary],
+        )
         df = df[df["date"].isin(all_dates[1:-1])].reset_index(drop=True)
     rules = daily_agg if daily_agg is not None else []
 
@@ -125,6 +134,15 @@ def aggregate_daily(
     if meta:
         first = df.groupby(["region_id", "date"], as_index=False)[meta].first()
         out = out.merge(first, on=["region_id", "date"], how="left")
+        nan_meta = {c: int(out[c].isna().sum()) for c in meta if out[c].isna().any()}
+        if nan_meta:
+            log.warning(
+                "weather: after metadata left-join, %d (region_id, date) combinations "
+                "have NaN in metadata columns %s — region name/parent info was not present "
+                "in the source data for those rows",
+                max(nan_meta.values()),
+                nan_meta,
+            )
     return out.sort_values(["region_id", "date"]).reset_index(drop=True)
 
 

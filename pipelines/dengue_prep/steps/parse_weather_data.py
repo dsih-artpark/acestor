@@ -122,6 +122,12 @@ class PrepParseWeatherDataStep(
         ]
 
         merged = pd.concat(raw_dfs, ignore_index=True)
+        context.log.info(
+            "prep parse_weather_data: loaded %d CSV file(s), concatenated %d rows total",
+            len(raw_dfs),
+            len(merged),
+        )
+
         merged = weather.normalise_columns(merged)
 
         if "region_id" not in merged.columns:
@@ -132,14 +138,34 @@ class PrepParseWeatherDataStep(
             ]:
                 if candidate in merged.columns:
                     merged.rename(columns={candidate: "region_id"}, inplace=True)
+                    context.log.debug(
+                        "prep parse_weather_data: mapped region_id from column %r",
+                        candidate,
+                    )
                     break
+            else:
+                context.log.warning(
+                    "prep parse_weather_data: no region_id column found; checked "
+                    "['location.admin3.ID', 'location.admin2.ID', 'location.admin4.ID'] — "
+                    "downstream aggregation will fail"
+                )
+
         if "date" not in merged.columns and "metadata.primaryDate" in merged.columns:
             merged.rename(columns={"metadata.primaryDate": "date"}, inplace=True)
+            context.log.debug(
+                "prep parse_weather_data: remapped 'metadata.primaryDate' → 'date'"
+            )
 
         daily = weather.aggregate_daily(
             merged,
             cfg.weather_variables,
             daily_agg=cfg.daily_agg,
+        )
+        context.log.info(
+            "prep parse_weather_data: daily aggregation → %d (region_id, date) rows; "
+            "variables=%s",
+            len(daily),
+            cfg.weather_variables,
         )
 
         # Apply date range filter — only if set in config
@@ -155,17 +181,29 @@ class PrepParseWeatherDataStep(
         )
 
         daily["date"] = pd.to_datetime(daily["date"])
+        n_before_filter = len(daily)
         if date_start is not None:
             daily = daily[daily["date"] >= date_start]
         if date_end is not None:
             daily = daily[daily["date"] <= date_end]
+        if date_start is not None or date_end is not None:
+            context.log.info(
+                "prep parse_weather_data: date filter [%s → %s]: "
+                "%d rows → %d rows (dropped %d)",
+                date_start.date() if date_start else "unbounded",
+                date_end.date() if date_end else "unbounded",
+                n_before_filter,
+                len(daily),
+                n_before_filter - len(daily),
+            )
 
         dest = Path(out_cfg.base_dir) / cfg.region_type / "weather_daily.csv"
         total = _upsert_csv(dest, daily, key_cols=["region_id", "date"])
         context.log.info(
-            "prep parse_weather_data: region_type=%s upserted %d rows → %s",
+            "prep parse_weather_data: region_type=%s upserted %d rows → %d total rows in %s",
             cfg.region_type,
             len(daily),
+            total,
             dest,
         )
         return PrepWeatherParseResult(

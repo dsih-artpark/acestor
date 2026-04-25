@@ -14,17 +14,28 @@ class PrepIdentifySamplingDayStep(BaseStep[NoInputs, PrepSamplingDayResult]):
 
     def run(self, context: PipelineContext, inputs: NoInputs) -> PrepSamplingDayResult:
         raw_run_date = (context.config or {}).get("run", {}).get("run_date", "")
-        run_date = (
-            pd.Timestamp(str(raw_run_date)).normalize()
-            if raw_run_date
-            else pd.Timestamp.today().normalize()
-        )
+        if not raw_run_date:
+            run_date = pd.Timestamp.today().normalize()
+            context.log.warning(
+                "identify_sampling_day: run_date not set in config — defaulting to today (%s); "
+                "set run.run_date in your config for reproducible runs",
+                run_date.date(),
+            )
+        else:
+            run_date = pd.Timestamp(str(raw_run_date)).normalize()
+
         day = sampling.get_day_abbreviation(run_date)
 
         context.write_artifact_json(
             "sampling_day.json",
             {"run_date": str(run_date.date()), "sampling_day": day},
         )
-        context.log.info("sampling_day=%s run_date=%s", day, run_date.date())
+        context.log.info(
+            "identify_sampling_day: run_date=%s weekday=%s → sampling_day=%s "
+            "(controls which weekday is used as the weekly data cutoff in downstream steps)",
+            run_date.date(),
+            run_date.day_name(),
+            day,
+        )
 
         return PrepSamplingDayResult(run_date=str(run_date.date()), sampling_day=day)

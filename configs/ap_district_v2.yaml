@@ -62,7 +62,7 @@ report_distribution:
   footer_note: ""
 
 logging:
-  level: INFO   # required — if omitted, all logs are silently discarded
+  level: DEBUG   # required — if omitted, all logs are silently discarded
 
 storages:
   artifacts:

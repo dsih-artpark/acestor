@@ -39,7 +39,7 @@ data:
     convert_units: true      # set true to convert OpenMeteo °C→K, mm→m (ERA5 units)
 
 logging:
-  level: INFO
+  level: DEBUG
 
 storages:
   artifacts:

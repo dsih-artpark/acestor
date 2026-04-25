@@ -129,18 +129,43 @@ def get_relevant_figures_details(
     cutoff_date = str(ref.date()).replace("-", "--")
 
     if best_methods_df is None or len(best_methods_df) == 0:
+        log.warning(
+            "get_relevant_figures_details: best_methods_df is empty or None → "
+            "no figures for report (assess_thresholds produced no rows for this region type)"
+        )
         return None
     df = best_methods_df.copy()
     if "startDatePredictedWeek" not in df.columns:
+        log.warning(
+            "get_relevant_figures_details: 'startDatePredictedWeek' column missing from "
+            "best_methods_df (columns: %s) → cannot identify prediction dates for report",
+            list(df.columns),
+        )
         return None
 
     df = df[df["startDatePredictedWeek"] >= cutoff_date].reset_index(drop=True)
     if len(df) == 0:
+        log.warning(
+            "get_relevant_figures_details: no predictions on or after ref_date=%s "
+            "(latest available: %s) → report will be skipped for this region type",
+            cutoff_date,
+            (
+                best_methods_df["startDatePredictedWeek"].max()
+                if "startDatePredictedWeek" in best_methods_df.columns
+                else "unknown"
+            ),
+        )
         return None
 
     prediction_date = df.loc[0, "dateOfComputingPrediction"]
     listdates = list(df["startDatePredictedWeek"])
     if "fig_name" not in df.columns or "caption" not in df.columns:
+        log.warning(
+            "get_relevant_figures_details: 'fig_name' or 'caption' column missing → "
+            "add_latex_figure_metadata was likely not called before this function "
+            "(columns present: %s)",
+            list(df.columns),
+        )
         return None
     listfilenames = list(df["fig_name"])
     listcaptions = list(df["caption"])
@@ -228,7 +253,12 @@ def zip_map_files(
             if file_path.is_file():
                 zipf.write(file_path, arcname=filename)
             else:
-                # Log via caller if needed
+                log.warning(
+                    "zip_map_files: skipping '%s' — file not found at %s "
+                    "(map generation may have failed for this date/region/model combination)",
+                    filename,
+                    file_path,
+                )
                 continue
 
 
@@ -722,6 +752,12 @@ def compile_latex_bundle_zip(
 
         main_tex = tmp_dir / "main.tex"
         if not main_tex.exists():
+            log.warning(
+                "compile_latex_bundle_zip: main.tex not found in zip %s "
+                "(zip contents: %s) → PDF compilation skipped",
+                zip_path,
+                list(zipfile.ZipFile(zip_path).namelist()),
+            )
             return None
 
         def _run(*cmd: str) -> bool:
@@ -746,6 +782,12 @@ def compile_latex_bundle_zip(
 
         pdf = tmp_dir / "main.pdf"
         if not pdf.exists():
+            log.warning(
+                "compile_latex_bundle_zip: pdflatex ran but main.pdf was not produced "
+                "(LaTeX errors likely — check .log file in the zip for details); "
+                "zip_path=%s",
+                zip_path,
+            )
             return None
 
         destination_pdf_path.parent.mkdir(parents=True, exist_ok=True)
