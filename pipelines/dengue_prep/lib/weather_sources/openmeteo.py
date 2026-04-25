@@ -47,6 +47,7 @@ class Source(WeatherSource):
         )
 
         # ERA5 archive has ~5-day lag — cap silently
+        start_ts = pd.Timestamp(start_date)
         end_ts = pd.Timestamp(end_date)
         openmeteo_max = pd.Timestamp.now().normalize() - pd.Timedelta(days=5)
         if end_ts > openmeteo_max:
@@ -56,6 +57,15 @@ class Source(WeatherSource):
                 openmeteo_max.date(),
             )
             end_ts = openmeteo_max
+
+        if end_ts < start_ts:
+            log.info(
+                "openmeteo: skipping fetch — capped end %s is before start %s "
+                "(chunk is entirely within the ERA5 5-day lag window)",
+                end_ts.date(),
+                start_ts.date(),
+            )
+            return []
 
         return self._fetch_regions(
             region_gdfs,

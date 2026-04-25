@@ -120,18 +120,24 @@ def negative_binomial_regression(
         for c in ["rainfall_lag_4", "relative_humidity_lag_4", "temp_lag_12"]
         if c in test_data.columns
     ]
-    for region, grp in test_data.groupby(spatial_col):
-        nan_feats = [c for c in lag_feat_cols if grp[c].isna().any()]
-        if nan_feats:
-            dates = grp.loc[grp[nan_feats].isna().any(axis=1), "recordDate"].tolist()
-            log.warning(
-                "NBR: region '%s' has NaN in lag feature(s) %s on %d prediction date(s) %s "
-                "→ MinMaxScaler.transform() will fail; check weather data coverage for this region",
-                region,
-                nan_feats,
-                len(dates),
-                [str(d.date()) for d in dates],
-            )
+    # Drop regions where any lag feature is NaN for all prediction dates —
+    # these have no weather coverage and MinMaxScaler.transform() would crash.
+    valid_mask = test_data[lag_feat_cols].notna().all(axis=1)
+    skipped_regions = sorted(test_data.loc[~valid_mask, spatial_col].unique())
+    if skipped_regions:
+        log.warning(
+            "NBR: skipping %d region(s) with NaN lag features — no weather coverage "
+            "(will appear white/hatched on map): %s",
+            len(skipped_regions),
+            skipped_regions,
+        )
+        test_data = test_data[valid_mask].copy().reset_index(drop=True)
+
+    if test_data.empty:
+        log.warning(
+            "NBR: no regions have valid lag features — returning empty predictions"
+        )
+        return pd.DataFrame()
 
     test_encoded = _one_hot(test_data)
     test_scaled, _ = _rescale(test_data, scaler)

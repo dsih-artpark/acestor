@@ -104,16 +104,22 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
         )
         precomputed_thresholds = pd.read_csv(io.StringIO(thresholds_csv))
 
-        nbr_out = zones.merge_predictions_thresholds(
-            case_df,
-            nbr_pred,
-            spatial_col=cfg.spatial_res,
-            list_alpha=cfg.list_alpha,
-            to_date=pred_upto - pd.Timedelta(days=28),
-            precomputed_thresholds=precomputed_thresholds,
-        )
-
-        prediction_dfs = [nbr_out]
+        prediction_dfs = []
+        if not nbr_pred.empty:
+            nbr_out = zones.merge_predictions_thresholds(
+                case_df,
+                nbr_pred,
+                spatial_col=cfg.spatial_res,
+                list_alpha=cfg.list_alpha,
+                to_date=pred_upto - pd.Timedelta(days=28),
+                precomputed_thresholds=precomputed_thresholds,
+            )
+            prediction_dfs.append(nbr_out)
+        else:
+            context.log.warning(
+                "train_and_predict: NBR returned no predictions — "
+                "check that weather region_ids match case region_ids in prepared_data"
+            )
 
         # TSE: always attempt for whatever spatial_res is configured
         tse_upto = cutoff_case + pd.Timedelta(days=14)
@@ -134,6 +140,17 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
                 precomputed_thresholds=precomputed_thresholds,
             )
             prediction_dfs.append(tse_out)
+
+        if not prediction_dfs:
+            context.log.warning(
+                "train_and_predict: no predictions from any model — "
+                "returning empty result (all regions will appear white/hatched on maps)"
+            )
+            return PredictionResult(
+                predictions_csv_path="",
+                region_type=cfg.spatial_res,
+                month_string="",
+            )
 
         ensembled = pred_lib.ensemble_predictions(
             prediction_dfs, spatial_col=cfg.spatial_res
