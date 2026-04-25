@@ -84,6 +84,9 @@ s3 = [
 ]
 
 [package.dev-dependencies]
+dev = [
+    { name = "pre-commit" },
+]
 docs = [
     { name = "myst-parser", version = "4.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "myst-parser", version = "5.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
@@ -128,7 +131,7 @@ requires-dist = [
 provides-extras = ["s3", "api", "dengue", "cds", "dev"]
 
 [package.metadata.requires-dev]
-dev = []
+dev = [{ name = "pre-commit", specifier = ">=4.5.1" }]
 docs = [
     { name = "myst-parser", specifier = ">=3.0.0" },
     { name = "sphinx", specifier = ">=8.1.3" },
