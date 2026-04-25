@@ -170,8 +170,8 @@ class PrepWeatherDownloadConfig:
     bounds_resolution_deg: float
     start_date: str
     end_date: str
-    convert_units: bool  # for openmeteo: convert °C→K and mm→m to match ERA5 units
-    chunk_months: int  # months per API call for openmeteo (default 12)
+    temperature_unit: str  # unit the source returns: "celsius" | "kelvin"
+    precipitation_unit: str  # unit the source returns: "mm" | "m"
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any]) -> PrepWeatherDownloadConfig:
@@ -208,8 +208,10 @@ class PrepWeatherDownloadConfig:
             bounds_resolution_deg=float(raw.get("bounds_resolution_deg", 0.1)),
             start_date=raw.get("start_date", "2015-01-01"),
             end_date=raw.get("end_date", ""),
-            convert_units=bool(raw.get("convert_units", False)),
-            chunk_months=int(raw.get("chunk_months", 12)),
+            temperature_unit=str(raw.get("temperature_unit", "celsius")).strip().lower()
+            or "celsius",
+            precipitation_unit=str(raw.get("precipitation_unit", "mm")).strip().lower()
+            or "mm",
         )
 
 

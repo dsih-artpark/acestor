@@ -169,7 +169,11 @@ def merge_predictions_thresholds(
             case_data, spatial_col=spatial_col, list_alpha=list_alpha, to_date=to_date
         )
     if to_date:
-        thresholds = thresholds[thresholds["date"] == pd.Timestamp(to_date)]
+        to_ts = pd.Timestamp(to_date)
+        available = thresholds[thresholds["date"] <= to_ts]["date"]
+        if not available.empty:
+            to_ts = available.max()
+        thresholds = thresholds[thresholds["date"] == to_ts]
 
     t_cols = [c for c in thresholds.columns if c.startswith("T") and "." in c]
     thresh_keep = [

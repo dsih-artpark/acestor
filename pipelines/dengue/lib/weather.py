@@ -75,22 +75,8 @@ def aggregate_daily(
     ``t2m_max``, ``t2m_min``, ``t2m_mean`` from the same hourly ``t2m`` column).
     """
     df = df.copy()
-    # Convert GMT → IST (+5h30m) before daily grouping, matching SOT
-    # merge_file_daily_data: thisdf["time"] += timedelta(hours=5.5)
-    df["date"] = (
-        pd.to_datetime(df["date"]) + pd.Timedelta(hours=5, minutes=30)
-    ).dt.normalize()
+    df["date"] = pd.to_datetime(df["date"], format="mixed").dt.normalize()
     df["date"] = df["date"].dt.date.astype("datetime64[ns]")
-    # Remove boundary dates: first and last contain partial-day data due to IST offset
-    all_dates = sorted(df["date"].unique())
-    if len(all_dates) > 2:
-        dropped_boundary = [all_dates[0], all_dates[-1]]
-        log.debug(
-            "weather: trimmed boundary dates %s after GMT→IST conversion "
-            "(partial-day rows — first/last dates contain incomplete data due to the +5h30m shift)",
-            [str(d) for d in dropped_boundary],
-        )
-        df = df[df["date"].isin(all_dates[1:-1])].reset_index(drop=True)
     rules = daily_agg if daily_agg is not None else []
 
     # Build explicit (input_col, op, output_col) triples from rules.

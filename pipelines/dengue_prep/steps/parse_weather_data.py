@@ -1,7 +1,8 @@
-"""Parse weather CSVs and upsert daily aggregated data into prepared_data.
+"""Parse weather CSVs and write daily aggregated data into prepared_data.
 
-Columns are stored with original ERA5 names (2mTemperature, etc.) so that
-Pipeline 2 (dengue) can apply rolling aggregation before renaming.
+Each run replaces the output file entirely. Columns are stored with original
+ERA5 names (2mTemperature, etc.) so that Pipeline 2 (dengue) can apply
+rolling aggregation before renaming.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ from pipelines.dengue_prep.configs import (
     PrepWeatherParseConfig,
     _section,
 )
-from pipelines.dengue_prep.lib.upsert import upsert_csv as _upsert_csv
+from pipelines.dengue_prep.lib.upsert import write_csv as _write_csv
 from pipelines.dengue_prep.results import (
     PrepWeatherDownloadResult,
     PrepWeatherParseResult,
@@ -197,13 +198,17 @@ class PrepParseWeatherDataStep(
                 n_before_filter - len(daily),
             )
 
+        # Drop regions with LGD code 0 — these are invalid/placeholder entries
+        # (e.g. Yanam, a Union Territory enclave, gets coded as district_0 in ERA5 data
+        # but has no case data and incomplete weather coverage, breaking Pipeline 2).
+        daily = daily[~daily["region_id"].str.endswith("_0")]
+
         dest = Path(out_cfg.base_dir) / cfg.region_type / "weather_daily.csv"
-        total = _upsert_csv(dest, daily, key_cols=["region_id", "date"])
+        total = _write_csv(dest, daily, key_cols=["region_id", "date"])
         context.log.info(
-            "prep parse_weather_data: region_type=%s upserted %d rows → %d total rows in %s",
+            "prep parse_weather_data: region_type=%s wrote %d rows → %s",
             cfg.region_type,
             len(daily),
-            total,
             dest,
         )
         return PrepWeatherParseResult(

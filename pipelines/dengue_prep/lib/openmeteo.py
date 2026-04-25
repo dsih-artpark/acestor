@@ -126,7 +126,7 @@ def _fetch_multi(
         "start_date": start_date,
         "end_date": end_date,
         "daily": ",".join(_DAILY_VARS),
-        "timezone": "UTC",
+        "timezone": "Asia/Kolkata",
     }
     last_exc: Exception | None = None
     for attempt in range(1, retries + 1):
@@ -161,7 +161,7 @@ def _fetch_multi(
                 df = df.rename(
                     columns={k: v for k, v in _COL_RENAME.items() if k in df.columns}
                 )
-                df["time"] = pd.to_datetime(df["time"])
+                df["time"] = pd.to_datetime(df["time"]).dt.strftime("%Y-%m-%d")
                 dfs.append(df)
             return dfs
         except Exception as exc:
@@ -412,6 +412,28 @@ def download_range(
 # ---------------------------------------------------------------------------
 # Utility
 # ---------------------------------------------------------------------------
+
+
+def delete_recent_months(output_path: Path, n: int = 1) -> None:
+    """Delete CSVs for the most recent N calendar months so they are always re-fetched.
+
+    The current month's file is always partial (month still in progress), so n=1
+    is sufficient. Removing it before the missing-months check ensures the latest
+    data is pulled on every run.
+    """
+    import datetime as dt
+
+    now = dt.datetime.now()
+    for i in range(n):
+        month = now.month - i
+        year = now.year
+        while month <= 0:
+            month += 12
+            year -= 1
+        dest = output_path / str(year) / f"{year}_{month:02d}.csv"
+        if dest.exists():
+            dest.unlink()
+            log.info("openmeteo: deleted stale month file %s (will re-fetch)", dest)
 
 
 def get_missing_months(

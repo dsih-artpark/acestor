@@ -1,0 +1,47 @@
+pipeline:
+  name: dengue_prep
+  title: "Dengue Data Prep — Andhra Pradesh (AP State API)"
+
+run:
+  run_date: ""
+
+data:
+  region_type: "district"
+
+  date_range:
+    start: "2021-07-01"
+    # end: ""   # leave blank → defaults to today's date
+
+  geojson:
+    base_path: "ap_datasets/geojsons/geojsons_AP"
+
+  case_download:
+    enabled: true
+    source_path: "ap_datasets/raw_case"
+
+  case_parse:
+    region_types:
+      - "district"
+    date_column: "Sample Collected Date"
+    lgd_code_column: "District Code"
+    lat_column: "Latitude"
+    lon_column: "Longitude"
+    filters:
+      - column: "Confirmed Diagnosis"
+        values: ["Dengue"]
+
+  weather_download:
+    enabled: true
+    source_mode: "ap_datasets.ap_state_api"
+    parsed_output_path: "datasets/ap-weather"
+    temperature_unit: "celsius"   # AP API returns °C — step converts to Kelvin
+    precipitation_unit: "mm"      # AP API returns mm — step converts to metres
+
+logging:
+  level: INFO
+
+storages:
+  artifacts:
+    kind: filesystem
+    filesystem:
+      base_path: "./artifacts/ap_prep_api"

@@ -34,9 +34,11 @@ data:
 
   weather_download:
     enabled: true
-    source_mode: "openmeteo"    # openmeteo | cds | filesystem
-    parsed_output_path: "datasets/openmeteo_ap"
-    convert_units: true      # set true to convert OpenMeteo °C→K, mm→m (ERA5 units)
+    source_mode: "openmeteo"     # openmeteo | filesystem | ap_state_api | /path/to/custom.py
+    parsed_output_path: "datasets/ap-weather"
+    temperature_unit: "celsius"  # unit the source returns: "celsius" | "kelvin"
+    precipitation_unit: "mm"     # unit the source returns: "mm" | "m"
+    # source_path: "datasets/ap-weather"  # required when source_mode=filesystem
 
 logging:
   level: DEBUG

@@ -1,12 +1,11 @@
-"""Parse IHIP-format case files and upsert daily aggregated counts into prepared_data.
+"""Parse IHIP-format case files and write daily aggregated counts into prepared_data.
 
 Reads all .xlsx/.xls/.csv files from the configured source folder, aggregates
 each row as one confirmed case, maps to region_ids via LGD code or spatial join,
-and upserts results into prepared_data/<region_type>/cases_daily.csv.
+and writes results to prepared_data/<region_type>/cases_daily.csv (full overwrite).
 
-Multiple files in the folder are all processed and merged. If the same
-(region_id, date) appears across files, the last-processed value wins
-(correction semantics — a re-uploaded corrected file overwrites the old count).
+Each run replaces the output file entirely so that filter or config changes are
+fully reflected without stale rows from previous runs persisting.
 
 Date filtering:
   - If date_range.start is set in config, only rows >= that date are kept.
@@ -30,7 +29,7 @@ from pipelines.dengue_prep.configs import (
     _section,
 )
 from pipelines.dengue_prep.lib.ihip import parse_ihip_files
-from pipelines.dengue_prep.lib.upsert import upsert_csv as _upsert_csv
+from pipelines.dengue_prep.lib.upsert import write_csv as _write_csv
 from pipelines.dengue_prep.results import (
     PrepCaseDownloadResult,
     PrepCaseParseResult,
@@ -128,9 +127,9 @@ class PrepParseCaseDataStep(BaseStep[PrepParseCaseDataInputs, PrepCaseParseResul
                 )
 
             dest = Path(out_cfg.base_dir) / region_type / "cases_daily.csv"
-            total = _upsert_csv(dest, daily, key_cols=["region_id", "date"])
+            total = _write_csv(dest, daily, key_cols=["region_id", "date"])
             context.log.info(
-                "parse_case_data: region_type=%s parsed %d rows, upserted → %d total rows in %s",
+                "parse_case_data: region_type=%s parsed %d rows, wrote → %d rows in %s",
                 region_type,
                 len(daily),
                 total,
