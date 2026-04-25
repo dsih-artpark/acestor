@@ -194,10 +194,13 @@ def _resolve_via_spatial_join(
     # Fall back to nearest polygon for border-edge cases (points on boundaries or
     # just outside a polygon due to projection rounding)
     unmatched_idx = joined[joined["region_id"].isna()]["idx"].tolist()
+    n_total = len(gdf_points)
     if unmatched_idx:
         log.warning(
-            "ihip parser: %d row(s) not matched via 'within' — falling back to nearest %s polygon.",
+            "ihip parser: %d of %d row(s) not matched via 'within' polygon — "
+            "falling back to nearest %s polygon (border/rounding cases).",
             len(unmatched_idx),
+            n_total,
             region_type,
         )
         unmatched_points = gdf_points[gdf_points["idx"].isin(unmatched_idx)].copy()
@@ -279,8 +282,15 @@ def parse_ihip_files(
 
     # Read, validate, and resolve region_id per file
     frames: list[pd.DataFrame] = []
+    log.info(
+        "ihip parser: found %d file(s) in %r: %s",
+        len(files),
+        str(folder_path),
+        [f.name for f in files],
+    )
     for path in files:
         df = _read_file(path)
+        log.info("ihip parser: file %r → read %d rows", path.name, len(df))
         _validate_columns(df, date_column, path)
 
         # Row filters — AND across entries, OR within each entry's values list
@@ -316,7 +326,17 @@ def parse_ihip_files(
                 f"Ensure all values are valid dates. Error: {exc}"
             ) from exc
 
+        n_before_dropna = len(df)
         df = df.dropna(subset=["date"])
+        n_dropped_dates = n_before_dropna - len(df)
+        if n_dropped_dates:
+            log.warning(
+                "ihip parser: file %r dropped %d row(s) with unparseable/missing dates "
+                "(original date column %r — check for blank or malformed date values)",
+                path.name,
+                n_dropped_dates,
+                date_column,
+            )
 
         if method == "lgd":
             df["region_id"] = _resolve_via_lgd(df, lgd_code_column, region_type)
@@ -334,6 +354,11 @@ def parse_ihip_files(
         frames.append(df[["date", "region_id"]].copy())
 
     combined = pd.concat(frames, ignore_index=True)
+    log.info(
+        "ihip parser: combined %d file(s) → %d total individual case rows before aggregation",
+        len(frames),
+        len(combined),
+    )
 
     # Aggregate: each row = one case
     result = (
@@ -342,5 +367,13 @@ def parse_ihip_files(
         .reset_index(name="case_count")[["date", "region_id", "case_count"]]
         .sort_values(["date", "region_id"])
         .reset_index(drop=True)
+    )
+    log.info(
+        "ihip parser: aggregated %d individual cases → %d unique (region_id, date) groups; "
+        "date range %s → %s",
+        len(combined),
+        len(result),
+        result["date"].min().date() if not result.empty else "n/a",
+        result["date"].max().date() if not result.empty else "n/a",
     )
     return result

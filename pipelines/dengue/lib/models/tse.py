@@ -11,6 +11,8 @@ from datetime import timedelta
 import numpy as np
 import pandas as pd
 
+log = logging.getLogger(__name__)
+
 
 def _process_region(
     df: pd.DataFrame,
@@ -112,7 +114,12 @@ def linear_extrapolation(
             skipped.append(region_name)
 
     if skipped:
-        logging.warning("Regions without enough data for TSE: %s", skipped)
+        log.warning(
+            "TSE: %d region(s) skipped → no TSE prediction (insufficient data or last "
+            "observation too old — will appear white/hatched on maps if NBR also fails): %s",
+            len(skipped),
+            skipped,
+        )
 
     return (
         pd.DataFrame(rows)

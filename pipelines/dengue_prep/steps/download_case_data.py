@@ -64,14 +64,33 @@ class PrepDownloadCaseDataStep(BaseStep[NoInputs, PrepCaseDownloadResult]):
                     "of your raw case data directory, or set data.case_download.source_path "
                     "in the pipeline config."
                 )
+            context.log.info(
+                "prep download_case_data: no direct source built — using storage %r",
+                cfg.source_storage,
+            )
             source = context.require_storage(cfg.source_storage)
 
-        paths = cfg.source_paths or source.list_objects(cfg.source_prefix)
-        paths = [p for p in paths if str(p).strip() and not str(p).endswith("/")]
-
         backend = (cfg.source_backend or "filesystem").strip().lower()
+        context.log.info(
+            "prep download_case_data: backend=%s source_path=%r prefix=%r",
+            backend,
+            cfg.source_path or "",
+            cfg.source_prefix or "",
+        )
+
+        raw_paths = cfg.source_paths or source.list_objects(cfg.source_prefix)
+        paths = [p for p in raw_paths if str(p).strip() and not str(p).endswith("/")]
+        if len(paths) != len(list(raw_paths)):
+            context.log.debug(
+                "prep download_case_data: filtered %d raw paths → %d valid file paths "
+                "(removed empty/directory entries)",
+                len(list(raw_paths)),
+                len(paths),
+            )
+
         copied: list[str] = []
         for src in paths:
+            context.log.debug("prep download_case_data: reading %r", src)
             try:
                 data = source.read(src)
             except FileNotFoundError as exc:

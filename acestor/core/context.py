@@ -125,7 +125,17 @@ class PipelineContext:
         if logging_cfg:
             pipeline_name = (raw.get("pipeline") or {}).get("name") or "pipeline"
             logger_name = f"acestor.{pipeline_name}"
-            logger = create_logger(logger_name, run_dir=None)
+
+            # Write log into the run's artifact directory when artifacts is a
+            # filesystem storage — keeps each run's log alongside its outputs.
+            run_dir: Path | None = None
+            artifacts_scfg = storages_cfg.get("artifacts") or {}
+            if (artifacts_scfg.get("kind") or "filesystem").lower() == "filesystem":
+                fs_base = (artifacts_scfg.get("filesystem") or {}).get("base_path")
+                if fs_base:
+                    run_dir = Path(fs_base) / run_id
+
+            logger = create_logger(logger_name, run_dir=run_dir)
             level_str = (logging_cfg.get("level") or "INFO").upper()
             try:
                 logger.setLevel(getattr(logging, level_str, logging.INFO))

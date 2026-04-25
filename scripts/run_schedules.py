@@ -20,29 +20,28 @@ LOGS_DIR = ROOT / "logs"
 # ── Configure your pipelines here ─────────────────────────────────────────────
 PIPELINES = [
     {
-        "name": "gba-weekly",
-        "cron": "*/1 * * * *",  # every 1m
-        "pipeline": "pipelines.dengue.pipeline:build_pipeline",
-        "config": "configs/gba_stage1_s3.yaml",
+        "name": "ap-dengue-prep",
+        "cron": "0 2 * * *",  # At 02:00, every day
+        "pipeline": "pipelines.dengue_prep.pipeline:build_pipeline",
+        "config": "configs/ap_district_prep.yaml",
     },
-    # {
-    #     "name":     "another-pipeline",
-    #     "cron":     "0 8 * * *",
-    #     "pipeline": "pipelines.other:build_pipeline",
-    #     "config":   "configs/other.yaml",
-    # },
+    {
+        "name": "ap-dengue",
+        "cron": "0 3 * * 0",  # At 03:00, only on Sunday (1 hour after prep)
+        "pipeline": "pipelines.dengue.pipeline:build_pipeline",
+        "config": "configs/ap_district.yaml",
+    },
 ]
 # ──────────────────────────────────────────────────────────────────────────────
 
 
 def make_job(name: str, pipeline: str, config: str):
     def run():
-        run_id = f"run-{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        log_path = LOGS_DIR / name / f"{run_id}.log"
+        now = datetime.now()
+        run_id = f"{name}_{now.strftime('%Y-%m-%d_%H%M%S')}"
+        log_path = LOGS_DIR / name / now.strftime("%Y-%m-%d") / f"{run_id}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        print(
-            f"[{datetime.now().isoformat()}] Starting {name} → {log_path}", flush=True
-        )
+        print(f"[{now.isoformat()}] Starting {name} → {log_path}", flush=True)
         with open(log_path, "w") as f:
             result = subprocess.run(
                 [
@@ -60,10 +59,10 @@ def make_job(name: str, pipeline: str, config: str):
                 stderr=f,
                 cwd=str(ROOT),
             )
-        print(
-            f"[{datetime.now().isoformat()}] Finished {name} (exit={result.returncode})",
-            flush=True,
+        status = (
+            "OK" if result.returncode == 0 else f"FAILED (exit={result.returncode})"
         )
+        print(f"[{datetime.now().isoformat()}] Finished {name} — {status}", flush=True)
 
     return run
 
@@ -77,7 +76,7 @@ def main():
             CronTrigger.from_crontab(p["cron"]),
             id=p["name"],
             name=p["name"],
-            misfire_grace_time=3600,  # retry if missed by up to 1 hour
+            misfire_grace_time=3600,
         )
         print(f"Scheduled: {p['name']}  ({p['cron']})")
 
