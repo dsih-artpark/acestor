@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict
@@ -21,6 +22,7 @@ class RunResult:
     status: str
     steps: Dict[str, Any]
     failure_detail: str = ""
+    failed_step: str = ""
 
 
 @dataclass
@@ -45,6 +47,9 @@ class PipelineRunner:
         results: Dict[str, Any] = {}
         status = "success"
         failure_detail = ""
+        failed_step = ""
+
+        step_start_times: Dict[str, float] = {}
 
         try:
             name_to_step = {s.name: s for s in self.dag.steps}
@@ -60,6 +65,7 @@ class PipelineRunner:
             def submit_step(executor: ThreadPoolExecutor, step_name: str) -> None:
                 if logger is not None:
                     logger.info("Running step %s", step_name)
+                step_start_times[step_name] = time.monotonic()
                 step = name_to_step[step_name]
                 parent_names = self.dag.parents(step_name)
                 upstream_results = {p: results[p] for p in parent_names}
@@ -75,7 +81,27 @@ class PipelineRunner:
                     done, _ = wait(set(futures.keys()), return_when=FIRST_COMPLETED)
                     for fut in list(done):
                         step_name = futures.pop(fut)
-                        results[step_name] = fut.result()
+                        try:
+                            results[step_name] = fut.result()
+                        except Exception:
+                            elapsed = time.monotonic() - step_start_times.get(
+                                step_name, time.monotonic()
+                            )
+                            failed_step = step_name
+                            if logger is not None:
+                                # logger.exception captures the full traceback,
+                                # so the underlying file:line is in run.log.
+                                logger.exception(
+                                    "Step %s failed after %.2fs",
+                                    step_name,
+                                    elapsed,
+                                )
+                            raise
+                        elapsed = time.monotonic() - step_start_times.get(
+                            step_name, time.monotonic()
+                        )
+                        if logger is not None:
+                            logger.info("Finished step %s in %.2fs", step_name, elapsed)
                         self.context.completed_steps.append(step_name)
 
                         for child in self.dag.children(step_name):
@@ -85,12 +111,24 @@ class PipelineRunner:
         except Exception as exc:
             status = "failed"
             failure_detail = f"{type(exc).__name__}: {exc}"
-            if logger is not None:
-                logger.error("Run %s failed: %s", self.context.run_id, exc)
+            # The step-level handler above already logged the traceback via
+            # logger.exception; intentionally avoid a duplicate error line here.
 
         end_ts = datetime.now(timezone.utc).isoformat()
         if logger is not None:
-            logger.info("Finished run %s with status=%s", self.context.run_id, status)
+            if status == "failed":
+                logger.info(
+                    "Finished run %s with status=failed at step=%s detail=%s",
+                    self.context.run_id,
+                    failed_step or "<unknown>",
+                    failure_detail,
+                )
+            else:
+                logger.info(
+                    "Finished run %s with status=%s",
+                    self.context.run_id,
+                    status,
+                )
 
         runs_storage = self.context.storages.get("runs")
         if runs_storage is not None:
@@ -104,6 +142,8 @@ class PipelineRunner:
                 "started_at": start_ts,
                 "finished_at": end_ts,
                 "steps": list(results.keys()),
+                "failed_step": failed_step,
+                "failure_detail": failure_detail,
             }
             try:
                 runs_storage.write_text(
@@ -120,4 +160,5 @@ class PipelineRunner:
             status=status,
             steps=results,
             failure_detail=failure_detail,
+            failed_step=failed_step,
         )
