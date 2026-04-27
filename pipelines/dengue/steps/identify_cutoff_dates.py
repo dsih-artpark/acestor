@@ -58,6 +58,34 @@ class IdentifyCutoffDatesStep(BaseStep[IdentifyCutoffDatesInputs, CutoffDatesRes
         weather_df.rename(columns={w_date_col: "recordDate"}, inplace=True)
         weather_df["recordDate"] = pd.to_datetime(weather_df["recordDate"])
 
+        # Cross-data invariant: sampled case dates and sampled weather dates
+        # MUST agree, otherwise the outer merge in train_and_predict produces
+        # rows that all fail _filter_features.dropna() and NBR sees zero
+        # training samples (MinMaxScaler then crashes with "0 sample(s)").
+        case_dates = set(case_df["recordDate"].unique())
+        weather_dates = set(weather_df["recordDate"].unique())
+        intersection = case_dates & weather_dates
+        smaller = min(len(case_dates), len(weather_dates)) or 1
+        overlap_pct = 100.0 * len(intersection) / smaller
+        if overlap_pct < 95.0:
+            context.log.warning(
+                "sampled date overlap is %.1f%% (case=%d weather=%d intersection=%d) "
+                "— train_and_predict will likely produce empty training data; "
+                "check load_prepared_{case,weather}_data for sparse/gappy inputs",
+                overlap_pct,
+                len(case_dates),
+                len(weather_dates),
+                len(intersection),
+            )
+        else:
+            context.log.info(
+                "sampled date overlap=%.1f%% (case=%d weather=%d intersection=%d)",
+                overlap_pct,
+                len(case_dates),
+                len(weather_dates),
+                len(intersection),
+            )
+
         cutoff_case = cutoffs.estimate_cutoff_date(
             case_df, min_regions=cfg.case_min_regions
         )

@@ -70,6 +70,26 @@ class LoadPreparedCaseDataStep(
             ]
         daily = daily[daily["date"] <= run_date]
 
+        # Reindex each region onto a contiguous daily grid (zero-fill no-case days)
+        # so that dates[::-7] sampling produces the same calendar dates as the
+        # dense daily weather grid — otherwise sparse case dates make the sampled
+        # cases and weather diverge and the merge in train_and_predict drops to ~0.
+        def _fill_daily(group: pd.DataFrame) -> pd.DataFrame:
+            full = pd.date_range(start=group["date"].min(), end=group["date"].max())
+            g = group.set_index("date").reindex(full).rename_axis("date").reset_index()
+            g["case"] = g["case"].fillna(0)
+            g["region_id"] = g["region_id"].ffill()
+            return g
+
+        if not daily.empty:
+            daily = (
+                daily.groupby("region_id", group_keys=False)[
+                    ["region_id", "date", "case"]
+                ]
+                .apply(_fill_daily)
+                .reset_index(drop=True)
+            )
+
         rolling = case_data.rolling_aggregate(daily, n_days=7)
         max_date = pd.Timestamp(rolling["date"].max())
         latest_day = case_data.get_latest_sampling_day(
