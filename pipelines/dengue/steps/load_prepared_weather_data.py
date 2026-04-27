@@ -66,6 +66,13 @@ class LoadPreparedWeatherDataStep(
         # gaps (~49/1700 days missing); without this, weather and case sampled
         # dates phase-shift mid-stream and the merge in train_and_predict drops
         # rows whose lag features fall on missing dates.
+        #
+        # Sum-aggregated columns (e.g. totalPrecipitation) are zero-filled, not
+        # interpolated: linear interp fabricates rainfall that the downstream
+        # 7-day rolling sum then double-counts. Mean-aggregated columns
+        # (temperature, dewpoint) get bounded linear interp (limit=7) so long
+        # gaps stay NaN and propagate to drop the region from training rather
+        # than producing model output from hallucinated weather.
         if not daily.empty:
             num_cols = daily.select_dtypes(include="number").columns.tolist()
             meta_cols = [
@@ -73,6 +80,14 @@ class LoadPreparedWeatherDataStep(
                 for c in daily.columns
                 if c not in num_cols and c not in {"region_id", "date"}
             ]
+            rolling_op = {
+                rule["name"]: rule.get("op", "")
+                for rule in weather_cfg.rolling_agg
+                if rule.get("name")
+            }
+            sum_cols = [c for c in num_cols if rolling_op.get(c) == "sum"]
+            mean_cols = [c for c in num_cols if c not in sum_cols]
+            interp_limit = 7
 
             filled_parts: list[pd.DataFrame] = []
             for region_id, group in daily.groupby("region_id"):
@@ -84,12 +99,31 @@ class LoadPreparedWeatherDataStep(
                     .reset_index()
                 )
                 g["region_id"] = region_id
-                if num_cols:
-                    g[num_cols] = g[num_cols].interpolate(
-                        method="linear", limit_direction="both"
+                n_missing = len(full) - len(group)
+                if sum_cols:
+                    g[sum_cols] = g[sum_cols].fillna(0)
+                if mean_cols:
+                    g[mean_cols] = g[mean_cols].interpolate(
+                        method="linear",
+                        limit_direction="both",
+                        limit=interp_limit,
                     )
                 for c in meta_cols:
                     g[c] = g[c].ffill().bfill()
+                if n_missing and len(full):
+                    fab_pct = 100.0 * n_missing / len(full)
+                    if fab_pct >= 25.0:
+                        context.log.warning(
+                            "load_prepared_weather_data: region=%s has %.1f%% "
+                            "fabricated weather days (%d of %d) — long gaps "
+                            "leave mean-cols NaN past limit=%d, predictions "
+                            "for this region may be dropped or unreliable",
+                            region_id,
+                            fab_pct,
+                            n_missing,
+                            len(full),
+                            interp_limit,
+                        )
                 filled_parts.append(g)
             daily = pd.concat(filled_parts, ignore_index=True)
 
