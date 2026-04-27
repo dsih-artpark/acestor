@@ -64,9 +64,16 @@ class IdentifyCutoffDatesStep(BaseStep[IdentifyCutoffDatesInputs, CutoffDatesRes
         # training samples (MinMaxScaler then crashes with "0 sample(s)").
         case_dates = set(case_df["recordDate"].unique())
         weather_dates = set(weather_df["recordDate"].unique())
+        if not case_dates or not weather_dates:
+            raise ValueError(
+                f"sampled date set is empty (case={len(case_dates)} "
+                f"weather={len(weather_dates)}) — check load_prepared_"
+                f"{{case,weather}}_data; pipeline cannot proceed"
+            )
         intersection = case_dates & weather_dates
-        smaller = min(len(case_dates), len(weather_dates)) or 1
-        overlap_pct = 100.0 * len(intersection) / smaller
+        overlap_pct = (
+            100.0 * len(intersection) / min(len(case_dates), len(weather_dates))
+        )
         if overlap_pct < 95.0:
             context.log.warning(
                 "sampled date overlap is %.1f%% (case=%d weather=%d intersection=%d) "

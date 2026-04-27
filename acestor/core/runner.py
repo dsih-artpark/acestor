@@ -111,8 +111,14 @@ class PipelineRunner:
         except Exception as exc:
             status = "failed"
             failure_detail = f"{type(exc).__name__}: {exc}"
-            # The step-level handler above already logged the traceback via
-            # logger.exception; intentionally avoid a duplicate error line here.
+            # When failed_step is set, the inner step handler already logged
+            # the traceback via logger.exception. Otherwise this is a non-step
+            # failure (DAG bookkeeping, build_typed_inputs, etc.) and we need
+            # to log here or lose the trace entirely.
+            if logger is not None and not failed_step:
+                logger.exception(
+                    "Run %s failed before step dispatch", self.context.run_id
+                )
 
         end_ts = datetime.now(timezone.utc).isoformat()
         if logger is not None:

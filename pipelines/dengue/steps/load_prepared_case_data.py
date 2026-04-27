@@ -74,21 +74,21 @@ class LoadPreparedCaseDataStep(
         # so that dates[::-7] sampling produces the same calendar dates as the
         # dense daily weather grid — otherwise sparse case dates make the sampled
         # cases and weather diverge and the merge in train_and_predict drops to ~0.
-        def _fill_daily(group: pd.DataFrame) -> pd.DataFrame:
-            full = pd.date_range(start=group["date"].min(), end=group["date"].max())
-            g = group.set_index("date").reindex(full).rename_axis("date").reset_index()
-            g["case"] = g["case"].fillna(0)
-            g["region_id"] = g["region_id"].ffill()
-            return g
-
+        observed_rows = len(daily)
         if not daily.empty:
-            daily = (
-                daily.groupby("region_id", group_keys=False)[
-                    ["region_id", "date", "case"]
-                ]
-                .apply(_fill_daily)
-                .reset_index(drop=True)
-            )
+            filled_parts: list[pd.DataFrame] = []
+            for region_id, group in daily.groupby("region_id"):
+                full = pd.date_range(start=group["date"].min(), end=group["date"].max())
+                g = (
+                    group.set_index("date")
+                    .reindex(full)
+                    .rename_axis("date")
+                    .reset_index()
+                )
+                g["region_id"] = region_id
+                g["case"] = g["case"].fillna(0)
+                filled_parts.append(g[["region_id", "date", "case"]])
+            daily = pd.concat(filled_parts, ignore_index=True)
 
         rolling = case_data.rolling_aggregate(daily, n_days=7)
         max_date = pd.Timestamp(rolling["date"].max())
@@ -101,8 +101,9 @@ class LoadPreparedCaseDataStep(
         dest = context.artifact_path(f"datasets/cases_{cfg.region_type}_sampled.csv")
         context.artifacts.write_text(renamed.to_csv(index=False), dest)
         context.log.info(
-            "load_prepared_case_data: region_type=%s rows=%d sampled_rows=%d",
+            "load_prepared_case_data: region_type=%s observed=%d densified=%d sampled_rows=%d",
             cfg.region_type,
+            observed_rows,
             len(daily),
             len(renamed),
         )
