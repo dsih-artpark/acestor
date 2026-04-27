@@ -61,6 +61,38 @@ class LoadPreparedWeatherDataStep(
         run_date = pd.Timestamp(inputs.identify_sampling_day.run_date).normalize()
         daily = daily[daily["date"] <= run_date]
 
+        # Reindex each region onto a contiguous daily grid so dates[::-7] sampling
+        # produces calendar-aligned 7-day spacing. Source data has end-of-month
+        # gaps (~49/1700 days missing); without this, weather and case sampled
+        # dates phase-shift mid-stream and the merge in train_and_predict drops
+        # rows whose lag features fall on missing dates.
+        if not daily.empty:
+            num_cols = daily.select_dtypes(include="number").columns.tolist()
+            meta_cols = [
+                c
+                for c in daily.columns
+                if c not in num_cols and c not in {"region_id", "date"}
+            ]
+
+            filled_parts: list[pd.DataFrame] = []
+            for region_id, group in daily.groupby("region_id"):
+                full = pd.date_range(start=group["date"].min(), end=group["date"].max())
+                g = (
+                    group.set_index("date")
+                    .reindex(full)
+                    .rename_axis("date")
+                    .reset_index()
+                )
+                g["region_id"] = region_id
+                if num_cols:
+                    g[num_cols] = g[num_cols].interpolate(
+                        method="linear", limit_direction="both"
+                    )
+                for c in meta_cols:
+                    g[c] = g[c].ffill().bfill()
+                filled_parts.append(g)
+            daily = pd.concat(filled_parts, ignore_index=True)
+
         rolling = weather.rolling_aggregate(
             daily,
             weather_cfg.weather_variables,
