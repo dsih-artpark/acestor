@@ -24,7 +24,7 @@ logs/
 
 # Large data directories — mounted as volumes at runtime
 datasets/
-ap_datasets/
+*_datasets/
 geojsons/
 artifacts/
 cache/
