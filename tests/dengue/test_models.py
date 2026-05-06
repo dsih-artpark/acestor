@@ -7,7 +7,7 @@ import pytest
 from pipelines.dengue.lib.models.nbr import _lag, _filter_features, _one_hot, _rescale
 from pipelines.dengue.lib.models.tse import _process_region, linear_extrapolation
 from pipelines.dengue.lib.models import BaseModel, get_model, ModelContext, _REGISTRY
-from pipelines.dengue.configs import TrainPredictConfig
+from pipelines.dengue.configs import ReportConfig, TrainPredictConfig
 
 
 # ---------------------------------------------------------------------------
@@ -366,3 +366,18 @@ def test_train_predict_config_invalid_output_value():
 def test_train_predict_config_ensemble_none_with_output_ensemble_raises():
     with pytest.raises(ValueError, match="ensemble.*none.*output.*ensemble"):
         TrainPredictConfig.from_raw({"ensemble": "none", "output": "ensemble"})
+
+
+# ---------------------------------------------------------------------------
+# ReportConfig — primary field
+# ---------------------------------------------------------------------------
+
+
+def test_report_config_default_primary():
+    cfg = ReportConfig.from_raw({})
+    assert cfg.primary == "ensemble"
+
+
+def test_report_config_custom_primary():
+    cfg = ReportConfig.from_raw({"primary": "nbr"})
+    assert cfg.primary == "nbr"
