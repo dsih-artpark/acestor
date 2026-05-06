@@ -151,3 +151,24 @@ def negative_binomial_regression(
     test_data["recordDate"] = pd.to_datetime(test_data["recordDate"])
     test_data["model"] = "negativeBinomialRegression"
     return test_data.reset_index(drop=True)
+
+
+from pipelines.dengue.lib.models import ModelContext, register  # noqa: E402
+
+
+@register("nbr")
+class NBRModel:
+    def predict(self, ctx: ModelContext) -> pd.DataFrame:
+        return negative_binomial_regression(
+            ctx.merged_df,
+            spatial_col=ctx.cfg.spatial_res,
+            feature_cols=ctx.cfg.data_features,
+            lag_temp=ctx.cfg.lag_temp,
+            lag_rf=ctx.cfg.lag_rf,
+            years_to_exclude=ctx.cfg.years_to_exclude,
+            years_to_include=ctx.cfg.years_to_include,
+            predict_upto_date=ctx.pred_upto,
+        )
+
+    def threshold_to_date(self, ctx: ModelContext) -> pd.Timestamp:
+        return ctx.pred_upto - pd.Timedelta(days=28)

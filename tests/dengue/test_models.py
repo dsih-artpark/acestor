@@ -6,7 +6,7 @@ import pytest
 
 from pipelines.dengue.lib.models.nbr import _lag, _filter_features, _one_hot, _rescale
 from pipelines.dengue.lib.models.tse import _process_region, linear_extrapolation
-from pipelines.dengue.lib.models import get_model, ModelContext
+from pipelines.dengue.lib.models import BaseModel, get_model, ModelContext, _REGISTRY
 from pipelines.dengue.configs import TrainPredictConfig
 
 
@@ -271,3 +271,30 @@ def test_train_predict_config_default_models():
 def test_train_predict_config_custom_models():
     cfg = TrainPredictConfig.from_raw({"models": ["nbr"]})
     assert cfg.models == ["nbr"]
+
+
+# ---------------------------------------------------------------------------
+# NBRModel
+# ---------------------------------------------------------------------------
+
+
+def test_nbr_model_in_registry():
+    assert "nbr" in _REGISTRY
+
+
+def test_nbr_model_satisfies_protocol():
+    assert isinstance(get_model("nbr"), BaseModel)
+
+
+def test_nbr_threshold_to_date():
+    ctx = _make_ctx(pred_upto=pd.Timestamp("2022-05-25"))
+    model = get_model("nbr")
+    # NBR: pred_upto - 28 days
+    assert model.threshold_to_date(ctx) == pd.Timestamp("2022-04-27")
+
+
+def test_nbr_model_predict_returns_dataframe():
+    ctx = _make_ctx()
+    model = get_model("nbr")
+    result = model.predict(ctx)
+    assert isinstance(result, pd.DataFrame)
