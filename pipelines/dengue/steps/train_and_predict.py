@@ -10,7 +10,7 @@ from acestor import BaseStep, PipelineContext
 from pipelines.dengue.configs import TrainPredictConfig, _section
 from pipelines.dengue.lib import predictions as pred_lib
 from pipelines.dengue.lib import zones
-from pipelines.dengue.lib.models import nbr, tse
+from pipelines.dengue.lib.models import get_model, ModelContext
 from pipelines.dengue.results import (
     CutoffDatesResult,
     PredictionResult,
@@ -89,57 +89,39 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
         )
         merged = merged[merged["recordDate"].isin(valid_dates)].reset_index(drop=True)
 
-        nbr_pred = nbr.negative_binomial_regression(
-            merged,
-            spatial_col=cfg.spatial_res,
-            feature_cols=cfg.data_features,
-            lag_temp=cfg.lag_temp,
-            lag_rf=cfg.lag_rf,
-            years_to_exclude=cfg.years_to_exclude,
-            years_to_include=cfg.years_to_include,
-            predict_upto_date=pred_upto,
-        )
         thresholds_csv = context.artifacts.read_text(
             inputs.generate_thresholds.thresholds_csv_path
         )
         precomputed_thresholds = pd.read_csv(io.StringIO(thresholds_csv))
 
-        prediction_dfs = []
-        if not nbr_pred.empty:
-            nbr_out = zones.merge_predictions_thresholds(
-                case_df,
-                nbr_pred,
-                spatial_col=cfg.spatial_res,
-                list_alpha=cfg.list_alpha,
-                to_date=pred_upto - pd.Timedelta(days=28),
-                precomputed_thresholds=precomputed_thresholds,
-            )
-            prediction_dfs.append(nbr_out)
-        else:
-            context.log.warning(
-                "train_and_predict: NBR returned no predictions — "
-                "check that weather region_ids match case region_ids in prepared_data"
-            )
-
-        # TSE: always attempt for whatever spatial_res is configured
-        tse_upto = cutoff_case + pd.Timedelta(days=14)
-        tse_pred = tse.linear_extrapolation(
-            case_df,
-            spatial_col=cfg.spatial_res,
-            years_to_exclude=cfg.years_to_exclude,
-            years_to_include=cfg.years_to_include,
-            predict_upto_date=tse_upto,
+        ctx = ModelContext(
+            merged_df=merged,
+            case_df=case_df,
+            cfg=cfg,
+            pred_upto=pred_upto,
+            cutoff_case=cutoff_case,
         )
-        if not tse_pred.empty:
-            tse_out = zones.merge_predictions_thresholds(
+
+        prediction_dfs = []
+        for model_name in cfg.models:
+            model = get_model(model_name)
+            pred = model.predict(ctx)
+            if pred.empty:
+                context.log.warning(
+                    "train_and_predict: %s returned no predictions — "
+                    "check that weather region_ids match case region_ids in prepared_data",
+                    model_name,
+                )
+                continue
+            out = zones.merge_predictions_thresholds(
                 case_df,
-                tse_pred,
+                pred,
                 spatial_col=cfg.spatial_res,
                 list_alpha=cfg.list_alpha,
-                to_date=tse_upto - pd.Timedelta(days=14),
+                to_date=model.threshold_to_date(ctx),
                 precomputed_thresholds=precomputed_thresholds,
             )
-            prediction_dfs.append(tse_out)
+            prediction_dfs.append(out)
 
         if not prediction_dfs:
             context.log.warning(
@@ -155,9 +137,8 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
         ensembled = pred_lib.ensemble_predictions(
             prediction_dfs, spatial_col=cfg.spatial_res
         )
-        # "ensembleModel" when NBR + TSE combined; "negativeBinomialRegression" when only NBR
-        if len(prediction_dfs) == 1:
-            ensembled["model"] = "negativeBinomialRegression"
+        if len(prediction_dfs) == 1 and "model" in prediction_dfs[0].columns:
+            ensembled["model"] = prediction_dfs[0]["model"].iloc[0]
 
         classified = zones.classify_into_zones(ensembled, spatial_col=cfg.spatial_res)
         classified["predictionZone"] = classified["predictionZone"].fillna(0)
