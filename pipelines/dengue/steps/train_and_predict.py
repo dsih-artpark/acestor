@@ -7,9 +7,10 @@ from typing import ClassVar
 import pandas as pd
 
 from acestor import BaseStep, PipelineContext
-from pipelines.dengue.configs import TrainPredictConfig, _section
+from pipelines.dengue.configs import ReportConfig, TrainPredictConfig, _section
 from pipelines.dengue.lib import predictions as pred_lib
 from pipelines.dengue.lib import zones
+from pipelines.dengue.lib.ensembles import get_ensemble
 from pipelines.dengue.lib.models import get_model, ModelContext
 from pipelines.dengue.results import (
     CutoffDatesResult,
@@ -31,6 +32,10 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
         self, context: PipelineContext, inputs: TrainAndPredictInputs
     ) -> PredictionResult:
         cfg = TrainPredictConfig.from_raw(_section(context.config, "model"))
+        report_cfg = ReportConfig.from_raw(
+            _section(context.config, "report"),
+            pipeline=_section(context.config, "pipeline"),
+        )
 
         case_path = context.artifact_path(
             f"datasets/cases_{cfg.spatial_res}_sampled.csv"
@@ -102,7 +107,8 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
             cutoff_case=cutoff_case,
         )
 
-        prediction_dfs = []
+        per_model_dfs: dict[str, pd.DataFrame] = {}
+        prediction_dfs: list[pd.DataFrame] = []
         for model_name in cfg.models:
             model = get_model(model_name)
             pred = model.predict(ctx)
@@ -121,6 +127,7 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
                 to_date=model.threshold_to_date(ctx),
                 precomputed_thresholds=precomputed_thresholds,
             )
+            per_model_dfs[model_name] = out
             prediction_dfs.append(out)
 
         if not prediction_dfs:
@@ -134,62 +141,102 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
                 month_string="",
             )
 
-        ensembled = pred_lib.ensemble_predictions(
-            prediction_dfs, spatial_col=cfg.spatial_res
-        )
-        if len(prediction_dfs) == 1 and "model" in prediction_dfs[0].columns:
-            ensembled["model"] = prediction_dfs[0]["model"].iloc[0]
-
-        classified = zones.classify_into_zones(ensembled, spatial_col=cfg.spatial_res)
-        classified["predictionZone"] = classified["predictionZone"].fillna(0)
-
-        zone_zero_mask = classified["predictionZone"] == 0
-        if zone_zero_mask.any():
-            zone_zero_regions = sorted(
-                classified.loc[zone_zero_mask, cfg.spatial_res].unique().tolist()
+        # Combine via the configured ensemble strategy (or skip if "none").
+        ensembled: pd.DataFrame | None
+        if cfg.ensemble == "none":
+            ensembled = None
+        else:
+            ensembled = get_ensemble(cfg.ensemble).combine(
+                prediction_dfs, spatial_col=cfg.spatial_res
             )
-            context.log.warning(
-                "train_and_predict: %d region(s) have predictionZone=0 after zone "
-                "assignment (prediction fell outside all threshold pairs — will appear "
-                "white/no-hatch on maps): %s",
-                len(zone_zero_regions),
-                zone_zero_regions,
-            )
-
-        if "Mean" in classified.columns and "StdDev" in classified.columns:
-            degenerate = (classified["Mean"] == 0) & (classified["StdDev"] == 0)
-            classified.loc[degenerate, "predictionZone"] = pd.NA
-            if degenerate.any():
-                deg_regions = sorted(
-                    classified.loc[degenerate, cfg.spatial_res].unique().tolist()
-                )
-                context.log.warning(
-                    "train_and_predict: %d region(s) have degenerate thresholds "
-                    "(Mean=0, StdDev=0 — historically zero reported cases) → "
-                    "predictionZone=NA, will appear light gray on maps: %s",
-                    len(deg_regions),
-                    deg_regions,
-                )
+            if len(prediction_dfs) == 1 and "model" in prediction_dfs[0].columns:
+                ensembled["model"] = prediction_dfs[0]["model"].iloc[0]
 
         run_date = pd.Timestamp(inputs.identify_cutoff_dates.run_date).normalize()
-        future_dates = [
-            d for d in classified["startDatePredictedWeek"].unique() if d >= run_date
-        ]
-        month_string = (
-            pred_lib.get_month_year_range(list(future_dates)) if future_dates else ""
-        )
-        end_str = run_date.date().strftime("%Y%m%d")
 
-        dest = context.artifact_path(
-            f"results/Predictions_{month_string}_{cfg.spatial_res.capitalize()}_{end_str}.csv"
-        )
-        context.artifacts.write_text(classified.to_csv(index=False), dest)
-        context.log.info(
-            "train_and_predict: %d predictions for %s", len(classified), cfg.spatial_res
-        )
+        def _classify_and_write(df: pd.DataFrame, suffix: str) -> tuple[str, str]:
+            """Classify, write, return (csv_path, month_string)."""
+            classified = zones.classify_into_zones(df, spatial_col=cfg.spatial_res)
+            classified["predictionZone"] = classified["predictionZone"].fillna(0)
+
+            zone_zero_mask = classified["predictionZone"] == 0
+            if zone_zero_mask.any():
+                zone_zero_regions = sorted(
+                    classified.loc[zone_zero_mask, cfg.spatial_res].unique().tolist()
+                )
+                context.log.warning(
+                    "train_and_predict[%s]: %d region(s) have predictionZone=0 "
+                    "(prediction fell outside all threshold pairs): %s",
+                    suffix or "ensemble",
+                    len(zone_zero_regions),
+                    zone_zero_regions,
+                )
+
+            if "Mean" in classified.columns and "StdDev" in classified.columns:
+                degenerate = (classified["Mean"] == 0) & (classified["StdDev"] == 0)
+                classified.loc[degenerate, "predictionZone"] = pd.NA
+                if degenerate.any():
+                    deg_regions = sorted(
+                        classified.loc[degenerate, cfg.spatial_res].unique().tolist()
+                    )
+                    context.log.warning(
+                        "train_and_predict[%s]: %d region(s) have degenerate thresholds "
+                        "(Mean=0, StdDev=0): %s",
+                        suffix or "ensemble",
+                        len(deg_regions),
+                        deg_regions,
+                    )
+
+            future_dates = [
+                d
+                for d in classified["startDatePredictedWeek"].unique()
+                if d >= run_date
+            ]
+            local_month_string = (
+                pred_lib.get_month_year_range(list(future_dates))
+                if future_dates
+                else ""
+            )
+            end_str = run_date.date().strftime("%Y%m%d")
+
+            suffix_part = f"_{suffix}" if suffix else ""
+            dest = context.artifact_path(
+                f"results/Predictions_{local_month_string}_{cfg.spatial_res.capitalize()}{suffix_part}_{end_str}.csv"
+            )
+            context.artifacts.write_text(classified.to_csv(index=False), dest)
+            context.log.info(
+                "train_and_predict[%s]: %d predictions for %s",
+                suffix or "ensemble",
+                len(classified),
+                cfg.spatial_res,
+            )
+            return dest, local_month_string
+
+        written_paths: dict[str, str] = {}
+        month_string = ""
+
+        if cfg.output in ("per_model", "both"):
+            for model_name, df in per_model_dfs.items():
+                path, ms = _classify_and_write(df, suffix=model_name)
+                written_paths[model_name] = path
+                month_string = month_string or ms
+
+        if cfg.output in ("ensemble", "both"):
+            assert ensembled is not None  # guaranteed by config validation
+            path, ms = _classify_and_write(ensembled, suffix="")
+            written_paths["ensemble"] = path
+            month_string = month_string or ms
+
+        # Pick the CSV that downstream maps + report consume.
+        if report_cfg.primary not in written_paths:
+            raise ValueError(
+                f"report.primary={report_cfg.primary!r} but no matching CSV was written. "
+                f"Available: {sorted(written_paths)}. Check report.primary against "
+                f"model.models and model.output."
+            )
 
         return PredictionResult(
-            predictions_csv_path=dest,
+            predictions_csv_path=written_paths[report_cfg.primary],
             region_type=cfg.spatial_res,
             month_string=month_string,
         )
