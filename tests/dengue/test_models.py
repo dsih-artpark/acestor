@@ -233,6 +233,8 @@ def _make_ctx(
         years_to_include=[],
         list_alpha=[1.0, 2.0],
         models=["nbr", "tse"],
+        ensemble="mean",
+        output="ensemble",
     )
     case_cols = [
         "location.admin2.ID",
@@ -337,3 +339,30 @@ def test_tse_model_predict_uses_case_df_not_merged():
     model = get_model("tse")
     result = model.predict(case_only_ctx)
     assert isinstance(result, pd.DataFrame)
+
+
+# ---------------------------------------------------------------------------
+# TrainPredictConfig — ensemble + output fields
+# ---------------------------------------------------------------------------
+
+
+def test_train_predict_config_default_ensemble_and_output():
+    cfg = TrainPredictConfig.from_raw({})
+    assert cfg.ensemble == "mean"
+    assert cfg.output == "ensemble"
+
+
+def test_train_predict_config_custom_ensemble_and_output():
+    cfg = TrainPredictConfig.from_raw({"ensemble": "none", "output": "per_model"})
+    assert cfg.ensemble == "none"
+    assert cfg.output == "per_model"
+
+
+def test_train_predict_config_invalid_output_value():
+    with pytest.raises(ValueError, match="output"):
+        TrainPredictConfig.from_raw({"output": "bogus"})
+
+
+def test_train_predict_config_ensemble_none_with_output_ensemble_raises():
+    with pytest.raises(ValueError, match="ensemble.*none.*output.*ensemble"):
+        TrainPredictConfig.from_raw({"ensemble": "none", "output": "ensemble"})

@@ -417,10 +417,26 @@ class TrainPredictConfig:
     years_to_include: list[int]  # empty = no restriction; non-empty = only these years
     list_alpha: list[float]
     models: list[str]
+    ensemble: str  # registered ensemble strategy name, or "none"
+    output: str  # "ensemble" | "per_model" | "both"
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any]) -> TrainPredictConfig:
         lag = raw.get("lag", {})
+        ensemble = str(raw.get("ensemble", "mean")).strip() or "mean"
+        output = str(raw.get("output", "ensemble")).strip() or "ensemble"
+
+        if output not in ("ensemble", "per_model", "both"):
+            raise ValueError(
+                f"model.output must be one of 'ensemble' | 'per_model' | 'both', "
+                f"got {output!r}"
+            )
+        if ensemble == "none" and output == "ensemble":
+            raise ValueError(
+                "model.ensemble='none' is incompatible with output='ensemble' "
+                "(nothing would be combined). Use output='per_model' or 'both'."
+            )
+
         return cls(
             spatial_res=raw.get("spatial_res", "zone"),
             data_features=list(
@@ -446,6 +462,8 @@ class TrainPredictConfig:
             years_to_include=[int(y) for y in raw.get("years_to_include", [])],
             list_alpha=[float(a) for a in raw.get("list_alpha", [1.0, 2.0])],
             models=list(raw.get("models", ["nbr", "tse"])),
+            ensemble=ensemble,
+            output=output,
         )
 
 
