@@ -4,6 +4,8 @@
 
 Python dengue forecasting pipeline for ARTPARK / IISc. Runs via `uv run python -m acestor.run`. Tests via `uv run pytest` (bare `pytest` fails — pyproject.toml coverage flags require uv).
 
+Repository URL: `https://github.com/dsih-artpark/acestor.git`
+
 ## pr-verifier data
 
 Raw input data for the prep pipeline. Gitignored — lives relative to the project root on the dev machine:
