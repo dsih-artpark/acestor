@@ -39,6 +39,10 @@ Three configs exercise all output modes against AP data:
 
 No web server. Pipeline runs are isolated by `--run-id`. No port conflicts possible.
 
+## Dependency installation
+
+Always `uv sync --all-extras` immediately after cloning. Never install packages one by one — if an import fails after sync, it's a lockfile issue, not a missing package.
+
 ## Run commands
 
 ```bash
