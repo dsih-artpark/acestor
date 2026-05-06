@@ -6,14 +6,19 @@ Python dengue forecasting pipeline for ARTPARK / IISc. Runs via `uv run python -
 
 ## pr-verifier data
 
-Data directories required by the pipeline are gitignored. They live at these absolute paths on the dev machine:
+Raw input data for the prep pipeline. Gitignored — lives relative to the project root on the dev machine:
 
 ```
-prepared_data/     → ./prepared_data  (relative to project root — created by dengue_prep pipeline)
-ap_datasets/       → ./ap_datasets    (geojsons + raw AP data)
+ap_datasets/geojsons/geojsons_AP   — district geojsons (read-only)
+ap_datasets/raw_case/              — raw IHIP case files (.xlsx/.xls/.csv, read-only)
 ```
 
-If those relative paths don't exist in a fresh clone, the agent should ask the user where they are rather than guessing. The user may have them at an absolute path like `~/data/ap/` or similar.
+Absolute path on this machine: `/Users/ashutoshsinghai/Desktop/ARTPARK/acestor-v2/ap_datasets`
+
+`prepared_data/` is pipeline OUTPUT — the prep step generates it fresh; it is never a pre-existing input.
+Weather is downloaded at prep-time from the openmeteo API — no local files needed.
+
+The pr-verifier patches configs with the absolute `ap_datasets` path before running — no symlinks, no copies.
 
 Prep pipeline config: `configs/ap_district_prep.yaml`
 Prep pipeline entry: `pipelines.dengue_prep.pipeline:build_pipeline`
