@@ -416,6 +416,7 @@ class TrainPredictConfig:
     years_to_exclude: list[int]
     years_to_include: list[int]  # empty = no restriction; non-empty = only these years
     list_alpha: list[float]
+    models: list[str]
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any]) -> TrainPredictConfig:
@@ -444,6 +445,7 @@ class TrainPredictConfig:
             ],
             years_to_include=[int(y) for y in raw.get("years_to_include", [])],
             list_alpha=[float(a) for a in raw.get("list_alpha", [1.0, 2.0])],
+            models=list(raw.get("models", ["nbr", "tse"])),
         )
 
 

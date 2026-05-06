@@ -6,6 +6,8 @@ import pytest
 
 from pipelines.dengue.lib.models.nbr import _lag, _filter_features, _one_hot, _rescale
 from pipelines.dengue.lib.models.tse import _process_region, linear_extrapolation
+from pipelines.dengue.lib.models import get_model, ModelContext
+from pipelines.dengue.configs import TrainPredictConfig
 
 
 # ---------------------------------------------------------------------------
@@ -210,3 +212,62 @@ def test_linear_extrapolation_predictions_non_negative():
     )
     assert len(result) > 0
     assert (result["prediction"] >= 0).all()
+
+
+# ---------------------------------------------------------------------------
+# Registry infrastructure
+# ---------------------------------------------------------------------------
+
+
+def _make_ctx(
+    pred_upto: pd.Timestamp = pd.Timestamp("2022-05-25"),
+    cutoff_case: pd.Timestamp = pd.Timestamp("2022-04-27"),
+) -> ModelContext:
+    merged = _make_merged_df(n_weeks=20, n_regions=2)
+    cfg = TrainPredictConfig(
+        spatial_res="location.admin2.ID",
+        data_features=["case", "recordDate", "recordYear", "recordMonth", "ISOWeek"],
+        lag_temp=[12],
+        lag_rf=[4],
+        years_to_exclude=[],
+        years_to_include=[],
+        list_alpha=[1.0, 2.0],
+        models=["nbr", "tse"],
+    )
+    case_cols = [
+        "location.admin2.ID",
+        "recordDate",
+        "recordYear",
+        "recordMonth",
+        "ISOWeek",
+        "case",
+    ]
+    return ModelContext(
+        merged_df=merged.copy(),
+        case_df=merged[case_cols].copy(),
+        cfg=cfg,
+        pred_upto=pred_upto,
+        cutoff_case=cutoff_case,
+    )
+
+
+def test_model_context_is_dataclass():
+    ctx = _make_ctx()
+    assert isinstance(ctx.merged_df, pd.DataFrame)
+    assert isinstance(ctx.pred_upto, pd.Timestamp)
+    assert isinstance(ctx.cutoff_case, pd.Timestamp)
+
+
+def test_get_model_raises_for_unknown():
+    with pytest.raises(KeyError, match="notamodel"):
+        get_model("notamodel")
+
+
+def test_train_predict_config_default_models():
+    cfg = TrainPredictConfig.from_raw({})
+    assert cfg.models == ["nbr", "tse"]
+
+
+def test_train_predict_config_custom_models():
+    cfg = TrainPredictConfig.from_raw({"models": ["nbr"]})
+    assert cfg.models == ["nbr"]
