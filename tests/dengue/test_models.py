@@ -298,3 +298,42 @@ def test_nbr_model_predict_returns_dataframe():
     model = get_model("nbr")
     result = model.predict(ctx)
     assert isinstance(result, pd.DataFrame)
+
+
+# ---------------------------------------------------------------------------
+# TSEModel
+# ---------------------------------------------------------------------------
+
+
+def test_tse_model_in_registry():
+    assert "tse" in _REGISTRY
+
+
+def test_tse_model_satisfies_protocol():
+    assert isinstance(get_model("tse"), BaseModel)
+
+
+def test_tse_threshold_to_date():
+    ctx = _make_ctx(cutoff_case=pd.Timestamp("2022-05-11"))
+    model = get_model("tse")
+    # TSE: (cutoff_case + 14 days) - 14 days = cutoff_case
+    assert model.threshold_to_date(ctx) == pd.Timestamp("2022-05-11")
+
+
+def test_tse_model_predict_returns_dataframe():
+    ctx = _make_ctx()
+    model = get_model("tse")
+    result = model.predict(ctx)
+    assert isinstance(result, pd.DataFrame)
+
+
+def test_tse_model_predict_uses_case_df_not_merged():
+    """TSE must work when merged_df has no weather columns — it only needs case_df."""
+    ctx = _make_ctx()
+    # Replace merged_df with a stub that has no weather columns to confirm TSE ignores it
+    import dataclasses
+
+    case_only_ctx = dataclasses.replace(ctx, merged_df=pd.DataFrame())
+    model = get_model("tse")
+    result = model.predict(case_only_ctx)
+    assert isinstance(result, pd.DataFrame)

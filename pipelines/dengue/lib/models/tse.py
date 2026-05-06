@@ -126,3 +126,23 @@ def linear_extrapolation(
         if rows
         else pd.DataFrame(columns=[spatial_col, "recordDate", "prediction", "model"])
     )
+
+
+from pipelines.dengue.lib.models import ModelContext, register  # noqa: E402
+
+
+@register("tse")
+class TSEModel:
+    def predict(self, ctx: ModelContext) -> pd.DataFrame:
+        tse_upto = ctx.cutoff_case + pd.Timedelta(days=14)
+        return linear_extrapolation(
+            ctx.case_df,
+            spatial_col=ctx.cfg.spatial_res,
+            years_to_exclude=ctx.cfg.years_to_exclude,
+            years_to_include=ctx.cfg.years_to_include,
+            predict_upto_date=tse_upto,
+        )
+
+    def threshold_to_date(self, ctx: ModelContext) -> pd.Timestamp:
+        # (cutoff_case + 14 days) - 14 days = cutoff_case
+        return ctx.cutoff_case
