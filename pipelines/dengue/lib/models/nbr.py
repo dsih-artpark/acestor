@@ -10,21 +10,11 @@ from datetime import datetime
 
 import pandas as pd
 import statsmodels.api as sm
-from sklearn.preprocessing import MinMaxScaler, OneHotEncoder
+from sklearn.preprocessing import MinMaxScaler
+
+from pipelines.dengue.lib.models._shared import _lag, _one_hot
 
 log = logging.getLogger(__name__)
-
-
-def _lag(
-    df: pd.DataFrame, spatial_col: str, lag_temp: list[int], lag_rf: list[int]
-) -> pd.DataFrame:
-    for lg in lag_temp:
-        df[f"temp_lag_{lg}"] = df.groupby(spatial_col)["t2m_mean"].shift(lg)
-    for lg in lag_rf:
-        df[[f"rainfall_lag_{lg}", f"relative_humidity_lag_{lg}"]] = df.groupby(
-            spatial_col
-        )[["tp_sum", "d2m_mean"]].shift(lg)
-    return df
 
 
 def _filter_features(
@@ -48,14 +38,6 @@ def _filter_features(
     if years_to_exclude:
         out = out[~out["recordYear"].isin(years_to_exclude)]
     return out.dropna().reset_index(drop=True)
-
-
-def _one_hot(df: pd.DataFrame, cols: list[str] | None = None) -> pd.DataFrame:
-    if cols is None:
-        cols = ["ISOWeek"]
-    enc = OneHotEncoder(sparse_output=False)
-    encoded = enc.fit_transform(df[cols])
-    return pd.DataFrame(encoded, columns=enc.get_feature_names_out(cols))
 
 
 def _rescale(
