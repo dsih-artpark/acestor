@@ -1,0 +1,112 @@
+pipeline:
+  name: dengue
+  title: "Dengue Early Warning System — Karnataka (output: per_model, primary: nbr)"
+
+run:
+  run_date: "2026-04-27"
+
+data:
+  prepared_data:
+    base_dir: "ka_prepared_data"
+    region_type: "district"
+
+  case_parse:
+    region_types:
+      - "district"
+    date_start: "2018-01-01"
+    date_end: ""
+
+  case_sufficiency:
+    enabled: true
+    min_total_rows: 30
+    min_distinct_regions: 2
+    min_date_span_days: 14
+
+  geojson:
+    base_path: "ka_datasets/geojsons/geojsons_KA"
+
+  weather_parse:
+    region_type: "district"
+    weather_variables:
+      - "2mTemperature"
+      - "totalPrecipitation"
+      - "2mDewpointTemperature"
+    rolling_n_days: 7
+    rolling_agg:
+      - {name: "2mTemperature",         op: "mean"}
+      - {name: "2mDewpointTemperature", op: "mean"}
+      - {name: "totalPrecipitation",    op: "sum"}
+    sampling_rate: 7
+    intermediate_col_rename:
+      "2mTemperature_max": "t2m_max"
+      "2mTemperature_min": "t2m_min"
+      "2mTemperature": "t2m_mean"
+      "2mDewpointTemperature": "d2m_mean"
+      "totalPrecipitation": "tp_sum"
+
+cutoff:
+  case_min_regions: 2
+  weather_min_regions: 5
+
+thresholds:
+  region_type: "district"
+  n_weeks: 4
+  historical_n_years: 6
+  excluded_years: []
+  included_years: []
+
+model:
+  spatial_res: "district"
+  models: [nbr, tse]
+  ensemble: none
+  output: per_model
+  data_features:
+    - "case"
+    - "recordDate"
+    - "recordYear"
+    - "recordMonth"
+    - "ISOWeek"
+    - "t2m_mean"
+    - "tp_sum"
+    - "d2m_mean"
+  lag:
+    lag_temp: [12]
+    lag_rf: [4]
+  years_to_exclude: []
+  years_to_include: []
+  list_alpha: [2.0, 3.0]
+
+assess:
+  total_district_regions: 31
+
+maps:
+  output_dir: "plots"
+  figure_title: "Karnataka Dengue Risk Map (NBR-only)"
+
+report:
+  output_dir: "reports"
+  compile_pdf: true
+  caption_primary: "KA districts"
+  caption_secondary: ""
+  primary: nbr
+
+report_distribution:
+  system_name: "Dengue Early Warning System"
+  organization: "ARTPARK, IISc Bengaluru"
+  state: "Karnataka"
+  region: "Karnataka (31 Districts)"
+  department: ""
+  contact_email: ""
+  footer_note: ""
+
+logging:
+  level: INFO
+
+email:
+  enabled: false
+
+storages:
+  artifacts:
+    kind: filesystem
+    filesystem:
+      base_path: "./artifacts/ka"

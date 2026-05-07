@@ -6,6 +6,8 @@ import pytest
 
 from pipelines.dengue.lib.models.nbr import _lag, _filter_features, _one_hot, _rescale
 from pipelines.dengue.lib.models.tse import _process_region, linear_extrapolation
+from pipelines.dengue.lib.models import BaseModel, get_model, ModelContext, _REGISTRY
+from pipelines.dengue.configs import ReportConfig, TrainPredictConfig
 
 
 # ---------------------------------------------------------------------------
@@ -210,3 +212,172 @@ def test_linear_extrapolation_predictions_non_negative():
     )
     assert len(result) > 0
     assert (result["prediction"] >= 0).all()
+
+
+# ---------------------------------------------------------------------------
+# Registry infrastructure
+# ---------------------------------------------------------------------------
+
+
+def _make_ctx(
+    pred_upto: pd.Timestamp = pd.Timestamp("2022-05-25"),
+    cutoff_case: pd.Timestamp = pd.Timestamp("2022-04-27"),
+) -> ModelContext:
+    merged = _make_merged_df(n_weeks=20, n_regions=2)
+    cfg = TrainPredictConfig(
+        spatial_res="location.admin2.ID",
+        data_features=["case", "recordDate", "recordYear", "recordMonth", "ISOWeek"],
+        lag_temp=[12],
+        lag_rf=[4],
+        years_to_exclude=[],
+        years_to_include=[],
+        list_alpha=[1.0, 2.0],
+        models=["nbr", "tse"],
+        ensemble="mean",
+        output="ensemble",
+    )
+    case_cols = [
+        "location.admin2.ID",
+        "recordDate",
+        "recordYear",
+        "recordMonth",
+        "ISOWeek",
+        "case",
+    ]
+    return ModelContext(
+        merged_df=merged.copy(),
+        case_df=merged[case_cols].copy(),
+        cfg=cfg,
+        pred_upto=pred_upto,
+        cutoff_case=cutoff_case,
+    )
+
+
+def test_model_context_is_dataclass():
+    ctx = _make_ctx()
+    assert isinstance(ctx.merged_df, pd.DataFrame)
+    assert isinstance(ctx.pred_upto, pd.Timestamp)
+    assert isinstance(ctx.cutoff_case, pd.Timestamp)
+
+
+def test_get_model_raises_for_unknown():
+    with pytest.raises(KeyError, match="notamodel"):
+        get_model("notamodel")
+
+
+def test_train_predict_config_default_models():
+    cfg = TrainPredictConfig.from_raw({})
+    assert cfg.models == ["nbr", "tse"]
+
+
+def test_train_predict_config_custom_models():
+    cfg = TrainPredictConfig.from_raw({"models": ["nbr"]})
+    assert cfg.models == ["nbr"]
+
+
+# ---------------------------------------------------------------------------
+# NBRModel
+# ---------------------------------------------------------------------------
+
+
+def test_nbr_model_in_registry():
+    assert "nbr" in _REGISTRY
+
+
+def test_nbr_model_satisfies_protocol():
+    assert isinstance(get_model("nbr"), BaseModel)
+
+
+def test_nbr_threshold_to_date():
+    ctx = _make_ctx(pred_upto=pd.Timestamp("2022-05-25"))
+    model = get_model("nbr")
+    # NBR: pred_upto - 28 days
+    assert model.threshold_to_date(ctx) == pd.Timestamp("2022-04-27")
+
+
+def test_nbr_model_predict_returns_dataframe():
+    ctx = _make_ctx()
+    model = get_model("nbr")
+    result = model.predict(ctx)
+    assert isinstance(result, pd.DataFrame)
+
+
+# ---------------------------------------------------------------------------
+# TSEModel
+# ---------------------------------------------------------------------------
+
+
+def test_tse_model_in_registry():
+    assert "tse" in _REGISTRY
+
+
+def test_tse_model_satisfies_protocol():
+    assert isinstance(get_model("tse"), BaseModel)
+
+
+def test_tse_threshold_to_date():
+    ctx = _make_ctx(cutoff_case=pd.Timestamp("2022-05-11"))
+    model = get_model("tse")
+    # TSE: (cutoff_case + 14 days) - 14 days = cutoff_case
+    assert model.threshold_to_date(ctx) == pd.Timestamp("2022-05-11")
+
+
+def test_tse_model_predict_returns_dataframe():
+    ctx = _make_ctx()
+    model = get_model("tse")
+    result = model.predict(ctx)
+    assert isinstance(result, pd.DataFrame)
+
+
+def test_tse_model_predict_uses_case_df_not_merged():
+    """TSE must work when merged_df has no weather columns — it only needs case_df."""
+    ctx = _make_ctx()
+    # Replace merged_df with a stub that has no weather columns to confirm TSE ignores it
+    import dataclasses
+
+    case_only_ctx = dataclasses.replace(ctx, merged_df=pd.DataFrame())
+    model = get_model("tse")
+    result = model.predict(case_only_ctx)
+    assert isinstance(result, pd.DataFrame)
+
+
+# ---------------------------------------------------------------------------
+# TrainPredictConfig — ensemble + output fields
+# ---------------------------------------------------------------------------
+
+
+def test_train_predict_config_default_ensemble_and_output():
+    cfg = TrainPredictConfig.from_raw({})
+    assert cfg.ensemble == "mean"
+    assert cfg.output == "ensemble"
+
+
+def test_train_predict_config_custom_ensemble_and_output():
+    cfg = TrainPredictConfig.from_raw({"ensemble": "none", "output": "per_model"})
+    assert cfg.ensemble == "none"
+    assert cfg.output == "per_model"
+
+
+def test_train_predict_config_invalid_output_value():
+    with pytest.raises(ValueError, match="output"):
+        TrainPredictConfig.from_raw({"output": "bogus"})
+
+
+def test_train_predict_config_ensemble_none_with_output_ensemble_raises():
+    with pytest.raises(ValueError, match="ensemble.*none.*output.*ensemble"):
+        TrainPredictConfig.from_raw({"ensemble": "none", "output": "ensemble"})
+
+
+# ---------------------------------------------------------------------------
+# ReportConfig — primary field
+# ---------------------------------------------------------------------------
+
+
+def test_report_config_default_primary():
+    cfg = ReportConfig.from_raw({})
+    assert cfg.primary == "ensemble"
+
+
+def test_report_config_custom_primary():
+    cfg = ReportConfig.from_raw({"primary": "nbr"})
+    assert cfg.primary == "nbr"

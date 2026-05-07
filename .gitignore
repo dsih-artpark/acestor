@@ -30,7 +30,7 @@ build/
 !docs/
 !docs/*.md
 configs-example/
-prepared_data/
+*prepared_data/
 diagnostic_report/
 
 
@@ -40,7 +40,9 @@ artifacts/
 deng
 datasets/
 ap_datasets
+*_datasets/
 cache/
+.claude/
 
 # Internal / local-only (not published)
 parity/
