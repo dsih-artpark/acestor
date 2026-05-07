@@ -17,14 +17,11 @@ from pipelines.dengue.lib.models._shared import _lag, _one_hot
 
 log = logging.getLogger(__name__)
 
-_LAG_FEAT_COLS = ["rainfall_lag_4", "relative_humidity_lag_4", "temp_lag_12"]
-
 
 def random_forest_regression(
     merged_df: pd.DataFrame,
     *,
     spatial_col: str,
-    feature_cols: list[str],
     lag_temp: list[int],
     lag_rf: list[int],
     years_to_exclude: list[int],
@@ -51,7 +48,12 @@ def random_forest_regression(
 
     df0 = _lag(df0, spatial_col, lag_temp, lag_rf)
 
-    lag_cols = [c for c in _LAG_FEAT_COLS if c in df0.columns]
+    lag_cols = (
+        [f"temp_lag_{lg}" for lg in lag_temp]
+        + [f"rainfall_lag_{lg}" for lg in lag_rf]
+        + [f"relative_humidity_lag_{lg}" for lg in lag_rf]
+    )
+    lag_cols = [c for c in lag_cols if c in df0.columns]
 
     train_data = df0[~df0["recordDate"].isin(last_4)].copy()
     if years_to_include:
@@ -122,7 +124,6 @@ class RFModel:
         return random_forest_regression(
             ctx.merged_df,
             spatial_col=ctx.cfg.spatial_res,
-            feature_cols=ctx.cfg.data_features,
             lag_temp=ctx.cfg.lag_temp,
             lag_rf=ctx.cfg.lag_rf,
             years_to_exclude=ctx.cfg.years_to_exclude,

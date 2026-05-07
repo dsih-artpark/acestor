@@ -31,16 +31,6 @@ def _make_merged_df(
 
 
 SPATIAL_COL = "location.admin2.ID"
-FEATURE_COLS = [
-    "case",
-    "recordDate",
-    "recordYear",
-    "recordMonth",
-    "ISOWeek",
-    "t2m_mean",
-    "tp_sum",
-    "d2m_mean",
-]
 
 
 def test_rf_returns_expected_columns():
@@ -48,7 +38,6 @@ def test_rf_returns_expected_columns():
     result = random_forest_regression(
         df,
         spatial_col=SPATIAL_COL,
-        feature_cols=FEATURE_COLS,
         lag_temp=[12],
         lag_rf=[4],
         years_to_exclude=[],
@@ -65,7 +54,6 @@ def test_rf_predictions_are_non_negative():
     result = random_forest_regression(
         df,
         spatial_col=SPATIAL_COL,
-        feature_cols=FEATURE_COLS,
         lag_temp=[12],
         lag_rf=[4],
         years_to_exclude=[],
@@ -81,7 +69,6 @@ def test_rf_predicts_last_4_dates_only():
     result = random_forest_regression(
         df,
         spatial_col=SPATIAL_COL,
-        feature_cols=FEATURE_COLS,
         lag_temp=[12],
         lag_rf=[4],
         years_to_exclude=[],
@@ -100,7 +87,6 @@ def test_rf_model_label():
     result = random_forest_regression(
         df,
         spatial_col=SPATIAL_COL,
-        feature_cols=FEATURE_COLS,
         lag_temp=[12],
         lag_rf=[4],
         years_to_exclude=[],
@@ -116,7 +102,6 @@ def test_rf_returns_empty_when_no_valid_lag_features():
     result = random_forest_regression(
         df,
         spatial_col=SPATIAL_COL,
-        feature_cols=FEATURE_COLS,
         lag_temp=[12],
         lag_rf=[4],
         years_to_exclude=[],
@@ -125,3 +110,48 @@ def test_rf_returns_empty_when_no_valid_lag_features():
     )
     assert isinstance(result, pd.DataFrame)
     assert result.empty
+
+
+def test_rf_skips_regions_with_nan_lag_features():
+    df = _make_merged_df(n_weeks=20, n_regions=3)
+    # NaN out ALL weather for r0 — ensures every lag feature for r0 is NaN,
+    # including those derived for the last-4 test window.
+    mask = df["location.admin2.ID"] == "r0"
+    df.loc[mask, "t2m_mean"] = float("nan")
+    df.loc[mask, "tp_sum"] = float("nan")
+    df.loc[mask, "d2m_mean"] = float("nan")
+
+    result = random_forest_regression(
+        df,
+        spatial_col=SPATIAL_COL,
+        lag_temp=[12],
+        lag_rf=[4],
+        years_to_exclude=[],
+        years_to_include=[],
+        predict_upto_date=df["recordDate"].max(),
+    )
+    assert isinstance(result, pd.DataFrame)
+    # r0 should be absent (all its test-window lag features are NaN)
+    assert "r0" not in result[SPATIAL_COL].values
+    # r1 and r2 should still have predictions
+    assert set(result[SPATIAL_COL].unique()) >= {"r1", "r2"}
+
+
+def test_rf_skips_regions_with_nan_lag_features_in_test_window():
+    # NaN out ALL weather for r2 — ensures lag features for its test window are NaN.
+    df = _make_merged_df()
+    mask = df["location.admin2.ID"] == "r2"
+    df.loc[mask, ["t2m_mean", "tp_sum", "d2m_mean"]] = np.nan
+    result = random_forest_regression(
+        df,
+        spatial_col=SPATIAL_COL,
+        lag_temp=[12],
+        lag_rf=[4],
+        years_to_exclude=[],
+        years_to_include=[],
+        predict_upto_date=df["recordDate"].max(),
+    )
+    # r2 should be absent; r0 and r1 should be present
+    assert "r2" not in result[SPATIAL_COL].values
+    assert "r0" in result[SPATIAL_COL].values
+    assert "r1" in result[SPATIAL_COL].values
