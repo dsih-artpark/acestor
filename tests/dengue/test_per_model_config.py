@@ -83,6 +83,20 @@ def test_partial_lag_override_uses_base_for_missing_keys():
     assert result.lag_rf == [4]  # falls back to base
 
 
+def test_tune_override():
+    base = _base_cfg()
+    result = resolve_model_config(base, {"tune": True})
+    assert result.tune is True
+    assert base.tune is False  # base unchanged
+
+
+def test_n_trials_override():
+    base = _base_cfg()
+    result = resolve_model_config(base, {"n_trials": 100})
+    assert result.n_trials == 100
+    assert base.n_trials == 50  # base unchanged
+
+
 def test_resolve_model_config_only_affects_target_model():
     """Smoke: two models with different overrides get different configs."""
     base = _base_cfg()

@@ -497,9 +497,18 @@ def resolve_model_config(
         "data_features": list(base.data_features),
         "years_to_exclude": list(base.years_to_exclude),
         "years_to_include": list(base.years_to_include),
+        "tune": base.tune,
+        "n_trials": base.n_trials,
     }
 
-    for key in ("list_alpha", "data_features", "years_to_exclude", "years_to_include"):
+    for key in (
+        "list_alpha",
+        "data_features",
+        "years_to_exclude",
+        "years_to_include",
+        "tune",
+        "n_trials",
+    ):
         if key in raw_overrides:
             merged[key] = raw_overrides[key]
 
