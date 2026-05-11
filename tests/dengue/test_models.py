@@ -235,6 +235,8 @@ def _make_ctx(
         models=["nbr", "tse"],
         ensemble="mean",
         output="ensemble",
+        tune=False,
+        n_trials=50,
     )
     case_cols = [
         "location.admin2.ID",

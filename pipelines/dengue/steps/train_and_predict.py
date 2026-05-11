@@ -123,6 +123,8 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
                 cfg=model_cfg,
                 pred_upto=pred_upto,
                 cutoff_case=cutoff_case,
+                artifacts=context.artifacts,
+                log=context.log,
             )
             model = get_model(model_name)
             pred = model.predict(ctx)

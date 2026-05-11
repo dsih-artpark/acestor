@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
+from typing import Any
 
 import numpy as np
 import pandas as pd
 from xgboost import XGBRegressor
 
 from pipelines.dengue.lib.models._shared import _lag, _one_hot
+from pipelines.dengue.lib.models import _tuning as _tuning_mod
 
 log = logging.getLogger(__name__)
 
@@ -37,6 +39,7 @@ def xgboost_regression(
     reg_alpha: float = 0.1,
     reg_lambda: float = 5.0,
     random_state: int = 42,
+    ctx: "ModelContext | None" = None,
 ) -> pd.DataFrame:
     """Train XGBoost on history and predict the last 4 weeks of weather data."""
     from pipelines.dengue.lib.zones import ret_na_filled_df
@@ -65,7 +68,11 @@ def xgboost_regression(
         train_data = train_data[train_data["recordYear"].isin(years_to_include)]
     if years_to_exclude:
         train_data = train_data[~train_data["recordYear"].isin(years_to_exclude)]
-    train_data = train_data.dropna(subset=lag_cols + ["case"]).reset_index(drop=True)
+    train_data = (
+        train_data.dropna(subset=lag_cols + ["case"])
+        .sort_values("recordDate")
+        .reset_index(drop=True)
+    )
 
     if train_data.empty:
         log.warning(
@@ -104,26 +111,86 @@ def xgboost_regression(
         X_test[col] = 0
     X_test = X_test[X_train.columns]
 
-    xgb = XGBRegressor(
-        n_estimators=n_estimators,
-        learning_rate=learning_rate,
-        max_depth=max_depth,
-        min_child_weight=min_child_weight,
-        subsample=subsample,
-        colsample_bytree=colsample_bytree,
-        gamma=gamma,
-        reg_alpha=reg_alpha,
-        reg_lambda=reg_lambda,
+    hp = (
+        _get_xgb_params(ctx, X_train.values, y_train)
+        if ctx is not None
+        else {
+            "n_estimators": n_estimators,
+            "learning_rate": learning_rate,
+            "max_depth": max_depth,
+            "min_child_weight": min_child_weight,
+            "subsample": subsample,
+            "colsample_bytree": colsample_bytree,
+            "gamma": gamma,
+            "reg_alpha": reg_alpha,
+            "reg_lambda": reg_lambda,
+        }
+    )
+    xgb_model = XGBRegressor(
+        **hp,
         random_state=random_state,
         n_jobs=-1,
         verbosity=0,
     )
-    xgb.fit(X_train.values, y_train)
+    xgb_model.fit(X_train.values, y_train)
 
-    test_data["prediction"] = np.maximum(0.0, xgb.predict(X_test.values))
+    test_data["prediction"] = np.maximum(0.0, xgb_model.predict(X_test.values))
     test_data["recordDate"] = pd.to_datetime(test_data["recordDate"])
     test_data["model"] = "xgboostRegression"
     return test_data.reset_index(drop=True)
+
+
+def _get_xgb_params(ctx: "ModelContext", X_train: Any, y_train: Any) -> dict:
+    """Load cached XGB hyperparams or run Optuna tuning if needed."""
+    defaults = {
+        "n_estimators": 300,
+        "learning_rate": 0.05,
+        "max_depth": 5,
+        "min_child_weight": 5,
+        "subsample": 0.8,
+        "colsample_bytree": 0.8,
+        "gamma": 0.1,
+        "reg_alpha": 0.1,
+        "reg_lambda": 5.0,
+    }
+    if ctx.artifacts is None:
+        return defaults
+
+    _log = ctx.log if ctx.log is not None else log
+
+    cached = _tuning_mod.load_cached_params(ctx.artifacts, "xgb")
+    if cached is not None and not ctx.cfg.tune:
+        _log.info(
+            "XGB: using cached hyperparameters (tuned %s, RMSE=%.4f) from hp/xgb_best_params.json",
+            cached["tuned_at"],
+            cached["best_rmse"],
+        )
+        return cached["params"]
+
+    _log.info(
+        "XGB: %s — running Optuna tuning (n_trials=%d)",
+        (
+            "tune=True, forcing retune"
+            if ctx.cfg.tune
+            else "no cached hyperparameters found"
+        ),
+        ctx.cfg.n_trials,
+    )
+    params, rmse = _tuning_mod.tune_xgb(X_train, y_train, n_trials=ctx.cfg.n_trials)
+    tuned_at = pd.Timestamp.now().strftime("%Y-%m-%d")
+    _tuning_mod.save_params(
+        ctx.artifacts,
+        "xgb",
+        params,
+        rmse=rmse,
+        n_trials=ctx.cfg.n_trials,
+        tuned_at=tuned_at,
+    )
+    _log.info(
+        "XGB: tuning complete — best RMSE=%.4f, params saved to hp/xgb_best_params.json",
+        rmse,
+    )
+    return params
 
 
 from pipelines.dengue.lib.models import ModelContext, register  # noqa: E402
@@ -140,6 +207,7 @@ class XGBModel:
             years_to_exclude=ctx.cfg.years_to_exclude,
             years_to_include=ctx.cfg.years_to_include,
             predict_upto_date=ctx.pred_upto,
+            ctx=ctx,
         )
 
     def threshold_to_date(self, ctx: ModelContext) -> pd.Timestamp:
