@@ -1,11 +1,13 @@
 """Tests for HP tuning cache logic."""
 
 import json
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pandas as pd
 
 from pipelines.dengue.configs import TrainPredictConfig
+from pipelines.dengue.lib.models import ModelContext, get_model
 from pipelines.dengue.lib.models._tuning import (
     hp_cache_path,
     load_cached_params,
@@ -110,3 +112,117 @@ def test_tune_xgb_returns_params_and_rmse():
     assert "n_estimators" in params
     assert "learning_rate" in params
     assert rmse >= 0.0
+
+
+def _make_ctx(tune: bool = False, n_trials: int = 3, artifacts=None):
+    cfg = TrainPredictConfig.from_raw(
+        {
+            "spatial_res": "district",
+            "models": ["rf"],
+            "lag": {"lag_temp": [12], "lag_rf": [4]},
+            "years_to_exclude": [],
+            "years_to_include": [],
+            "tune": tune,
+            "n_trials": n_trials,
+        }
+    )
+    dates = pd.date_range("2022-01-07", periods=80, freq="7D")
+    rows = []
+    for d in dates:
+        rows.append(
+            {
+                "district": "r0",
+                "recordDate": d,
+                "recordYear": d.year,
+                "recordMonth": d.month,
+                "ISOWeek": d.isocalendar().week,
+                "case": float(d.month),
+                "t2m_mean": 25.0,
+                "tp_sum": 5.0,
+                "d2m_mean": 18.0,
+            }
+        )
+    merged_df = pd.DataFrame(rows)
+    return ModelContext(
+        merged_df=merged_df,
+        case_df=merged_df.copy(),
+        cfg=cfg,
+        pred_upto=dates[-1],
+        cutoff_case=dates[-5],
+        artifacts=artifacts,
+    )
+
+
+def test_rf_uses_cached_params_when_available():
+    cached = {
+        "tuned_at": "2026-01-01",
+        "n_trials": 50,
+        "best_rmse": 1.0,
+        "params": {
+            "n_estimators": 75,
+            "max_depth": 4,
+            "min_samples_leaf": 3,
+            "max_features": "sqrt",
+        },
+    }
+    storage = MagicMock()
+    storage.read_json.return_value = cached
+    ctx = _make_ctx(tune=False, artifacts=storage)
+    model = get_model("rf")
+    with patch("pipelines.dengue.lib.models._tuning.tune_rf") as mock_tune:
+        model.predict(ctx)
+    mock_tune.assert_not_called()
+
+
+def test_rf_runs_tuning_when_no_cache():
+    storage = MagicMock()
+    storage.read_json.side_effect = FileNotFoundError
+    ctx = _make_ctx(tune=False, n_trials=2, artifacts=storage)
+    model = get_model("rf")
+    with patch(
+        "pipelines.dengue.lib.models._tuning.tune_rf",
+        return_value=(
+            {
+                "n_estimators": 100,
+                "max_depth": 5,
+                "min_samples_leaf": 2,
+                "max_features": "sqrt",
+            },
+            1.0,
+        ),
+    ) as mock_tune:
+        model.predict(ctx)
+    mock_tune.assert_called_once()
+    storage.write_text.assert_called_once()
+
+
+def test_rf_force_retune_ignores_cache():
+    cached = {
+        "tuned_at": "2026-01-01",
+        "n_trials": 50,
+        "best_rmse": 1.0,
+        "params": {
+            "n_estimators": 75,
+            "max_depth": 4,
+            "min_samples_leaf": 3,
+            "max_features": "sqrt",
+        },
+    }
+    storage = MagicMock()
+    storage.read_json.return_value = cached
+    ctx = _make_ctx(tune=True, n_trials=2, artifacts=storage)
+    model = get_model("rf")
+    with patch(
+        "pipelines.dengue.lib.models._tuning.tune_rf",
+        return_value=(
+            {
+                "n_estimators": 200,
+                "max_depth": 6,
+                "min_samples_leaf": 1,
+                "max_features": "log2",
+            },
+            0.9,
+        ),
+    ) as mock_tune:
+        model.predict(ctx)
+    mock_tune.assert_called_once()

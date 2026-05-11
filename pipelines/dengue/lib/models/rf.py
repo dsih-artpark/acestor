@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
+from typing import Any
 
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestRegressor
 
 from pipelines.dengue.lib.models._shared import _lag, _one_hot
+from pipelines.dengue.lib.models import _tuning as _tuning_mod
 
 log = logging.getLogger(__name__)
 
@@ -32,6 +34,7 @@ def random_forest_regression(
     min_samples_leaf: int = 2,
     max_features: str = "sqrt",
     random_state: int = 42,
+    ctx: "ModelContext | None" = None,
 ) -> pd.DataFrame:
     """Train Random Forest on history and predict the last 4 weeks of weather data."""
     from pipelines.dengue.lib.zones import ret_na_filled_df
@@ -99,11 +102,18 @@ def random_forest_regression(
         X_test[col] = 0
     X_test = X_test[X_train.columns]
 
+    hp = (
+        _get_rf_params(ctx, X_train.values, y_train)
+        if ctx is not None
+        else {
+            "n_estimators": n_estimators,
+            "max_depth": max_depth,
+            "min_samples_leaf": min_samples_leaf,
+            "max_features": max_features,
+        }
+    )
     rf = RandomForestRegressor(
-        n_estimators=n_estimators,
-        max_depth=max_depth,
-        min_samples_leaf=min_samples_leaf,
-        max_features=max_features,
+        **hp,
         random_state=random_state,
         n_jobs=-1,
     )
@@ -113,6 +123,52 @@ def random_forest_regression(
     test_data["recordDate"] = pd.to_datetime(test_data["recordDate"])
     test_data["model"] = "randomForestRegression"
     return test_data.reset_index(drop=True)
+
+
+def _get_rf_params(ctx: "ModelContext", X_train: Any, y_train: Any) -> dict:
+    """Load cached RF hyperparams or run Optuna tuning if needed."""
+    defaults = {
+        "n_estimators": 200,
+        "max_depth": 10,
+        "min_samples_leaf": 2,
+        "max_features": "sqrt",
+    }
+    if ctx.artifacts is None:
+        return defaults
+
+    cached = _tuning_mod.load_cached_params(ctx.artifacts, "rf")
+    if cached is not None and not ctx.cfg.tune:
+        log.info(
+            "RF: using cached hyperparameters (tuned %s, RMSE=%.4f) from hp/rf_best_params.json",
+            cached["tuned_at"],
+            cached["best_rmse"],
+        )
+        return cached["params"]
+
+    log.info(
+        "RF: %s — running Optuna tuning (n_trials=%d)",
+        (
+            "tune=True, forcing retune"
+            if ctx.cfg.tune
+            else "no cached hyperparameters found"
+        ),
+        ctx.cfg.n_trials,
+    )
+    params, rmse = _tuning_mod.tune_rf(X_train, y_train, n_trials=ctx.cfg.n_trials)
+    tuned_at = pd.Timestamp.now().strftime("%Y-%m-%d")
+    _tuning_mod.save_params(
+        ctx.artifacts,
+        "rf",
+        params,
+        rmse=rmse,
+        n_trials=ctx.cfg.n_trials,
+        tuned_at=tuned_at,
+    )
+    log.info(
+        "RF: tuning complete — best RMSE=%.4f, params saved to hp/rf_best_params.json",
+        rmse,
+    )
+    return params
 
 
 from pipelines.dengue.lib.models import ModelContext, register  # noqa: E402
@@ -129,6 +185,7 @@ class RFModel:
             years_to_exclude=ctx.cfg.years_to_exclude,
             years_to_include=ctx.cfg.years_to_include,
             predict_upto_date=ctx.pred_upto,
+            ctx=ctx,
         )
 
     def threshold_to_date(self, ctx: ModelContext) -> pd.Timestamp:
