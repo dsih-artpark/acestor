@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import io
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import pandas as pd
 
 from acestor import BaseStep, PipelineContext
-from pipelines.dengue.configs import ReportConfig, TrainPredictConfig, _section
+from pipelines.dengue.configs import (
+    ReportConfig,
+    TrainPredictConfig,
+    _section,
+    resolve_model_config,
+)
 from pipelines.dengue.lib import predictions as pred_lib
 from pipelines.dengue.lib import zones
 from pipelines.dengue.lib.ensembles import get_ensemble
@@ -32,6 +37,15 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
         self, context: PipelineContext, inputs: TrainAndPredictInputs
     ) -> PredictionResult:
         cfg = TrainPredictConfig.from_raw(_section(context.config, "model"))
+        raw_model_configs: dict[str, Any] = dict(
+            context.config.get("model_configs") or {}
+        )
+        unknown = set(raw_model_configs) - set(cfg.models)
+        if unknown:
+            raise ValueError(
+                f"model_configs contains keys not in model.models: {sorted(unknown)}. "
+                f"model.models = {cfg.models}"
+            )
         report_cfg = ReportConfig.from_raw(
             _section(context.config, "report"),
             pipeline=_section(context.config, "pipeline"),
@@ -99,17 +113,17 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
         )
         precomputed_thresholds = pd.read_csv(io.StringIO(thresholds_csv))
 
-        ctx = ModelContext(
-            merged_df=merged,
-            case_df=case_df,
-            cfg=cfg,
-            pred_upto=pred_upto,
-            cutoff_case=cutoff_case,
-        )
-
         per_model_dfs: dict[str, pd.DataFrame] = {}
         prediction_dfs: list[pd.DataFrame] = []
         for model_name in cfg.models:
+            model_cfg = resolve_model_config(cfg, raw_model_configs.get(model_name, {}))
+            ctx = ModelContext(
+                merged_df=merged,
+                case_df=case_df,
+                cfg=model_cfg,
+                pred_upto=pred_upto,
+                cutoff_case=cutoff_case,
+            )
             model = get_model(model_name)
             pred = model.predict(ctx)
             if pred.empty:
