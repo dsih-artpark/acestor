@@ -419,6 +419,8 @@ class TrainPredictConfig:
     models: list[str]
     ensemble: str  # registered ensemble strategy name, or "none"
     output: str  # "ensemble" | "per_model" | "both"
+    tune: bool  # False = use cache; True = force Optuna retune
+    n_trials: int  # Optuna trials when tuning runs
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any]) -> TrainPredictConfig:
@@ -464,6 +466,8 @@ class TrainPredictConfig:
             models=list(raw.get("models", ["nbr", "tse"])),
             ensemble=ensemble,
             output=output,
+            tune=bool(raw.get("tune", False)),
+            n_trials=int(raw.get("n_trials", 50)),
         )
 
 

@@ -31,6 +31,9 @@ class ModelContext:
     cfg: Any  # TrainPredictConfig — Any avoids circular import at runtime
     pred_upto: pd.Timestamp
     cutoff_case: pd.Timestamp
+    artifacts: Any = (
+        None  # Storage backend — None in unit tests, set in train_and_predict
+    )
 
 
 @runtime_checkable
