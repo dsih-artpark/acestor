@@ -63,7 +63,11 @@ def random_forest_regression(
         train_data = train_data[train_data["recordYear"].isin(years_to_include)]
     if years_to_exclude:
         train_data = train_data[~train_data["recordYear"].isin(years_to_exclude)]
-    train_data = train_data.dropna(subset=lag_cols + ["case"]).reset_index(drop=True)
+    train_data = (
+        train_data.dropna(subset=lag_cols + ["case"])
+        .sort_values("recordDate")
+        .reset_index(drop=True)
+    )
 
     if train_data.empty:
         log.warning(
