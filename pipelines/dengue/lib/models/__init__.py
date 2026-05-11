@@ -61,3 +61,5 @@ def get_model(name: str) -> BaseModel:
 # Import model modules AFTER registry is defined so @register decorators can run.
 from pipelines.dengue.lib.models import nbr as _nbr_mod  # noqa: F401, E402
 from pipelines.dengue.lib.models import tse as _tse_mod  # noqa: F401, E402
+from pipelines.dengue.lib.models import rf as _rf_mod  # noqa: F401, E402
+from pipelines.dengue.lib.models import xgb as _xgb_mod  # noqa: F401, E402

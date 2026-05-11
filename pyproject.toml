@@ -32,6 +32,7 @@ dengue = [
     "numpy",
     "statsmodels",
     "scikit-learn",
+    "xgboost",
     "geopandas",
     "matplotlib",
 ]
