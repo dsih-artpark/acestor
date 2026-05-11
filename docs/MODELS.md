@@ -106,6 +106,36 @@ If `report.primary` does not match any CSV that was written, the step raises `Va
 - **A model returns no predictions** (e.g. NBR has no overlapping case/weather coverage) → a warning is logged and the model is skipped; remaining models still run.
 - **All models return empty** → the step returns an empty `PredictionResult` and downstream maps appear white/hatched.
 
+### Per-model config overrides
+
+Add an optional `model_configs:` top-level block to override specific fields for individual models. Any key present in `model_configs.<model_name>` wins over the shared `model:` value. Models without an entry continue to use the shared config unchanged.
+
+```yaml
+model:
+  models: [nbr, tse, rf]
+  ensemble: mean
+  output: ensemble
+  lag:
+    lag_temp: [12]
+    lag_rf: [4]
+  list_alpha: [2.0, 3.0]
+
+model_configs:
+  rf:
+    lag:
+      lag_temp: [4, 8, 12]   # RF uses 3 lag windows; NBR and TSE still use [12]
+      lag_rf: [2, 4]
+    list_alpha: [1.5, 2.0, 3.0]
+  tse:
+    data_features: [case, recordDate, recordYear, recordMonth, ISOWeek]
+```
+
+**Overridable fields:** `lag` (sub-keys `lag_temp`, `lag_rf`), `list_alpha`, `data_features`, `years_to_exclude`, `years_to_include`.
+
+**Not overridable per-model:** `spatial_res`, `models`, `ensemble`, `output` — these are pipeline-level settings shared by all models.
+
+**Validation:** every key in `model_configs` must appear in `model.models`. A key that doesn't match a registered model raises `ValueError` at runtime.
+
 ---
 
 ## Where to see model outputs

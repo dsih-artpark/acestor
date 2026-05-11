@@ -467,6 +467,41 @@ class TrainPredictConfig:
         )
 
 
+def resolve_model_config(
+    base: TrainPredictConfig, raw_overrides: Mapping[str, Any]
+) -> TrainPredictConfig:
+    """Merge per-model overrides onto a base TrainPredictConfig.
+
+    Keys present in *raw_overrides* win over the base. The ``lag`` sub-dict
+    is merged key-by-key so that specifying only ``lag_temp`` leaves
+    ``lag_rf`` at its base value.
+    """
+    if not raw_overrides:
+        return base
+
+    base_lag = {"lag_temp": list(base.lag_temp), "lag_rf": list(base.lag_rf)}
+    override_lag = dict(raw_overrides.get("lag", {}))
+    merged_lag = {**base_lag, **override_lag}
+
+    merged: dict[str, Any] = {
+        "spatial_res": base.spatial_res,
+        "models": list(base.models),
+        "ensemble": base.ensemble,
+        "output": base.output,
+        "lag": merged_lag,
+        "list_alpha": list(base.list_alpha),
+        "data_features": list(base.data_features),
+        "years_to_exclude": list(base.years_to_exclude),
+        "years_to_include": list(base.years_to_include),
+    }
+
+    for key in ("list_alpha", "data_features", "years_to_exclude", "years_to_include"):
+        if key in raw_overrides:
+            merged[key] = raw_overrides[key]
+
+    return TrainPredictConfig.from_raw(merged)
+
+
 # ---------------------------------------------------------------------------
 # Assess thresholds
 # ---------------------------------------------------------------------------
