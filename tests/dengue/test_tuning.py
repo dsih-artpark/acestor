@@ -1,6 +1,18 @@
 """Tests for HP tuning cache logic."""
 
+import json
+from unittest.mock import MagicMock
+
+import numpy as np
+
 from pipelines.dengue.configs import TrainPredictConfig
+from pipelines.dengue.lib.models._tuning import (
+    hp_cache_path,
+    load_cached_params,
+    save_params,
+    tune_rf,
+    tune_xgb,
+)
 
 
 def _base_raw():
@@ -29,3 +41,72 @@ def test_tune_can_be_set_true():
 def test_n_trials_can_be_overridden():
     cfg = TrainPredictConfig.from_raw({**_base_raw(), "n_trials": 100})
     assert cfg.n_trials == 100
+
+
+def _make_train_data(n: int = 120):
+    """Synthetic X_train, y_train for tuning tests (small, fast)."""
+    rng = np.random.default_rng(42)
+    X = rng.standard_normal((n, 4))
+    y = np.maximum(0, X[:, 0] * 3 + rng.standard_normal(n))
+    return X, y
+
+
+def test_hp_cache_path_rf():
+    assert hp_cache_path("rf") == "hp/rf_best_params.json"
+
+
+def test_hp_cache_path_xgb():
+    assert hp_cache_path("xgb") == "hp/xgb_best_params.json"
+
+
+def test_load_cached_params_returns_none_on_missing():
+    storage = MagicMock()
+    storage.read_json.side_effect = FileNotFoundError
+    assert load_cached_params(storage, "rf") is None
+
+
+def test_load_cached_params_returns_dict_on_hit():
+    storage = MagicMock()
+    storage.read_json.return_value = {
+        "tuned_at": "2026-04-17",
+        "n_trials": 50,
+        "best_rmse": 1.23,
+        "params": {"n_estimators": 350},
+    }
+    result = load_cached_params(storage, "rf")
+    assert result["params"]["n_estimators"] == 350
+
+
+def test_save_params_writes_json():
+    storage = MagicMock()
+    save_params(
+        storage,
+        "rf",
+        {"n_estimators": 300},
+        rmse=1.5,
+        n_trials=50,
+        tuned_at="2026-05-11",
+    )
+    storage.write_text.assert_called_once()
+    written_json = storage.write_text.call_args[0][0]
+    data = json.loads(written_json)
+    assert data["params"]["n_estimators"] == 300
+    assert data["best_rmse"] == 1.5
+    assert data["tuned_at"] == "2026-05-11"
+    assert storage.write_text.call_args[0][1] == "hp/rf_best_params.json"
+
+
+def test_tune_rf_returns_params_and_rmse():
+    X, y = _make_train_data(120)
+    params, rmse = tune_rf(X, y, n_trials=3)
+    assert "n_estimators" in params
+    assert "max_depth" in params
+    assert rmse >= 0.0
+
+
+def test_tune_xgb_returns_params_and_rmse():
+    X, y = _make_train_data(120)
+    params, rmse = tune_xgb(X, y, n_trials=3)
+    assert "n_estimators" in params
+    assert "learning_rate" in params
+    assert rmse >= 0.0
