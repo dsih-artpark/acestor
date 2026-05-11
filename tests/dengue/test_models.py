@@ -315,6 +315,22 @@ def test_tse_model_satisfies_protocol():
     assert isinstance(get_model("tse"), BaseModel)
 
 
+def test_rf_in_registry():
+    assert "rf" in _REGISTRY
+
+
+def test_rf_satisfies_protocol():
+    assert isinstance(get_model("rf"), BaseModel)
+
+
+def test_xgb_in_registry():
+    assert "xgb" in _REGISTRY
+
+
+def test_xgb_satisfies_protocol():
+    assert isinstance(get_model("xgb"), BaseModel)
+
+
 def test_tse_threshold_to_date():
     ctx = _make_ctx(cutoff_case=pd.Timestamp("2022-05-11"))
     model = get_model("tse")

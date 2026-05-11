@@ -9,13 +9,15 @@ The dengue pipeline runs one or more prediction models via a registry. Models re
 | Name | Class | Source | What it does |
 |------|-------|--------|--------------|
 | `nbr` | `NBRModel` | [pipelines/dengue/lib/models/nbr.py](../pipelines/dengue/lib/models/nbr.py) | Negative Binomial Regression on case counts using lagged temperature, rainfall, and humidity. Predicts the last 4 weeks of available weather data. |
+| `rf` | `RFModel` | [pipelines/dengue/lib/models/rf.py](../pipelines/dengue/lib/models/rf.py) | Random Forest Regression using lagged temperature, rainfall, and humidity. Predicts the last 4 weeks of available weather data. Default: 200 trees, max_depth=10. |
 | `tse` | `TSEModel` | [pipelines/dengue/lib/models/tse.py](../pipelines/dengue/lib/models/tse.py) | Time-Series Extrapolation — linear trend on a 4-week moving average. Predicts 2 weeks ahead from the case cutoff. Case-only, no weather. |
+| `xgb` | `XGBModel` | [pipelines/dengue/lib/models/xgb.py](../pipelines/dengue/lib/models/xgb.py) | XGBoost Regression using lagged temperature, rainfall, and humidity. Predicts the last 4 weeks of available weather data. Default: 300 estimators, lr=0.05, max_depth=5. |
 
 Inspect the live registry from a Python shell:
 
 ```bash
 uv run python -c "from pipelines.dengue.lib.models import _REGISTRY; print(sorted(_REGISTRY))"
-# → ['nbr', 'tse']
+# → ['nbr', 'rf', 'tse', 'xgb']
 ```
 
 ---
