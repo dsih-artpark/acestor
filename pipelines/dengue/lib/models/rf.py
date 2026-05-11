@@ -140,16 +140,18 @@ def _get_rf_params(ctx: "ModelContext", X_train: Any, y_train: Any) -> dict:
     if ctx.artifacts is None:
         return defaults
 
+    _log = ctx.log if ctx.log is not None else log
+
     cached = _tuning_mod.load_cached_params(ctx.artifacts, "rf")
     if cached is not None and not ctx.cfg.tune:
-        log.info(
+        _log.info(
             "RF: using cached hyperparameters (tuned %s, RMSE=%.4f) from hp/rf_best_params.json",
             cached["tuned_at"],
             cached["best_rmse"],
         )
         return cached["params"]
 
-    log.info(
+    _log.info(
         "RF: %s — running Optuna tuning (n_trials=%d)",
         (
             "tune=True, forcing retune"
@@ -168,7 +170,7 @@ def _get_rf_params(ctx: "ModelContext", X_train: Any, y_train: Any) -> dict:
         n_trials=ctx.cfg.n_trials,
         tuned_at=tuned_at,
     )
-    log.info(
+    _log.info(
         "RF: tuning complete — best RMSE=%.4f, params saved to hp/rf_best_params.json",
         rmse,
     )

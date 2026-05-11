@@ -156,16 +156,18 @@ def _get_xgb_params(ctx: "ModelContext", X_train: Any, y_train: Any) -> dict:
     if ctx.artifacts is None:
         return defaults
 
+    _log = ctx.log if ctx.log is not None else log
+
     cached = _tuning_mod.load_cached_params(ctx.artifacts, "xgb")
     if cached is not None and not ctx.cfg.tune:
-        log.info(
+        _log.info(
             "XGB: using cached hyperparameters (tuned %s, RMSE=%.4f) from hp/xgb_best_params.json",
             cached["tuned_at"],
             cached["best_rmse"],
         )
         return cached["params"]
 
-    log.info(
+    _log.info(
         "XGB: %s — running Optuna tuning (n_trials=%d)",
         (
             "tune=True, forcing retune"
@@ -184,7 +186,7 @@ def _get_xgb_params(ctx: "ModelContext", X_train: Any, y_train: Any) -> dict:
         n_trials=ctx.cfg.n_trials,
         tuned_at=tuned_at,
     )
-    log.info(
+    _log.info(
         "XGB: tuning complete — best RMSE=%.4f, params saved to hp/xgb_best_params.json",
         rmse,
     )
