@@ -8,11 +8,44 @@ from __future__ import annotations
 
 import logging
 from copy import deepcopy
+from dataclasses import dataclass, field
+from typing import Callable
 
 import numpy as np
 import pandas as pd
 
 log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ThresholdContext:
+    """Params a threshold method can read. Mirrors ThresholdsConfig fields."""
+
+    n_weeks: int = 4
+    historical_n_years: int | None = None
+    excluded_years: list[int] = field(default_factory=list)
+    included_years: list[int] = field(default_factory=list)
+
+
+_THRESHOLD_REGISTRY: dict[str, Callable] = {}
+
+
+def register(name: str):
+    """Function decorator that adds the function to _THRESHOLD_REGISTRY."""
+
+    def decorator(fn: Callable) -> Callable:
+        _THRESHOLD_REGISTRY[name] = fn
+        return fn
+
+    return decorator
+
+
+def get_threshold_method(name: str) -> Callable:
+    if name not in _THRESHOLD_REGISTRY:
+        raise KeyError(
+            f"Unknown threshold method '{name}'. Available: {sorted(_THRESHOLD_REGISTRY)}"
+        )
+    return _THRESHOLD_REGISTRY[name]
 
 
 def align_dates_all_regions(df: pd.DataFrame) -> pd.DataFrame:

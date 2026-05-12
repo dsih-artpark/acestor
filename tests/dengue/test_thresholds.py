@@ -1,12 +1,16 @@
 """Tests for pipelines.dengue.lib.thresholds."""
 
+import pytest
 import pandas as pd
 
 from pipelines.dengue.lib.thresholds import (
+    _THRESHOLD_REGISTRY,
     align_dates_all_regions,
-    prev_nweeks_threshold_params,
-    historical_threshold_params,
     combine_thresholds,
+    get_threshold_method,
+    historical_threshold_params,
+    prev_nweeks_threshold_params,
+    register,
 )
 
 
@@ -231,3 +235,23 @@ def test_combine_thresholds_sorted():
     result = combine_thresholds([df1, df2])
     dates = result["date"].tolist()
     assert dates == sorted(dates)
+
+
+def test_registry_get_unknown_raises():
+    with pytest.raises(KeyError, match="Unknown threshold method 'nonexistent'"):
+        get_threshold_method("nonexistent")
+
+
+def test_register_decorator_adds_to_registry():
+    @register("_test_method")
+    def _dummy(df, cfg):
+        return df
+
+    assert "_test_method" in _THRESHOLD_REGISTRY
+    # cleanup
+    del _THRESHOLD_REGISTRY["_test_method"]
+
+
+def test_get_threshold_method_returns_callable():
+    fn = get_threshold_method("historical")
+    assert callable(fn)
