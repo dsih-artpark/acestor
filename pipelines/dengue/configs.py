@@ -6,7 +6,7 @@ defaults, so the step's ``run()`` never touches raw dicts.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import os
 from typing import Any, Mapping
 
@@ -389,6 +389,7 @@ class ThresholdsConfig:
     historical_n_years: int | None
     excluded_years: list[int]
     included_years: list[int]  # empty = no restriction; non-empty = only these years
+    methods: list[str] = field(default_factory=lambda: ["historical", "prev_nweeks"])
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any]) -> ThresholdsConfig:
@@ -399,7 +400,42 @@ class ThresholdsConfig:
             historical_n_years=int(ny) if ny is not None else None,
             excluded_years=[int(y) for y in raw.get("excluded_years", [2020, 2021])],
             included_years=[int(y) for y in raw.get("included_years", [])],
+            methods=list(raw.get("methods", ["historical", "prev_nweeks"])),
         )
+
+
+def resolve_threshold_config(
+    base: ThresholdsConfig, raw_overrides: dict
+) -> ThresholdsConfig:
+    """Shallow-merge per-method YAML overrides onto a base ThresholdsConfig.
+
+    Only n_weeks, historical_n_years, excluded_years, included_years are overridable.
+    region_type and methods are always inherited from base.
+    """
+    return ThresholdsConfig(
+        region_type=base.region_type,
+        methods=base.methods,
+        n_weeks=(
+            int(raw_overrides["n_weeks"])
+            if "n_weeks" in raw_overrides
+            else base.n_weeks
+        ),
+        historical_n_years=(
+            int(raw_overrides["historical_n_years"])
+            if "historical_n_years" in raw_overrides
+            else base.historical_n_years
+        ),
+        excluded_years=(
+            [int(y) for y in raw_overrides["excluded_years"]]
+            if "excluded_years" in raw_overrides
+            else list(base.excluded_years)
+        ),
+        included_years=(
+            [int(y) for y in raw_overrides["included_years"]]
+            if "included_years" in raw_overrides
+            else list(base.included_years)
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
