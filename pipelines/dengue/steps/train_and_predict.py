@@ -194,7 +194,9 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
                     zone_zero_regions,
                 )
 
-            if "Mean" in classified.columns and "StdDev" in classified.columns:
+            if thresh_cfg.classification_method == "who" and (
+                "Mean" in classified.columns and "StdDev" in classified.columns
+            ):
                 degenerate = (classified["Mean"] == 0) & (classified["StdDev"] == 0)
                 classified.loc[degenerate, "predictionZone"] = pd.NA
                 if degenerate.any():
