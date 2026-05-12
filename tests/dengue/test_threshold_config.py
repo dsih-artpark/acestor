@@ -1,5 +1,7 @@
 """Tests for ThresholdsConfig.methods and resolve_threshold_config."""
 
+import pathlib
+
 from pipelines.dengue.configs import ThresholdsConfig, resolve_threshold_config
 
 
@@ -55,3 +57,9 @@ def test_unknown_override_key_is_ignored():
     cfg = ThresholdsConfig.from_raw(_base_raw())
     resolved = resolve_threshold_config(cfg, {"nonexistent_key": 99})
     assert resolved.n_weeks == cfg.n_weeks
+
+
+def test_generate_thresholds_has_no_hardcoded_calls():
+    src = pathlib.Path("pipelines/dengue/steps/generate_thresholds.py").read_text()
+    assert "prev_nweeks_threshold_params" not in src
+    assert "historical_threshold_params" not in src

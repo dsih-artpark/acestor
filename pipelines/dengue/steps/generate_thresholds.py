@@ -2,13 +2,22 @@ from __future__ import annotations
 
 import io
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import pandas as pd
 
 from acestor import BaseStep, PipelineContext
-from pipelines.dengue.configs import ThresholdsConfig, _section
+from pipelines.dengue.configs import (
+    ThresholdsConfig,
+    resolve_threshold_config,
+    _section,
+)
 from pipelines.dengue.lib import thresholds
+from pipelines.dengue.lib.thresholds import (
+    ThresholdContext,
+    combine_thresholds,
+    get_threshold_method,
+)
 from pipelines.dengue.results import CutoffDatesResult, ThresholdsResult
 
 
@@ -24,6 +33,15 @@ class GenerateThresholdsStep(BaseStep[GenerateThresholdsInputs, ThresholdsResult
         self, context: PipelineContext, inputs: GenerateThresholdsInputs
     ) -> ThresholdsResult:
         cfg = ThresholdsConfig.from_raw(_section(context.config, "thresholds"))
+        raw_threshold_configs: dict[str, Any] = dict(
+            context.config.get("threshold_configs") or {}
+        )
+        unknown = set(raw_threshold_configs) - set(cfg.methods)
+        if unknown:
+            raise ValueError(
+                f"threshold_configs contains keys not in thresholds.methods: {sorted(unknown)}. "
+                f"thresholds.methods = {cfg.methods}"
+            )
 
         case_path = context.artifact_path(
             f"datasets/cases_{cfg.region_type}_sampled.csv"
@@ -45,14 +63,21 @@ class GenerateThresholdsStep(BaseStep[GenerateThresholdsInputs, ThresholdsResult
 
         aligned = thresholds.align_dates_all_regions(df)
 
-        prev_n = thresholds.prev_nweeks_threshold_params(aligned, n=cfg.n_weeks)
-        hist = thresholds.historical_threshold_params(
-            aligned,
-            n_years=cfg.historical_n_years,
-            excluded_years=cfg.excluded_years,
-            included_years=cfg.included_years,
-        )
-        combined = thresholds.combine_thresholds([prev_n, hist])
+        method_dfs = []
+        for method_name in cfg.methods:
+            method_cfg = resolve_threshold_config(
+                cfg, raw_threshold_configs.get(method_name, {})
+            )
+            ctx = ThresholdContext(
+                n_weeks=method_cfg.n_weeks,
+                historical_n_years=method_cfg.historical_n_years,
+                excluded_years=method_cfg.excluded_years,
+                included_years=method_cfg.included_years,
+            )
+            fn = get_threshold_method(method_name)
+            method_dfs.append(fn(aligned, ctx))
+
+        combined = combine_thresholds(method_dfs)
 
         dest = context.artifact_path(
             f"datasets/thresholds/{cfg.region_type}_all_thresholds.csv"
