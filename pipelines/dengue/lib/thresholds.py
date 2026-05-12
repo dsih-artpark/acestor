@@ -195,6 +195,21 @@ def historical_threshold_params(
     return result[["region_id", "date", "case", "Mean", "StdDev", "threshold_method"]]
 
 
+@register("prev_nweeks")
+def _prev_nweeks_method(df: pd.DataFrame, ctx: ThresholdContext) -> pd.DataFrame:
+    return prev_nweeks_threshold_params(df, n=ctx.n_weeks)
+
+
+@register("historical")
+def _historical_method(df: pd.DataFrame, ctx: ThresholdContext) -> pd.DataFrame:
+    return historical_threshold_params(
+        df,
+        n_years=ctx.historical_n_years,
+        excluded_years=ctx.excluded_years,
+        included_years=ctx.included_years,
+    )
+
+
 def combine_thresholds(dfs: list[pd.DataFrame]) -> pd.DataFrame:
     """Concatenate threshold DataFrames and sort."""
     cols = ["region_id", "date", "Mean", "StdDev", "threshold_method"]

@@ -4,6 +4,7 @@ import pytest
 import pandas as pd
 
 from pipelines.dengue.lib.thresholds import (
+    ThresholdContext,
     _THRESHOLD_REGISTRY,
     align_dates_all_regions,
     combine_thresholds,
@@ -255,3 +256,25 @@ def test_register_decorator_adds_to_registry():
 def test_get_threshold_method_returns_callable():
     fn = get_threshold_method("historical")
     assert callable(fn)
+
+
+def test_prev_nweeks_registered():
+    fn = get_threshold_method("prev_nweeks")
+    df = _weekly_df(n_weeks=12)
+    aligned = align_dates_all_regions(df)
+    ctx = ThresholdContext(n_weeks=4)
+    result = fn(aligned, ctx)
+    assert "threshold_method" in result.columns
+    assert (result["threshold_method"] == "previousNweeks").all()
+
+
+def test_historical_registered():
+    fn = get_threshold_method("historical")
+    df = _multi_year_df()
+    aligned = align_dates_all_regions(df)
+    ctx = ThresholdContext(
+        historical_n_years=None, excluded_years=[], included_years=[]
+    )
+    result = fn(aligned, ctx)
+    assert "threshold_method" in result.columns
+    assert (result["threshold_method"] == "historical").all()
