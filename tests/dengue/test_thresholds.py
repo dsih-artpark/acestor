@@ -10,6 +10,7 @@ from pipelines.dengue.lib.thresholds import (
     combine_thresholds,
     get_threshold_method,
     historical_threshold_params,
+    icmr_quartile_zones,
     prev_nweeks_threshold_params,
     register,
 )
@@ -266,6 +267,77 @@ def test_prev_nweeks_registered():
     result = fn(aligned, ctx)
     assert "threshold_method" in result.columns
     assert (result["threshold_method"] == "previousNweeks").all()
+
+
+# ---------------------------------------------------------------------------
+# icmr_quartile_zones
+# ---------------------------------------------------------------------------
+
+
+def _pred_df(region_ids, predictions, date="2024-01-01"):
+    return pd.DataFrame(
+        {
+            "region_id": region_ids,
+            "startDatePredictedWeek": pd.to_datetime(date),
+            "prediction": predictions,
+        }
+    )
+
+
+def test_icmr_quartile_all_zero_is_a4():
+    df = _pred_df(["r1", "r2", "r3"], [0, 0, 0])
+    result = icmr_quartile_zones(df)
+    assert (result["predictionZone"] == 1).all()
+
+
+def test_icmr_quartile_four_distinct_one_each():
+    # 4 distinct values → 1 per stratum: top→4, next→3, next→2, last→1
+    df = _pred_df(["r1", "r2", "r3", "r4"], [100, 75, 50, 25])
+    result = icmr_quartile_zones(df).sort_values("prediction", ascending=False)
+    assert list(result["predictionZone"]) == [4, 3, 2, 1]
+
+
+def test_icmr_quartile_worked_example():
+    # Worked example from PRISM-H doc §5.3: 26 districts, values_per_stratum=7
+    # We'll use 8 distinct values → ceil(8/4)=2 per stratum
+    preds = [100, 90, 80, 70, 60, 50, 40, 30]
+    df = _pred_df([f"r{i}" for i in range(8)], preds)
+    result = icmr_quartile_zones(df).sort_values("prediction", ascending=False)
+    zones = list(result["predictionZone"])
+    # top 2 → A1(4), next 2 → A2(3), next 2 → A3(2), last 2 → A4(1)
+    assert zones == [4, 4, 3, 3, 2, 2, 1, 1]
+
+
+def test_icmr_quartile_duplicates_collapse():
+    # Three regions, two distinct values (100 and 50)
+    # 2 distinct → ceil(2/4)=1 per stratum → 100→4, 50→3
+    df = _pred_df(["r1", "r2", "r3"], [100, 100, 50])
+    result = icmr_quartile_zones(df)
+    high_zones = result.loc[result["prediction"] == 100, "predictionZone"].unique()
+    assert list(high_zones) == [4]
+    low_zones = result.loc[result["prediction"] == 50, "predictionZone"].unique()
+    assert list(low_zones) == [3]
+
+
+def test_icmr_quartile_per_date_independent():
+    # Two dates with different distributions — classifications must be independent
+    df = pd.DataFrame(
+        {
+            "region_id": ["r1", "r2", "r1", "r2"],
+            "startDatePredictedWeek": pd.to_datetime(
+                ["2024-01-01", "2024-01-01", "2024-01-08", "2024-01-08"]
+            ),
+            "prediction": [100, 50, 10, 5],
+        }
+    )
+    result = icmr_quartile_zones(df)
+    # On both dates: 2 distinct values → higher is A1(4), lower is A3(2)?
+    # ceil(2/4)=1 per stratum: top→4, next→3 (3rd and 4th strata empty)
+    for date in df["startDatePredictedWeek"].unique():
+        sub = result[result["startDatePredictedWeek"] == date].sort_values(
+            "prediction", ascending=False
+        )
+        assert list(sub["predictionZone"]) == [4, 3]
 
 
 def test_historical_registered():

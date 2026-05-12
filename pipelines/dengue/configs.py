@@ -390,6 +390,7 @@ class ThresholdsConfig:
     excluded_years: list[int]
     included_years: list[int]  # empty = no restriction; non-empty = only these years
     methods: list[str] = field(default_factory=lambda: ["historical", "prev_nweeks"])
+    classification_method: str = "who"  # "who" | "icmr"
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any]) -> ThresholdsConfig:
@@ -401,6 +402,10 @@ class ThresholdsConfig:
             excluded_years=[int(y) for y in raw.get("excluded_years", [2020, 2021])],
             included_years=[int(y) for y in raw.get("included_years", [])],
             methods=list(raw.get("methods", ["historical", "prev_nweeks"])),
+            classification_method=str(raw.get("classification_method", "who"))
+            .strip()
+            .lower()
+            or "who",
         )
 
 
@@ -415,6 +420,7 @@ def resolve_threshold_config(
     return ThresholdsConfig(
         region_type=base.region_type,
         methods=base.methods,
+        classification_method=base.classification_method,
         n_weeks=(
             int(raw_overrides["n_weeks"])
             if "n_weeks" in raw_overrides

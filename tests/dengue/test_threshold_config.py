@@ -63,3 +63,29 @@ def test_generate_thresholds_has_no_hardcoded_calls():
     src = pathlib.Path("pipelines/dengue/steps/generate_thresholds.py").read_text()
     assert "prev_nweeks_threshold_params" not in src
     assert "historical_threshold_params" not in src
+
+
+def test_generate_thresholds_reads_method_configs_from_thresholds_block():
+    src = pathlib.Path("pipelines/dengue/steps/generate_thresholds.py").read_text()
+    # Must not read from the old top-level threshold_configs key
+    assert 'config.get("threshold_configs")' not in src
+    # Must read from method_configs nested inside thresholds:
+    assert '"method_configs"' in src
+
+
+def test_default_classification_method_is_who():
+    cfg = ThresholdsConfig.from_raw(_base_raw())
+    assert cfg.classification_method == "who"
+
+
+def test_classification_method_icmr():
+    raw = {**_base_raw(), "classification_method": "icmr"}
+    cfg = ThresholdsConfig.from_raw(raw)
+    assert cfg.classification_method == "icmr"
+
+
+def test_resolve_threshold_config_preserves_classification_method():
+    raw = {**_base_raw(), "classification_method": "icmr"}
+    cfg = ThresholdsConfig.from_raw(raw)
+    resolved = resolve_threshold_config(cfg, {"n_weeks": 6})
+    assert resolved.classification_method == "icmr"

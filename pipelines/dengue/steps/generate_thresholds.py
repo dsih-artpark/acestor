@@ -34,7 +34,7 @@ class GenerateThresholdsStep(BaseStep[GenerateThresholdsInputs, ThresholdsResult
     ) -> ThresholdsResult:
         cfg = ThresholdsConfig.from_raw(_section(context.config, "thresholds"))
         raw_threshold_configs: dict[str, Any] = dict(
-            context.config.get("threshold_configs") or {}
+            _section(context.config, "thresholds").get("method_configs") or {}
         )
         unknown = set(raw_threshold_configs) - set(cfg.methods)
         if unknown:

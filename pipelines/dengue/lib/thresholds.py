@@ -7,6 +7,7 @@ Translated from GBA ``GenerateThresholds.py`` and ``utils.py``
 from __future__ import annotations
 
 import logging
+import math
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Callable
@@ -208,6 +209,46 @@ def _historical_method(df: pd.DataFrame, ctx: ThresholdContext) -> pd.DataFrame:
         excluded_years=ctx.excluded_years,
         included_years=ctx.included_years,
     )
+
+
+def icmr_quartile_zones(
+    df: pd.DataFrame,
+    *,
+    prediction_col: str = "prediction",
+    date_col: str = "startDatePredictedWeek",
+) -> pd.DataFrame:
+    """Assign ICMR quartile strata (A1–A4) as predictionZone per date.
+
+    Cross-sectional: for each date, distinct predicted case values across all
+    regions are ranked descending and divided into 4 equal strata.
+    A1 Critical → zone 4, A2 High → zone 3, A3 Caution → zone 2, A4 Low → zone 1.
+
+    Algorithm (ICMR doc / PRISM-H §5.1):
+      values_per_stratum = ceil(n_distinct / 4)
+      top values_per_stratum → A1, next → A2, next → A3, rest → A4
+    """
+
+    def _classify_date(group: pd.DataFrame) -> pd.DataFrame:
+        preds = group[prediction_col].values
+        distinct = sorted(set(preds), reverse=True)
+        n_distinct = len(distinct)
+
+        group = group.copy()
+        if n_distinct == 0 or all(v == 0 for v in distinct):
+            group["predictionZone"] = 1  # all A4 Low
+            return group
+
+        vps = math.ceil(n_distinct / 4)
+        zone_map: dict[float, int] = {}
+        for i, val in enumerate(distinct):
+            stratum = min(i // vps, 3)  # 0=A1, 1=A2, 2=A3, 3=A4
+            zone_map[val] = 4 - stratum  # A1→4, A2→3, A3→2, A4→1
+
+        group["predictionZone"] = group[prediction_col].map(zone_map)
+        return group
+
+    parts = [_classify_date(group) for _, group in df.groupby(date_col)]
+    return pd.concat(parts, ignore_index=True) if parts else df.copy()
 
 
 def combine_thresholds(dfs: list[pd.DataFrame]) -> pd.DataFrame:
