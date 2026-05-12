@@ -1,0 +1,136 @@
+pipeline:
+  name: dengue
+  title: "Dengue Early Warning System — Andhra Pradesh"
+
+run:
+  run_date: "2026-04-17"   # leave blank to use today's date
+
+data:
+  prepared_data:
+    base_dir: "prepared_data"
+    region_type: "district"
+
+  case_parse:
+    region_types:
+      - "district"
+    date_start: "2021-09-01"
+    date_end: ""
+
+  case_sufficiency:
+    enabled: true
+    min_total_rows: 30
+    min_distinct_regions: 2
+    min_date_span_days: 14
+
+  geojson:
+    base_path: "ap_datasets/geojsons/geojsons_AP"
+
+  weather_parse:
+    region_type: "district"
+    weather_variables:
+      - "2mTemperature"
+      - "totalPrecipitation"
+      - "2mDewpointTemperature"
+    rolling_n_days: 7
+    rolling_agg:
+      - {name: "2mTemperature",         op: "mean"}
+      - {name: "2mDewpointTemperature", op: "mean"}
+      - {name: "totalPrecipitation",    op: "sum"}
+    sampling_rate: 7
+    intermediate_col_rename:
+      "2mTemperature_max": "t2m_max"
+      "2mTemperature_min": "t2m_min"
+      "2mTemperature": "t2m_mean"
+      "2mDewpointTemperature": "d2m_mean"
+      "totalPrecipitation": "tp_sum"
+
+cutoff:
+  case_min_regions: 2
+  weather_min_regions: 5
+
+thresholds:
+  region_type: "district"
+  n_weeks: 4
+  historical_n_years: 4
+  excluded_years: []
+  included_years: []
+
+model:
+  spatial_res: "district"
+  models: [nbr, rf, xgb]      # models to run; predictions are combined via ensemble
+  ensemble: mean               # mean | none
+  output: ensemble             # ensemble | per_model | both
+  data_features:
+    - "case"
+    - "recordDate"
+    - "recordYear"
+    - "recordMonth"
+    - "ISOWeek"
+    - "t2m_mean"
+    - "tp_sum"
+    - "d2m_mean"
+  lag:
+    lag_temp: [12]
+    lag_rf: [4]
+  years_to_exclude: []
+  years_to_include: []
+  list_alpha: [2.0, 3.0]
+  tune: false     # set true to force a fresh Optuna run; false = load from cache if available
+  n_trials: 50
+
+# Per-model overrides.
+# Every key here overwrites the matching key from model: for that model only.
+# Keys not listed here are inherited from model: — no need to repeat them.
+#
+# Tweakable per model:
+#   tune: true/false          retune this model (false = use HP cache, true = run Optuna)
+#   n_trials: <int>           Optuna trials when tune: true (more = better params, slower)
+#   lag: {lag_temp, lag_rf}   different lag windows for this model
+#   years_to_exclude: [...]   drop specific years from this model's training data
+#   years_to_include: [...]   whitelist years (overrides exclude if both set)
+model_configs:
+  nbr:
+    # NBR has no Optuna tuning — tune/n_trials have no effect here.
+    # Only override lag or year filters if you want NBR to train on different data.
+
+  rf:
+    tune: false       # true → retune and overwrite artifacts/ap/hp/rf_best_params.json
+    n_trials: 50
+
+  xgb:
+    tune: false       # true → retune and overwrite artifacts/ap/hp/xgb_best_params.json
+    n_trials: 50
+
+assess:
+  total_district_regions: 26
+
+maps:
+  output_dir: "plots"
+  figure_title: "Andhra Pradesh Dengue Risk Map"
+
+report:
+  output_dir: "reports"
+  compile_pdf: true
+  caption_primary: "AP districts"
+  caption_secondary: ""
+
+report_distribution:
+  system_name: "Dengue Early Warning System"
+  organization: "ARTPARK, IISc Bengaluru"
+  state: "Andhra Pradesh"
+  region: "Andhra Pradesh (26 Districts)"
+  department: "Directorate of Public Health & Family Welfare, GoAP"
+  contact_email: ""
+  footer_note: ""
+
+logging:
+  level: INFO
+
+email:
+  enabled: false
+
+storages:
+  artifacts:
+    kind: filesystem
+    filesystem:
+      base_path: "./artifacts/ap"
