@@ -21,6 +21,41 @@ from pipelines.dengue.lib.thresholds import (
 from pipelines.dengue.results import CutoffDatesResult, ThresholdsResult
 
 
+def _apply_rolling_fallback(
+    historical_df: pd.DataFrame,
+    rolling_df: pd.DataFrame,
+    spatial_col: str,
+) -> pd.DataFrame:
+    """Replace historical Mean=0 rows with prev_nweeks values (PRISM-H §4.4).
+
+    When the historical method produces Mean=0 for a (region, date) pair,
+    substitute the prev_nweeks Mean and StdDev for that same pair — but only
+    when the prev_nweeks Mean is present and > 0. All other columns are preserved.
+    """
+    out = historical_df.copy()
+    zero_mask = out["Mean"] == 0
+    if not zero_mask.any():
+        return out
+
+    # Index rolling_df by (spatial_col, date) for fast O(1) lookup
+    rolling_indexed = rolling_df.set_index([spatial_col, "date"])
+    for idx in out[zero_mask].index:
+        key = (out.at[idx, spatial_col], out.at[idx, "date"])
+        if key in rolling_indexed.index:
+            rolling_row = rolling_indexed.loc[key]
+            # .loc can return a Series (single match) or DataFrame (multiple matches)
+            if isinstance(rolling_row, pd.DataFrame):
+                rolling_mean = rolling_row["Mean"].iloc[0]
+                rolling_std = rolling_row["StdDev"].iloc[0]
+            else:
+                rolling_mean = rolling_row["Mean"]
+                rolling_std = rolling_row["StdDev"]
+            if pd.notna(rolling_mean) and rolling_mean > 0:
+                out.at[idx, "Mean"] = rolling_mean
+                out.at[idx, "StdDev"] = rolling_std
+    return out
+
+
 @dataclass(frozen=True)
 class GenerateThresholdsInputs:
     identify_cutoff_dates: CutoffDatesResult
@@ -64,6 +99,7 @@ class GenerateThresholdsStep(BaseStep[GenerateThresholdsInputs, ThresholdsResult
         aligned = thresholds.align_dates_all_regions(df)
 
         method_dfs = []
+        method_df_by_name: dict[str, pd.DataFrame] = {}
         for method_name in cfg.methods:
             method_cfg = resolve_threshold_config(
                 cfg, raw_threshold_configs.get(method_name, {})
@@ -79,7 +115,20 @@ class GenerateThresholdsStep(BaseStep[GenerateThresholdsInputs, ThresholdsResult
                 weight_seasonal=method_cfg.weight_seasonal,
             )
             fn = get_threshold_method(method_name)
-            method_dfs.append(fn(aligned, ctx))
+            result_df = fn(aligned, ctx)
+            method_dfs.append(result_df)
+            method_df_by_name[method_name] = result_df
+
+        # PRISM-H §4.4 μ=0 fallback: replace historical Mean=0 with prev_nweeks values
+        if "historical" in method_df_by_name and "prev_nweeks" in method_df_by_name:
+            patched = _apply_rolling_fallback(
+                method_df_by_name["historical"],
+                method_df_by_name["prev_nweeks"],
+                spatial_col="region_id",
+            )
+            # Replace the historical entry in method_dfs in-place
+            hist_list_idx = cfg.methods.index("historical")
+            method_dfs[hist_list_idx] = patched
 
         combined = combine_thresholds(method_dfs)
 
