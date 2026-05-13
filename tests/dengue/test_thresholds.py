@@ -441,13 +441,35 @@ def test_prev_nweeks_nu_excludes_current_week():
 
 
 def test_prev_nweeks_sigma_uses_4_nu_values():
-    # σ should be std of 4 ν values, not 3.
-    # Alternating cases [1,3,1,3,...] → each ν = mean of 4 consecutive = 2.0 always.
-    # So std of any 4 equal ν values = 0.
-    dates = pd.date_range("2024-01-01", periods=12, freq="7D")
-    cases = [1, 3, 1, 3, 1, 3, 1, 3, 1, 3, 1, 3]
-    df = align_dates_all_regions(_case_df(["r1"] * 12, dates, cases))
+    # σ must be std over 4 ν values, not 3.
+    # Strictly increasing cases 1..10 over 10 weeks with k=7, n=4:
+    #   ν at week 5 = mean(4,3,2,1) = 2.5
+    #   ν at week 6 = mean(5,4,3,2) = 3.5
+    #   ν at week 7 = mean(6,5,4,3) = 4.5
+    #   ν at week 8 = mean(7,6,5,4) = 5.5
+    # At week 8, σ = std([5.5, 4.5, 3.5, 2.5], ddof=1) ≈ 1.2910
+    # If only 3 ν values were used: std([5.5, 4.5, 3.5], ddof=1) = 1.0 — clearly different.
+    import numpy as np
+
+    dates = pd.date_range("2020-01-06", periods=10, freq="7D")
+    cases = list(range(1, 11))  # [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    df = align_dates_all_regions(_case_df(["r1"] * 10, dates, cases))
     result = prev_nweeks_threshold_params(df, n=4, k=7)
-    non_nan = result["StdDev"].dropna()
-    assert len(non_nan) > 0
-    assert (non_nan == 0.0).all(), f"expected all 0.0 StdDev, got {non_nan.unique()}"
+
+    # Week 8 is the first week that has all 4 ν values available for σ
+    target_date = pd.Timestamp("2020-02-24")  # 2020-01-06 + 7*7 days
+    row = result[result["date"] == target_date]
+    assert not row.empty, f"expected a row for {target_date}"
+
+    expected_4_value_std = np.std([5.5, 4.5, 3.5, 2.5], ddof=1)  # ≈ 1.2910
+    wrong_3_value_std = np.std([5.5, 4.5, 3.5], ddof=1)  # = 1.0
+
+    actual_std = row["StdDev"].values[0]
+    assert abs(actual_std - expected_4_value_std) < 1e-6, (
+        f"StdDev={actual_std:.6f} does not match 4-value std={expected_4_value_std:.6f}. "
+        f"If σ used only 3 ν values it would be {wrong_3_value_std:.6f}."
+    )
+    # Explicitly confirm the 3-value answer is different (documents discriminating power)
+    assert (
+        abs(actual_std - wrong_3_value_std) > 0.1
+    ), "Test is not discriminating: 3-value and 4-value std are too close"
