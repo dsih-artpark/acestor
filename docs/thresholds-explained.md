@@ -281,6 +281,93 @@ Step 3: assess_thresholds
 
 ---
 
+---
+
+## Part 15 — How the SOP weighted baseline differs from the two WHO methods
+
+You now know three threshold methods. Here is the key difference between them, put as simply as possible.
+
+Each method has a different **memory**:
+
+| Method | What it remembers | What it ignores |
+|--------|------------------|-----------------|
+| `prev_nweeks` | Last 4 weeks only | Everything before that |
+| `historical` | Same week in past years | Recent weeks |
+| SOP `weighted_baseline` | Both — but 70% recent, 30% seasonal | Nothing |
+
+**Concrete example:**
+
+It is July. Dengue season is starting. Kurnool had 15 cases/week through June (recent), and 40 cases/week last July (seasonal history).
+
+- `prev_nweeks` baseline: ~15 (only sees June's quiet weeks → threshold too low, will over-alarm as July ramps up)
+- `historical` baseline: ~40 (only sees last July → knows about the season, but doesn't know June was quiet)
+- `weighted_baseline`: 0.7 × 15 + 0.3 × 40 = **22.5** (blends both → more stable, avoids extremes)
+
+The weighted baseline is the most cautious. It won't sound an alarm just because the season is starting (that is expected), but it also doesn't ignore the recent trend entirely.
+
+---
+
+## Part 16 — Something new in the SOP: prediction intervals
+
+The SOP introduces a concept not yet covered: **prediction intervals**.
+
+The model does not predict one exact number. It predicts a range:
+
+> "Kurnool this week: somewhere between 35 and 65 cases, most likely 50."
+
+That range is the prediction interval (PI). It exists because:
+- The model is not perfect
+- Case data has reporting noise
+- Weather and environmental factors add uncertainty
+
+Why does this matter for thresholds?
+
+Imagine the UCL is 48 and the predicted mean is 50. You would classify this as High Risk. But if the prediction interval is 35–65, you have low confidence the true value is above 48.
+
+Now imagine the UCL is 48 and the predicted mean is 50, but the interval is 49–51. Very narrow. High confidence the true value is above 48. This is a more reliable High Risk call.
+
+**The SOP says:** use prediction intervals as supporting evidence, especially when a prediction is close to the threshold. Do not over-rely on the point prediction alone.
+
+We currently output point predictions. Adding prediction intervals is on the roadmap.
+
+---
+
+## Part 17 — Something entirely new: mandal-level disaggregation
+
+The SOP section 8 describes something that has nothing to do with threshold methods. It is about **spatial scale**.
+
+Our model predicts at the **district level**. But public health responders often need to know: **which mandal within the district should we focus on?**
+
+The SOP's answer is a simple proportional split:
+
+> Predicted mandal cases = District prediction × (mandal's share of recent cases)
+
+Where "mandal's share" is:
+
+```
+mandal's 14-day moving average of cases
+─────────────────────────────────────────────────────────
+sum of all mandals' 14-day moving averages in the district
+```
+
+**Example:**
+
+Kurnool district predicted: 50 cases this week.
+
+| Mandal | 14-day avg | Share | Predicted cases |
+|--------|-----------|-------|----------------|
+| Kurnool Urban | 18 | 60% | 30 |
+| Nandyal Rural | 6 | 20% | 10 |
+| Panyam | 6 | 20% | 10 |
+
+The district prediction (50) is split proportionally based on where cases have been occurring recently.
+
+**Risk at mandal level** (SOP section 9): for now, a mandal simply inherits its district's risk label. If Kurnool district is A1 Critical, all its mandals are also A1 Critical. This is called "Homogeneous Inheritance" — it is a simplification, acknowledged as such in the SOP, with finer-grained mandal risk assessment planned for a future version.
+
+This disaggregation work is tracked as a separate issue (issue #18).
+
+---
+
 ## Open questions to resolve with the team
 
 1. **SOP n_sigma: 2 or 3?** Section 4.6 says 2. Section 5 says 3. Need confirmation.
