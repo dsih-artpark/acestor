@@ -561,6 +561,22 @@ def test_icmr_guard_multi_date_mixed():
     ), f"Date with total=40 should have zones, got {date2['predictionZone'].tolist()}"
 
 
+def test_negative_mean_raises_value_error():
+    """Negative Mean must raise ValueError — indicates corrupt input (PRISM-H §4.4)."""
+    # Negative case counts produce negative ν and therefore negative Mean.
+    n_weeks = 20
+    dates = pd.date_range("2020-01-06", periods=n_weeks, freq="7D")
+    df = pd.DataFrame(
+        {
+            "region_id": "R1",
+            "date": dates,
+            "case": -1.0,  # negative cases → negative ν → negative Mean
+        }
+    )
+    with pytest.raises(ValueError, match="Negative Mean"):
+        prev_nweeks_threshold_params(df, n=4, k=7)
+
+
 def test_prev_nweeks_sigma_uses_4_nu_values():
     # σ must be std over 4 ν values, not 3.
     # Strictly increasing cases 1..10 over 10 weeks with k=7, n=4:

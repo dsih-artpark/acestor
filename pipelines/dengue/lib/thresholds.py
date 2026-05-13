@@ -90,6 +90,14 @@ def align_dates_all_regions(df: pd.DataFrame) -> pd.DataFrame:
 
 def _inflate_std(df: pd.DataFrame) -> pd.DataFrame:
     """Inflate StdDev to sqrt(Mean) where StdDev=0 and Mean>0 (PRISM-H §4.4)."""
+    # PRISM-H §4.4: negative Mean indicates corrupt input — hard error
+    neg_mask = df["Mean"] < 0
+    if neg_mask.any():
+        bad = df[neg_mask][["region_id", "date", "Mean"]].head(5).to_dict("records")
+        raise ValueError(
+            f"Negative Mean detected — should never occur (PRISM-H §4.4). "
+            f"First offending rows: {bad}"
+        )
     mask = (df["StdDev"] == 0) & (df["Mean"] > 0)
     df.loc[mask, "StdDev"] = np.sqrt(df.loc[mask, "Mean"])
     return df
