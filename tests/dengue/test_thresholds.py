@@ -291,10 +291,14 @@ def _pred_df(region_ids, predictions, date="2024-01-01"):
     )
 
 
-def test_icmr_quartile_all_zero_is_a4():
+def test_icmr_quartile_all_zero_is_insufficient():
+    # All-zero predictions sum to 0 < 10, so PRISM-H §5.4 guard applies:
+    # "Insufficient data" → all zones are None (not A4 Low)
     df = _pred_df(["r1", "r2", "r3"], [0, 0, 0])
     result = icmr_quartile_zones(df)
-    assert (result["predictionZone"] == 1).all()
+    assert (
+        result["predictionZone"].isna().all()
+    ), f"Expected all None for all-zero predictions (total=0 < 10), got {result['predictionZone'].tolist()}"
 
 
 def test_icmr_quartile_four_distinct_one_each():
@@ -476,6 +480,85 @@ def test_sigma_inflation_when_std_zero_mean_positive():
     assert np.allclose(
         valid["StdDev"], expected_std, atol=1e-9
     ), f"Expected StdDev={expected_std} after inflation, got {valid['StdDev'].unique()}"
+
+
+# ---------------------------------------------------------------------------
+# icmr_quartile_zones — PRISM-H §5.4 insufficient data guard
+# ---------------------------------------------------------------------------
+
+
+def test_icmr_guard_insufficient_total_cases():
+    """When total predictions across all regions < 10 for a date, all zones = None."""
+    # 3 regions with total cases = 9 (< 10 threshold)
+    df = pd.DataFrame(
+        {
+            "region_id": ["R1", "R2", "R3"],
+            "startDatePredictedWeek": pd.Timestamp("2024-01-01"),
+            "prediction": [3.0, 3.0, 3.0],  # total = 9 < 10
+        }
+    )
+    result = icmr_quartile_zones(df)
+    assert (
+        result["predictionZone"].isna().all()
+    ), f"Expected all None when total<10, got {result['predictionZone'].tolist()}"
+
+
+def test_icmr_guard_sufficient_total_cases():
+    """When total predictions >= 10 for a date, zones are classified normally."""
+    # 4 regions with total cases = 40 (>= 10)
+    df = pd.DataFrame(
+        {
+            "region_id": ["R1", "R2", "R3", "R4"],
+            "startDatePredictedWeek": pd.Timestamp("2024-01-01"),
+            "prediction": [2.0, 5.0, 15.0, 18.0],  # total = 40
+        }
+    )
+    result = icmr_quartile_zones(df)
+    assert (
+        not result["predictionZone"].isna().all()
+    ), "Expected zones assigned when total>=10"
+
+
+def test_icmr_guard_exact_threshold_boundary():
+    """Total predictions == 10 should be classified (guard is strictly < 10)."""
+    df = pd.DataFrame(
+        {
+            "region_id": ["R1", "R2"],
+            "startDatePredictedWeek": pd.Timestamp("2024-01-01"),
+            "prediction": [5.0, 5.0],  # total = 10, exactly at boundary
+        }
+    )
+    result = icmr_quartile_zones(df)
+    assert (
+        not result["predictionZone"].isna().all()
+    ), "Expected zones assigned when total==10 (boundary is strictly < 10)"
+
+
+def test_icmr_guard_multi_date_mixed():
+    """Guard applies per-date: date with total<10 → None, date with total>=10 → classified."""
+    df = pd.DataFrame(
+        {
+            "region_id": ["R1", "R2", "R1", "R2"],
+            "startDatePredictedWeek": pd.to_datetime(
+                [
+                    "2024-01-01",
+                    "2024-01-01",  # total = 6 < 10 → None
+                    "2024-01-08",
+                    "2024-01-08",  # total = 40 >= 10 → classified
+                ]
+            ),
+            "prediction": [3.0, 3.0, 20.0, 20.0],
+        }
+    )
+    result = icmr_quartile_zones(df)
+    date1 = result[result["startDatePredictedWeek"] == pd.Timestamp("2024-01-01")]
+    date2 = result[result["startDatePredictedWeek"] == pd.Timestamp("2024-01-08")]
+    assert (
+        date1["predictionZone"].isna().all()
+    ), f"Date with total=6 should have all None, got {date1['predictionZone'].tolist()}"
+    assert (
+        not date2["predictionZone"].isna().all()
+    ), f"Date with total=40 should have zones, got {date2['predictionZone'].tolist()}"
 
 
 def test_prev_nweeks_sigma_uses_4_nu_values():

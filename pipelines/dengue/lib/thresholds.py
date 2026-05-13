@@ -331,6 +331,13 @@ def icmr_quartile_zones(
         n_distinct = len(distinct)
 
         group = group.copy()
+
+        # PRISM-H §5.4 — insufficient data guard: < 10 total predicted cases
+        # across all geographies → set all zones to None ("Insufficient data")
+        if group[prediction_col].sum() < 10:
+            group["predictionZone"] = pd.NA
+            return group
+
         if n_distinct == 0 or all(v == 0 for v in distinct):
             group["predictionZone"] = 1  # all A4 Low
             return group
