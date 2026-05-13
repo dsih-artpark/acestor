@@ -355,6 +355,40 @@ def icmr_quartile_zones(
     return pd.concat(parts, ignore_index=True) if parts else df.copy()
 
 
+# PRISM-H §4.2 — method preference order (camelCase labels as they appear in thresholdMethod)
+_METHOD_PRIORITY = ["historical", "previousNweeks", "weightedBaseline"]
+
+
+def _select_best_method(final: pd.DataFrame) -> pd.DataFrame:
+    """Select one row per date from the `final` assess_thresholds DataFrame.
+
+    PRISM-H §4.2: historical is preferred when it produced valid rows
+    (Row_Count_Total > 0); prev_nweeks is the fallback; weighted_baseline is
+    last resort.  If no method in the priority list has rows, the first
+    available row is returned (graceful degradation, no crash).
+    """
+    date_col = "startDatePredictedWeek"
+    selected_rows: list[pd.DataFrame] = []
+
+    for _date_val, group in final.groupby(date_col):
+        picked: pd.DataFrame | None = None
+        for method in _METHOD_PRIORITY:
+            candidate = group[
+                (group["thresholdMethod"] == method) & (group["Row_Count_Total"] > 0)
+            ]
+            if not candidate.empty:
+                picked = candidate.iloc[[0]]
+                break
+        if picked is None:
+            # Graceful fallback — return first row regardless
+            picked = group.iloc[[0]]
+        selected_rows.append(picked)
+
+    if not selected_rows:
+        return final.iloc[0:0].copy()
+    return pd.concat(selected_rows, ignore_index=True)
+
+
 def combine_thresholds(dfs: list[pd.DataFrame]) -> pd.DataFrame:
     """Concatenate threshold DataFrames and sort."""
     cols = ["region_id", "date", "Mean", "StdDev", "threshold_method"]
@@ -435,12 +469,5 @@ def assess_thresholds(
         ["startDatePredictedWeek", "thresholdMethod"]
     ).reset_index(drop=True)
 
-    best = (
-        final.sort_values(
-            ["startDatePredictedWeek", "Risk_Zone_Sum_Total"], ascending=[True, False]
-        )
-        .groupby("startDatePredictedWeek")
-        .first()
-        .reset_index()
-    )
+    best = _select_best_method(final)
     return final, best
