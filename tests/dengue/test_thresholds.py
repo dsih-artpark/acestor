@@ -101,13 +101,19 @@ def test_prev_nweeks_threshold_method_label():
     assert (result["threshold_method"] == "previousNweeks").all()
 
 
-def test_prev_nweeks_constant_series_zero_std():
+def test_prev_nweeks_constant_series_std_inflated():
+    # Constant cases → raw σ=0, Mean=5.0 → inflation gives StdDev=sqrt(5.0) (PRISM-H §4.4)
+    import numpy as np
+
     df = _weekly_df(n_weeks=12, base_cases=5)
     result = prev_nweeks_threshold_params(df, n=4, k=7)
-    non_nan = result["StdDev"].dropna()
-    assert (non_nan == 0).all()
     non_nan_mean = result["Mean"].dropna()
     assert (non_nan_mean == 5.0).all()
+    non_nan_std = result["StdDev"].dropna()
+    expected_std = np.sqrt(5.0)
+    assert np.allclose(
+        non_nan_std, expected_std, atol=1e-9
+    ), f"Expected StdDev={expected_std} (inflated), got {non_nan_std.unique()}"
 
 
 def test_prev_nweeks_multiple_regions():
@@ -367,13 +373,18 @@ def test_weighted_baseline_threshold_method_label():
 
 def test_weighted_baseline_constant_series():
     # All cases = 10. Recent mean = 10, seasonal mean = 10. Weighted mean = 10.
-    # SD over 8 weeks of constant data = 0.
+    # SD over 8 weeks of constant data = 0 → inflated to sqrt(10) (PRISM-H §4.4).
+    import numpy as np
+
     df = _wb_df(n_weeks=60, base_cases=10)
     result = weighted_baseline_threshold_params(df)
     non_nan = result["Mean"].dropna()
     assert (non_nan == 10.0).all()
     non_nan_sd = result["StdDev"].dropna()
-    assert (non_nan_sd == 0.0).all()
+    expected_std = np.sqrt(10.0)
+    assert np.allclose(
+        non_nan_sd, expected_std, atol=1e-9
+    ), f"Expected StdDev={expected_std} (inflated from 0), got {non_nan_sd.unique()}"
 
 
 def test_weighted_baseline_no_seasonal_falls_back_to_recent():
@@ -438,6 +449,33 @@ def test_prev_nweeks_nu_excludes_current_week():
     assert (
         math.isnan(mean_val) or mean_val <= 10.0
     ), f"Mean={mean_val} — current week's case=99 must not contaminate ν"
+
+
+def test_sigma_inflation_when_std_zero_mean_positive():
+    """When StdDev=0 and Mean>0, StdDev must be inflated to sqrt(Mean) (PRISM-H §4.4)."""
+    import numpy as np
+
+    # Build a region with constant case counts — ν will be constant → σ=0
+    n_weeks = 20
+    dates = pd.date_range("2020-01-06", periods=n_weeks, freq="7D")
+    df = pd.DataFrame(
+        {
+            "region_id": "R1",
+            "date": dates,
+            "case": 4.0,  # constant → every ν = 4.0 → σ = 0, Mean = 4.0
+        }
+    )
+    result = prev_nweeks_threshold_params(df, n=4, k=7)
+    valid = result.dropna(subset=["Mean", "StdDev"])
+    # Mean should be 4.0 (constant)
+    assert (
+        valid["Mean"] == 4.0
+    ).all(), f"Expected Mean=4.0, got {valid['Mean'].unique()}"
+    # StdDev should be sqrt(4.0) = 2.0 (inflated from 0)
+    expected_std = np.sqrt(4.0)
+    assert np.allclose(
+        valid["StdDev"], expected_std, atol=1e-9
+    ), f"Expected StdDev={expected_std} after inflation, got {valid['StdDev'].unique()}"
 
 
 def test_prev_nweeks_sigma_uses_4_nu_values():

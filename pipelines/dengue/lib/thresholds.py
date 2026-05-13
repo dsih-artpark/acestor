@@ -88,6 +88,13 @@ def align_dates_all_regions(df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def _inflate_std(df: pd.DataFrame) -> pd.DataFrame:
+    """Inflate StdDev to sqrt(Mean) where StdDev=0 and Mean>0 (PRISM-H §4.4)."""
+    mask = (df["StdDev"] == 0) & (df["Mean"] > 0)
+    df.loc[mask, "StdDev"] = np.sqrt(df.loc[mask, "Mean"])
+    return df
+
+
 def prev_nweeks_threshold_params(
     df: pd.DataFrame,
     n: int = 4,
@@ -137,6 +144,7 @@ def prev_nweeks_threshold_params(
 
     result = pd.concat(parts, ignore_index=True)
     result["threshold_method"] = "previousNweeks"
+    result = _inflate_std(result)
     return result[["region_id", "date", "case", "Mean", "StdDev", "threshold_method"]]
 
 
@@ -201,6 +209,7 @@ def historical_threshold_params(
         .reset_index(drop=True)
     )
     result["threshold_method"] = "historical"
+    result = _inflate_std(result)
     return result[["region_id", "date", "case", "Mean", "StdDev", "threshold_method"]]
 
 
@@ -284,6 +293,7 @@ def weighted_baseline_threshold_params(
 
     result = pd.concat(parts, ignore_index=True)
     result["threshold_method"] = "weightedBaseline"
+    result = _inflate_std(result)
     return result[["region_id", "date", "case", "Mean", "StdDev", "threshold_method"]]
 
 
