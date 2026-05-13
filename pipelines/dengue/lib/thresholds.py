@@ -362,10 +362,10 @@ _METHOD_PRIORITY = ["historical", "previousNweeks", "weightedBaseline"]
 def _select_best_method(final: pd.DataFrame) -> pd.DataFrame:
     """Select one row per date from the `final` assess_thresholds DataFrame.
 
-    PRISM-H §4.2: historical is preferred when it produced valid rows
-    (Row_Count_Total > 0); prev_nweeks is the fallback; weighted_baseline is
-    last resort.  If no method in the priority list has rows, the first
-    available row is returned (graceful degradation, no crash).
+    PRISM-H §4.2: historical is preferred when it has a non-null, non-zero
+    Mean; prev_nweeks is the fallback; weighted_baseline is last resort.
+    If no method in the priority list has a valid Mean, the first available
+    row is returned (graceful degradation, no crash).
     """
     date_col = "startDatePredictedWeek"
     selected_rows: list[pd.DataFrame] = []
@@ -374,7 +374,9 @@ def _select_best_method(final: pd.DataFrame) -> pd.DataFrame:
         picked: pd.DataFrame | None = None
         for method in _METHOD_PRIORITY:
             candidate = group[
-                (group["thresholdMethod"] == method) & (group["Row_Count_Total"] > 0)
+                (group["thresholdMethod"] == method)
+                & group["Mean"].notna()
+                & (group["Mean"] > 0)
             ]
             if not candidate.empty:
                 picked = candidate.iloc[[0]]
@@ -444,6 +446,7 @@ def assess_thresholds(
             .agg(
                 Risk_Zone_Sum_Total=("predictionZone", "sum"),
                 Row_Count_Total=("predictionZone", "count"),
+                Mean=("prediction", "mean"),
             )
             .reset_index()
         )
