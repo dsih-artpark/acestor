@@ -63,7 +63,8 @@ def negative_binomial_regression(
     spatial_col: str,
     feature_cols: list[str],
     lag_temp: list[int],
-    lag_rf: list[int],
+    lag_rainfall: list[int],
+    lag_humidity: list[int],
     years_to_exclude: list[int],
     years_to_include: list[int],
     predict_upto_date: pd.Timestamp,
@@ -81,7 +82,7 @@ def negative_binomial_regression(
         lambda x: datetime.isocalendar(x).week
     )
 
-    df0 = _lag(df0, spatial_col, lag_temp, lag_rf)
+    df0 = _lag(df0, spatial_col, lag_temp, lag_rainfall, lag_humidity)
 
     train_data = df0[~df0["recordDate"].isin(last_4)].copy()
     filtered = _filter_features(
@@ -146,7 +147,8 @@ class NBRModel:
             spatial_col=ctx.cfg.spatial_res,
             feature_cols=ctx.cfg.data_features,
             lag_temp=ctx.cfg.lag_temp,
-            lag_rf=ctx.cfg.lag_rf,
+            lag_rainfall=ctx.cfg.lag_rainfall,
+            lag_humidity=ctx.cfg.lag_humidity,
             years_to_exclude=ctx.cfg.years_to_exclude,
             years_to_include=ctx.cfg.years_to_include,
             predict_upto_date=ctx.pred_upto,

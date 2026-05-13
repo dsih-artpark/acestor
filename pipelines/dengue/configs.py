@@ -463,7 +463,8 @@ class TrainPredictConfig:
     spatial_res: str
     data_features: list[str]
     lag_temp: list[int]
-    lag_rf: list[int]
+    lag_rainfall: list[int]
+    lag_humidity: list[int]
     years_to_exclude: list[int]
     years_to_include: list[int]  # empty = no restriction; non-empty = only these years
     list_alpha: list[float]
@@ -508,12 +509,13 @@ class TrainPredictConfig:
                 )
             ),
             lag_temp=list(lag.get("lag_temp", [12])),
-            lag_rf=list(lag.get("lag_rf", [4])),
+            lag_rainfall=list(lag.get("lag_rainfall", [4])),
+            lag_humidity=list(lag.get("lag_humidity", [4])),
             years_to_exclude=[
                 int(y) for y in raw.get("years_to_exclude", [2020, 2021])
             ],
             years_to_include=[int(y) for y in raw.get("years_to_include", [])],
-            list_alpha=[float(a) for a in raw.get("list_alpha", [1.0, 2.0])],
+            list_alpha=[float(a) for a in raw["list_alpha"]],
             models=list(raw.get("models", ["nbr", "tse"])),
             ensemble=ensemble,
             output=output,
@@ -529,12 +531,16 @@ def resolve_model_config(
 
     Keys present in *raw_overrides* win over the base. The ``lag`` sub-dict
     is merged key-by-key so that specifying only ``lag_temp`` leaves
-    ``lag_rf`` at its base value.
+    ``lag_rainfall`` and ``lag_humidity`` at their base values.
     """
     if not raw_overrides:
         return base
 
-    base_lag = {"lag_temp": list(base.lag_temp), "lag_rf": list(base.lag_rf)}
+    base_lag = {
+        "lag_temp": list(base.lag_temp),
+        "lag_rainfall": list(base.lag_rainfall),
+        "lag_humidity": list(base.lag_humidity),
+    }
     override_lag = dict(raw_overrides.get("lag", {}))
     merged_lag = {**base_lag, **override_lag}
 

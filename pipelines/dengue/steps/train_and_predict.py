@@ -176,10 +176,32 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
         def _classify_and_write(df: pd.DataFrame, suffix: str) -> tuple[str, str]:
             """Classify, write, return (csv_path, month_string)."""
             classified = zones.classify_into_zones(df, spatial_col=cfg.spatial_res)
+            # WHO zones are already in predictionZone from classify_into_zones — preserve as whoZone
+            classified["whoZone"] = classified["predictionZone"]
+
+            # Degenerate WHO check: Mean=0 & StdDev=0 → meaningless threshold → NaN
+            if "Mean" in classified.columns and "StdDev" in classified.columns:
+                degenerate = (classified["Mean"] == 0) & (classified["StdDev"] == 0)
+                classified.loc[degenerate, "whoZone"] = pd.NA
+                if degenerate.any():
+                    deg_regions = sorted(
+                        classified.loc[degenerate, cfg.spatial_res].unique().tolist()
+                    )
+                    context.log.warning(
+                        "train_and_predict[%s]: %d region(s) have degenerate thresholds "
+                        "(Mean=0, StdDev=0): %s",
+                        suffix or "ensemble",
+                        len(deg_regions),
+                        deg_regions,
+                    )
+
             icmr_classified = icmr_quartile_zones(classified)
             classified["icmrZone"] = icmr_classified["predictionZone"]
+
             if thresh_cfg.classification_method == "icmr":
                 classified["predictionZone"] = classified["icmrZone"]
+            else:
+                classified["predictionZone"] = classified["whoZone"]
             classified["predictionZone"] = classified["predictionZone"].fillna(0)
 
             zone_zero_mask = classified["predictionZone"] == 0
@@ -194,23 +216,6 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
                     len(zone_zero_regions),
                     zone_zero_regions,
                 )
-
-            if thresh_cfg.classification_method == "who" and (
-                "Mean" in classified.columns and "StdDev" in classified.columns
-            ):
-                degenerate = (classified["Mean"] == 0) & (classified["StdDev"] == 0)
-                classified.loc[degenerate, "predictionZone"] = pd.NA
-                if degenerate.any():
-                    deg_regions = sorted(
-                        classified.loc[degenerate, cfg.spatial_res].unique().tolist()
-                    )
-                    context.log.warning(
-                        "train_and_predict[%s]: %d region(s) have degenerate thresholds "
-                        "(Mean=0, StdDev=0): %s",
-                        suffix or "ensemble",
-                        len(deg_regions),
-                        deg_regions,
-                    )
 
             future_dates = [
                 d

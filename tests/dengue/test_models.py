@@ -44,7 +44,13 @@ def _make_merged_df(n_weeks=20, n_regions=3, start="2022-01-05"):
 
 def test_lag_adds_temp_and_rf_columns():
     df = _make_merged_df()
-    result = _lag(df.copy(), "location.admin2.ID", lag_temp=[12], lag_rf=[4])
+    result = _lag(
+        df.copy(),
+        "location.admin2.ID",
+        lag_temp=[12],
+        lag_rainfall=[4],
+        lag_humidity=[4],
+    )
     assert "temp_lag_12" in result.columns
     assert "rainfall_lag_4" in result.columns
     assert "relative_humidity_lag_4" in result.columns
@@ -53,7 +59,13 @@ def test_lag_adds_temp_and_rf_columns():
 def test_lag_shifts_by_correct_amount():
     df = _make_merged_df(n_regions=1)
     original_temp = df["t2m_mean"].reset_index(drop=True)
-    result = _lag(df.copy(), "location.admin2.ID", lag_temp=[1], lag_rf=[1])
+    result = _lag(
+        df.copy(),
+        "location.admin2.ID",
+        lag_temp=[1],
+        lag_rainfall=[1],
+        lag_humidity=[1],
+    )
     result = result.reset_index(drop=True)
     # first row should be NaN after a lag-1 shift
     assert pd.isna(result["temp_lag_1"].iloc[0])
@@ -63,7 +75,9 @@ def test_lag_shifts_by_correct_amount():
 
 def test_filter_features_drops_rows_with_nan():
     df = _make_merged_df()
-    df = _lag(df, "location.admin2.ID", lag_temp=[12], lag_rf=[4])
+    df = _lag(
+        df, "location.admin2.ID", lag_temp=[12], lag_rainfall=[4], lag_humidity=[4]
+    )
     feature_cols = [
         "case",
         "recordYear",
@@ -79,7 +93,9 @@ def test_filter_features_drops_rows_with_nan():
 
 def test_filter_features_excludes_years():
     df = _make_merged_df(n_weeks=52, start="2022-01-05")
-    df = _lag(df, "location.admin2.ID", lag_temp=[12], lag_rf=[4])
+    df = _lag(
+        df, "location.admin2.ID", lag_temp=[12], lag_rainfall=[4], lag_humidity=[4]
+    )
     feature_cols = ["case", "recordYear", "recordMonth", "ISOWeek"]
     result = _filter_features(
         df,
@@ -93,7 +109,9 @@ def test_filter_features_excludes_years():
 
 def test_filter_features_includes_years():
     df = _make_merged_df(n_weeks=104, start="2022-01-05")
-    df = _lag(df, "location.admin2.ID", lag_temp=[12], lag_rf=[4])
+    df = _lag(
+        df, "location.admin2.ID", lag_temp=[12], lag_rainfall=[4], lag_humidity=[4]
+    )
     feature_cols = ["case", "recordYear", "recordMonth", "ISOWeek"]
     result = _filter_features(
         df,
@@ -228,7 +246,8 @@ def _make_ctx(
         spatial_res="location.admin2.ID",
         data_features=["case", "recordDate", "recordYear", "recordMonth", "ISOWeek"],
         lag_temp=[12],
-        lag_rf=[4],
+        lag_rainfall=[4],
+        lag_humidity=[4],
         years_to_exclude=[],
         years_to_include=[],
         list_alpha=[1.0, 2.0],
@@ -268,12 +287,12 @@ def test_get_model_raises_for_unknown():
 
 
 def test_train_predict_config_default_models():
-    cfg = TrainPredictConfig.from_raw({})
+    cfg = TrainPredictConfig.from_raw({"list_alpha": [2.0, 3.0]})
     assert cfg.models == ["nbr", "tse"]
 
 
 def test_train_predict_config_custom_models():
-    cfg = TrainPredictConfig.from_raw({"models": ["nbr"]})
+    cfg = TrainPredictConfig.from_raw({"models": ["nbr"], "list_alpha": [2.0, 3.0]})
     assert cfg.models == ["nbr"]
 
 
@@ -365,25 +384,29 @@ def test_tse_model_predict_uses_case_df_not_merged():
 
 
 def test_train_predict_config_default_ensemble_and_output():
-    cfg = TrainPredictConfig.from_raw({})
+    cfg = TrainPredictConfig.from_raw({"list_alpha": [2.0, 3.0]})
     assert cfg.ensemble == "mean"
     assert cfg.output == "ensemble"
 
 
 def test_train_predict_config_custom_ensemble_and_output():
-    cfg = TrainPredictConfig.from_raw({"ensemble": "none", "output": "per_model"})
+    cfg = TrainPredictConfig.from_raw(
+        {"ensemble": "none", "output": "per_model", "list_alpha": [2.0, 3.0]}
+    )
     assert cfg.ensemble == "none"
     assert cfg.output == "per_model"
 
 
 def test_train_predict_config_invalid_output_value():
     with pytest.raises(ValueError, match="output"):
-        TrainPredictConfig.from_raw({"output": "bogus"})
+        TrainPredictConfig.from_raw({"output": "bogus", "list_alpha": [2.0, 3.0]})
 
 
 def test_train_predict_config_ensemble_none_with_output_ensemble_raises():
     with pytest.raises(ValueError, match="ensemble.*none.*output.*ensemble"):
-        TrainPredictConfig.from_raw({"ensemble": "none", "output": "ensemble"})
+        TrainPredictConfig.from_raw(
+            {"ensemble": "none", "output": "ensemble", "list_alpha": [2.0, 3.0]}
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -399,3 +422,15 @@ def test_report_config_default_primary():
 def test_report_config_custom_primary():
     cfg = ReportConfig.from_raw({"primary": "nbr"})
     assert cfg.primary == "nbr"
+
+
+def test_lag_rainfall_and_humidity_are_independent():
+    """lag_rainfall and lag_humidity can differ — they control separate feature columns."""
+    cfg = TrainPredictConfig.from_raw(
+        {
+            "lag": {"lag_temp": [12], "lag_rainfall": [4], "lag_humidity": [2]},
+            "list_alpha": [1.0, 2.0],
+        }
+    )
+    assert cfg.lag_rainfall == [4]
+    assert cfg.lag_humidity == [2]

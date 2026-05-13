@@ -50,18 +50,21 @@ cutoff:
 
 thresholds:
   region_type: "district"
-  n_weeks: 4
-  historical_n_years: 4
-  excluded_years: []    # explicitly overrides code default [2020, 2021]
-  included_years: []
-  methods: [historical, prev_nweeks, weighted_baseline]
-  classification_method: icmr   # who | icmr
+  methods: [historical, prev_nweeks, weighted_baseline]   # remove a method to disable it entirely
+  classification_method: who          # who (default) | icmr — controls which method drives predictionZone
+  method_configs:
+    prev_nweeks:
+      n_weeks: 4
+    historical:
+      historical_n_years: 4
+      excluded_years: []    # overrides code default [2020, 2021]
+      included_years: []
 
 model:
   spatial_res: "district"
-  models: [nbr, rf, xgb]
-  ensemble: mean
-  output: both              # ensemble | per_model | both
+  models: [nbr, rf, xgb]      # models to run; predictions are combined via ensemble
+  ensemble: mean               # mean | none
+  output: both                 # ensemble | per_model | both
   data_features:
     - "case"
     - "recordDate"
@@ -71,14 +74,37 @@ model:
     - "t2m_mean"
     - "tp_sum"
     - "d2m_mean"
-  lag:
-    lag_temp: [12]
-    lag_rf: [4]
-  years_to_exclude: []    # explicitly overrides code default [2020, 2021]
-  years_to_include: []
-  list_alpha: [2.0, 3.0]
-  tune: false
-  n_trials: 50
+  list_alpha: [1.0, 2.0]
+
+# Per-model config. Each model owns its own lag, year filters, and tuning settings.
+model_configs:
+  nbr:
+    lag:
+      lag_temp: [12]
+      lag_rainfall: [4]
+      lag_humidity: [4]
+    years_to_exclude: []
+    years_to_include: []
+
+  rf:
+    lag:
+      lag_temp: [12]
+      lag_rainfall: [4]
+      lag_humidity: [4]
+    years_to_exclude: []
+    years_to_include: []
+    tune: false       # true → retune and overwrite artifacts/ap/hp/rf_best_params.json
+    n_trials: 50
+
+  xgb:
+    lag:
+      lag_temp: [12]
+      lag_rainfall: [4]
+      lag_humidity: [4]
+    years_to_exclude: []
+    years_to_include: []
+    tune: false       # true → retune and overwrite artifacts/ap/hp/xgb_best_params.json
+    n_trials: 50
 
 assess:
   total_district_regions: 26
@@ -91,6 +117,7 @@ report:
   output_dir: "reports"
   compile_pdf: true
   caption_primary: "AP districts"
+  caption_secondary: ""
 
 report_distribution:
   system_name: "Dengue Early Warning System"
