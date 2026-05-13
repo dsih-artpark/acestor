@@ -73,6 +73,10 @@ class GenerateThresholdsStep(BaseStep[GenerateThresholdsInputs, ThresholdsResult
                 historical_n_years=method_cfg.historical_n_years,
                 excluded_years=method_cfg.excluded_years,
                 included_years=method_cfg.included_years,
+                recent_weeks=method_cfg.recent_weeks,
+                sd_window_weeks=method_cfg.sd_window_weeks,
+                weight_recent=method_cfg.weight_recent,
+                weight_seasonal=method_cfg.weight_seasonal,
             )
             fn = get_threshold_method(method_name)
             method_dfs.append(fn(aligned, ctx))

@@ -391,6 +391,11 @@ class ThresholdsConfig:
     included_years: list[int]  # empty = no restriction; non-empty = only these years
     methods: list[str] = field(default_factory=lambda: ["historical", "prev_nweeks"])
     classification_method: str = "who"  # "who" | "icmr"
+    # weighted_baseline knobs
+    recent_weeks: int = 4
+    sd_window_weeks: int = 8
+    weight_recent: float = 0.7
+    weight_seasonal: float = 0.3
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any]) -> ThresholdsConfig:
@@ -406,6 +411,10 @@ class ThresholdsConfig:
             .strip()
             .lower()
             or "who",
+            recent_weeks=int(raw.get("recent_weeks", 4)),
+            sd_window_weeks=int(raw.get("sd_window_weeks", 8)),
+            weight_recent=float(raw.get("weight_recent", 0.7)),
+            weight_seasonal=float(raw.get("weight_seasonal", 0.3)),
         )
 
 
@@ -414,33 +423,31 @@ def resolve_threshold_config(
 ) -> ThresholdsConfig:
     """Shallow-merge per-method YAML overrides onto a base ThresholdsConfig.
 
-    Only n_weeks, historical_n_years, excluded_years, included_years are overridable.
-    region_type and methods are always inherited from base.
+    region_type, methods, and classification_method are always inherited from base.
+    Everything else is overridable per-method.
     """
+
+    def _override(key, cast, default):
+        return cast(raw_overrides[key]) if key in raw_overrides else default
+
     return ThresholdsConfig(
         region_type=base.region_type,
         methods=base.methods,
         classification_method=base.classification_method,
-        n_weeks=(
-            int(raw_overrides["n_weeks"])
-            if "n_weeks" in raw_overrides
-            else base.n_weeks
+        n_weeks=_override("n_weeks", int, base.n_weeks),
+        historical_n_years=_override(
+            "historical_n_years", int, base.historical_n_years
         ),
-        historical_n_years=(
-            int(raw_overrides["historical_n_years"])
-            if "historical_n_years" in raw_overrides
-            else base.historical_n_years
+        excluded_years=_override(
+            "excluded_years", lambda v: [int(y) for y in v], list(base.excluded_years)
         ),
-        excluded_years=(
-            [int(y) for y in raw_overrides["excluded_years"]]
-            if "excluded_years" in raw_overrides
-            else list(base.excluded_years)
+        included_years=_override(
+            "included_years", lambda v: [int(y) for y in v], list(base.included_years)
         ),
-        included_years=(
-            [int(y) for y in raw_overrides["included_years"]]
-            if "included_years" in raw_overrides
-            else list(base.included_years)
-        ),
+        recent_weeks=_override("recent_weeks", int, base.recent_weeks),
+        sd_window_weeks=_override("sd_window_weeks", int, base.sd_window_weeks),
+        weight_recent=_override("weight_recent", float, base.weight_recent),
+        weight_seasonal=_override("weight_seasonal", float, base.weight_seasonal),
     )
 
 

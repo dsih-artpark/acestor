@@ -16,6 +16,7 @@ from pipelines.dengue.configs import (
 )
 from pipelines.dengue.lib import predictions as pred_lib
 from pipelines.dengue.lib import zones
+from pipelines.dengue.lib.thresholds import icmr_quartile_zones
 from pipelines.dengue.lib.ensembles import get_ensemble
 from pipelines.dengue.lib.models import get_model, ModelContext
 from pipelines.dengue.results import (
@@ -175,10 +176,10 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
         def _classify_and_write(df: pd.DataFrame, suffix: str) -> tuple[str, str]:
             """Classify, write, return (csv_path, month_string)."""
             classified = zones.classify_into_zones(df, spatial_col=cfg.spatial_res)
+            icmr_classified = icmr_quartile_zones(classified)
+            classified["icmrZone"] = icmr_classified["predictionZone"]
             if thresh_cfg.classification_method == "icmr":
-                from pipelines.dengue.lib.thresholds import icmr_quartile_zones
-
-                classified = icmr_quartile_zones(classified)
+                classified["predictionZone"] = classified["icmrZone"]
             classified["predictionZone"] = classified["predictionZone"].fillna(0)
 
             zone_zero_mask = classified["predictionZone"] == 0

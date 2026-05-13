@@ -26,6 +26,11 @@ class ThresholdContext:
     historical_n_years: int | None = None
     excluded_years: list[int] = field(default_factory=list)
     included_years: list[int] = field(default_factory=list)
+    # weighted_baseline knobs
+    recent_weeks: int = 4
+    sd_window_weeks: int = 8
+    weight_recent: float = 0.7
+    weight_seasonal: float = 0.3
 
 
 _THRESHOLD_REGISTRY: dict[str, Callable] = {}
@@ -208,6 +213,85 @@ def _historical_method(df: pd.DataFrame, ctx: ThresholdContext) -> pd.DataFrame:
         n_years=ctx.historical_n_years,
         excluded_years=ctx.excluded_years,
         included_years=ctx.included_years,
+    )
+
+
+def weighted_baseline_threshold_params(
+    df: pd.DataFrame,
+    recent_weeks: int = 4,
+    sd_window_weeks: int = 8,
+    weight_recent: float = 0.7,
+    weight_seasonal: float = 0.3,
+) -> pd.DataFrame:
+    """Compute weighted baseline (SOP) threshold parameters per region/date.
+
+    Weighted Mean = weight_recent × mean(last recent_weeks)
+                  + weight_seasonal × mean(same weeks, 52 weeks prior)
+    StdDev = rolling std over sd_window_weeks recent weeks.
+
+    When seasonal data is absent (cold start), weight falls back to recent only.
+    threshold_method label: "weightedBaseline".
+    """
+    df = df.copy()
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.sort_values(["region_id", "date"])
+
+    parts = []
+    for _, group in df.groupby("region_id"):
+        g = group.reset_index(drop=True)
+        lookup: dict = dict(zip(g["date"], g["case"]))
+
+        means: list = []
+        stds: list = []
+        for _, row in g.iterrows():
+            d = row["date"]
+
+            recent_dates = [d - pd.Timedelta(weeks=i) for i in range(recent_weeks)]
+            recent_vals = [lookup.get(rd, np.nan) for rd in recent_dates]
+            recent_valid = [v for v in recent_vals if not np.isnan(v)]
+            recent_mean = float(np.mean(recent_valid)) if recent_valid else np.nan
+
+            seasonal_dates = [
+                d - pd.Timedelta(weeks=52 + i) for i in range(recent_weeks)
+            ]
+            seasonal_vals = [lookup.get(sd, np.nan) for sd in seasonal_dates]
+            seasonal_valid = [v for v in seasonal_vals if not np.isnan(v)]
+            seasonal_mean = float(np.mean(seasonal_valid)) if seasonal_valid else np.nan
+
+            if np.isnan(recent_mean) and np.isnan(seasonal_mean):
+                wm = np.nan
+            elif np.isnan(seasonal_mean):
+                wm = recent_mean
+            elif np.isnan(recent_mean):
+                wm = seasonal_mean
+            else:
+                wm = weight_recent * recent_mean + weight_seasonal * seasonal_mean
+
+            sd_dates = [d - pd.Timedelta(weeks=i) for i in range(sd_window_weeks)]
+            sd_vals = [lookup.get(sd, np.nan) for sd in sd_dates]
+            sd_valid = [v for v in sd_vals if not np.isnan(v)]
+            sd_val = float(np.std(sd_valid, ddof=1)) if len(sd_valid) > 1 else np.nan
+
+            means.append(wm)
+            stds.append(sd_val)
+
+        g["Mean"] = means
+        g["StdDev"] = stds
+        parts.append(g)
+
+    result = pd.concat(parts, ignore_index=True)
+    result["threshold_method"] = "weightedBaseline"
+    return result[["region_id", "date", "case", "Mean", "StdDev", "threshold_method"]]
+
+
+@register("weighted_baseline")
+def _weighted_baseline_method(df: pd.DataFrame, ctx: ThresholdContext) -> pd.DataFrame:
+    return weighted_baseline_threshold_params(
+        df,
+        recent_weeks=ctx.recent_weeks,
+        sd_window_weeks=ctx.sd_window_weeks,
+        weight_recent=ctx.weight_recent,
+        weight_seasonal=ctx.weight_seasonal,
     )
 
 

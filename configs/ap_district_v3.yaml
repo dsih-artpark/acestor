@@ -54,8 +54,8 @@ thresholds:
   historical_n_years: 4
   excluded_years: []
   included_years: []
-  methods: [historical, prev_nweeks]   # remove a method to disable it entirely
-  # classification_method: who         # who (default) | icmr — controls which method drives predictionZone
+  methods: [historical, prev_nweeks, weighted_baseline]   # remove a method to disable it entirely
+  classification_method: icmr          # who (default) | icmr — controls which method drives predictionZone
   #
   # Per-method param overrides. Keys not listed here are inherited from the fields above.
   # Tweakable per method:

@@ -13,6 +13,7 @@ from pipelines.dengue.lib.thresholds import (
     icmr_quartile_zones,
     prev_nweeks_threshold_params,
     register,
+    weighted_baseline_threshold_params,
 )
 
 
@@ -338,6 +339,71 @@ def test_icmr_quartile_per_date_independent():
             "prediction", ascending=False
         )
         assert list(sub["predictionZone"]) == [4, 3]
+
+
+# ---------------------------------------------------------------------------
+# weighted_baseline_threshold_params
+# ---------------------------------------------------------------------------
+
+
+def _wb_df(n_weeks=16, region="r1", base_cases=10):
+    """Weekly df going back n_weeks — enough for both recent and seasonal windows."""
+    dates = pd.date_range("2023-01-02", periods=n_weeks, freq="7D")
+    return _case_df([region] * n_weeks, dates, [base_cases] * n_weeks)
+
+
+def test_weighted_baseline_output_columns():
+    df = _wb_df(n_weeks=60)
+    result = weighted_baseline_threshold_params(df)
+    for col in ["region_id", "date", "case", "Mean", "StdDev", "threshold_method"]:
+        assert col in result.columns
+
+
+def test_weighted_baseline_threshold_method_label():
+    df = _wb_df(n_weeks=60)
+    result = weighted_baseline_threshold_params(df)
+    assert (result["threshold_method"] == "weightedBaseline").all()
+
+
+def test_weighted_baseline_constant_series():
+    # All cases = 10. Recent mean = 10, seasonal mean = 10. Weighted mean = 10.
+    # SD over 8 weeks of constant data = 0.
+    df = _wb_df(n_weeks=60, base_cases=10)
+    result = weighted_baseline_threshold_params(df)
+    non_nan = result["Mean"].dropna()
+    assert (non_nan == 10.0).all()
+    non_nan_sd = result["StdDev"].dropna()
+    assert (non_nan_sd == 0.0).all()
+
+
+def test_weighted_baseline_no_seasonal_falls_back_to_recent():
+    # Only 8 weeks of data — no seasonal (52 weeks prior) available.
+    # Mean should equal recent mean only.
+    df = _wb_df(n_weeks=8, base_cases=5)
+    result = weighted_baseline_threshold_params(df, recent_weeks=4)
+    non_nan = result["Mean"].dropna()
+    assert (non_nan == 5.0).all()
+
+
+def test_weighted_baseline_multiple_regions_independent():
+    df1 = _wb_df(n_weeks=60, region="r1", base_cases=4)
+    df2 = _wb_df(n_weeks=60, region="r2", base_cases=20)
+    df = pd.concat([df1, df2], ignore_index=True)
+    result = weighted_baseline_threshold_params(df)
+    r1_mean = result[result["region_id"] == "r1"]["Mean"].dropna()
+    r2_mean = result[result["region_id"] == "r2"]["Mean"].dropna()
+    assert (r1_mean == 4.0).all()
+    assert (r2_mean == 20.0).all()
+
+
+def test_weighted_baseline_registered():
+    fn = get_threshold_method("weighted_baseline")
+    df = _wb_df(n_weeks=60)
+    aligned = align_dates_all_regions(df)
+    ctx = ThresholdContext()
+    result = fn(aligned, ctx)
+    assert "threshold_method" in result.columns
+    assert (result["threshold_method"] == "weightedBaseline").all()
 
 
 def test_historical_registered():

@@ -84,6 +84,37 @@ def test_classification_method_icmr():
     assert cfg.classification_method == "icmr"
 
 
+def test_weighted_baseline_defaults():
+    cfg = ThresholdsConfig.from_raw(_base_raw())
+    assert cfg.recent_weeks == 4
+    assert cfg.sd_window_weeks == 8
+    assert cfg.weight_recent == 0.7
+    assert cfg.weight_seasonal == 0.3
+
+
+def test_weighted_baseline_knobs_overridable():
+    raw = {
+        **_base_raw(),
+        "recent_weeks": 6,
+        "sd_window_weeks": 12,
+        "weight_recent": 0.6,
+        "weight_seasonal": 0.4,
+    }
+    cfg = ThresholdsConfig.from_raw(raw)
+    assert cfg.recent_weeks == 6
+    assert cfg.sd_window_weeks == 12
+    assert cfg.weight_recent == 0.6
+    assert cfg.weight_seasonal == 0.4
+
+
+def test_resolve_threshold_config_overrides_weighted_baseline_knobs():
+    cfg = ThresholdsConfig.from_raw(_base_raw())
+    resolved = resolve_threshold_config(cfg, {"recent_weeks": 6, "sd_window_weeks": 12})
+    assert resolved.recent_weeks == 6
+    assert resolved.sd_window_weeks == 12
+    assert resolved.weight_recent == 0.7  # unchanged
+
+
 def test_resolve_threshold_config_preserves_classification_method():
     raw = {**_base_raw(), "classification_method": "icmr"}
     cfg = ThresholdsConfig.from_raw(raw)
