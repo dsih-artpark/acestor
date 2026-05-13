@@ -114,9 +114,9 @@ def prev_nweeks_threshold_params(
         )
         target_vals = target.map(lambda d: lookup.get(d, np.nan))
         if stat == "mean":
-            return target_vals.mean(axis=1, skipna=True)
+            return target_vals.mean(axis=1, skipna=False)
         elif stat == "std":
-            return target_vals.std(axis=1, skipna=True)
+            return target_vals.std(axis=1, skipna=False)
         raise ValueError(f"Unsupported stat: {stat}")
 
     df = df.copy()
@@ -127,9 +127,12 @@ def prev_nweeks_threshold_params(
     for _, group in df.groupby("region_id"):
         g = group.reset_index(drop=True)
         col = f"Mean_N{n}week_k{k}days"
-        g[col] = _process_group(g, "case", "mean", n, k, closed="left")
-        g["Mean"] = _process_group(g, col, "mean", 3, k, closed="right")
-        g["StdDev"] = _process_group(g, col, "std", 3, k, closed="right")
+        # ν: mean of t-1..t-4 (excludes current week per PRISM-H §4.2.2)
+        g[col] = _process_group(g, "case", "mean", n, k, closed="right")
+        # μ: mean of νₜ, νₜ₋₁, νₜ₋₂ (3 values including current ν)
+        g["Mean"] = _process_group(g, col, "mean", 3, k, closed="left")
+        # σ: std of νₜ, νₜ₋₁, νₜ₋₂, νₜ₋₃ (4 values per PRISM-H §4.2.2)
+        g["StdDev"] = _process_group(g, col, "std", 4, k, closed="left")
         parts.append(g)
 
     result = pd.concat(parts, ignore_index=True)

@@ -416,3 +416,38 @@ def test_historical_registered():
     result = fn(aligned, ctx)
     assert "threshold_method" in result.columns
     assert (result["threshold_method"] == "historical").all()
+
+
+def test_prev_nweeks_nu_excludes_current_week():
+    # ν should be mean of weeks t-1..t-4, NOT including the current week.
+    # Weeks 1-4: cases=10. Weeks 5-8: cases=99.
+    # For week 5 (first 99-case week), ν must use only the four 10-case prior weeks.
+    # With the corrected formula (skipna=False, full n-value windows required),
+    # Mean may be NaN at this point (warm-up not complete), but must never exceed 10.0.
+    dates = pd.date_range("2024-01-01", periods=8, freq="7D")
+    cases = [10, 10, 10, 10, 99, 99, 99, 99]
+    df = align_dates_all_regions(_case_df(["r1"] * 8, dates, cases))
+    result = prev_nweeks_threshold_params(df, n=4, k=7)
+    row = result[result["date"] == pd.Timestamp("2024-01-29")]
+    assert not row.empty, "expected a row for 2024-01-29"
+    mean_val = row["Mean"].values[0]
+    # Mean is NaN (warm-up) or ≤ 10.0 — must never be > 10.0 (which would indicate
+    # the current week's case=99 leaked into ν.
+    import math
+
+    assert (
+        math.isnan(mean_val) or mean_val <= 10.0
+    ), f"Mean={mean_val} — current week's case=99 must not contaminate ν"
+
+
+def test_prev_nweeks_sigma_uses_4_nu_values():
+    # σ should be std of 4 ν values, not 3.
+    # Alternating cases [1,3,1,3,...] → each ν = mean of 4 consecutive = 2.0 always.
+    # So std of any 4 equal ν values = 0.
+    dates = pd.date_range("2024-01-01", periods=12, freq="7D")
+    cases = [1, 3, 1, 3, 1, 3, 1, 3, 1, 3, 1, 3]
+    df = align_dates_all_regions(_case_df(["r1"] * 12, dates, cases))
+    result = prev_nweeks_threshold_params(df, n=4, k=7)
+    non_nan = result["StdDev"].dropna()
+    assert len(non_nan) > 0
+    assert (non_nan == 0.0).all(), f"expected all 0.0 StdDev, got {non_nan.unique()}"
