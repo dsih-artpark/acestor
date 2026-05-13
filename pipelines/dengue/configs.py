@@ -403,7 +403,7 @@ class ThresholdsConfig:
         return cls(
             region_type=raw.get("region_type", "zone"),
             n_weeks=int(raw.get("n_weeks", 4)),
-            historical_n_years=int(ny) if ny is not None else None,
+            historical_n_years=int(ny) if ny is not None else 4,
             excluded_years=[int(y) for y in raw.get("excluded_years", [2020, 2021])],
             included_years=[int(y) for y in raw.get("included_years", [])],
             methods=list(raw.get("methods", ["historical", "prev_nweeks"])),
@@ -436,7 +436,9 @@ def resolve_threshold_config(
         classification_method=base.classification_method,
         n_weeks=_override("n_weeks", int, base.n_weeks),
         historical_n_years=_override(
-            "historical_n_years", int, base.historical_n_years
+            "historical_n_years",
+            lambda v: int(v) if v is not None else None,
+            base.historical_n_years,
         ),
         excluded_years=_override(
             "excluded_years", lambda v: [int(y) for y in v], list(base.excluded_years)

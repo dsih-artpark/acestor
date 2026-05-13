@@ -115,6 +115,19 @@ def test_resolve_threshold_config_overrides_weighted_baseline_knobs():
     assert resolved.weight_recent == 0.7  # unchanged
 
 
+def test_historical_n_years_defaults_to_4():
+    """When historical_n_years is not specified, default must be 4 (PRISM-H §4.2.1)."""
+    cfg = ThresholdsConfig.from_raw(
+        {
+            "region_type": "district",
+            "methods": ["historical"],
+        }
+    )
+    assert (
+        cfg.historical_n_years == 4
+    ), f"Expected historical_n_years=4 by default, got {cfg.historical_n_years}"
+
+
 def test_resolve_threshold_config_preserves_classification_method():
     raw = {**_base_raw(), "classification_method": "icmr"}
     cfg = ThresholdsConfig.from_raw(raw)
