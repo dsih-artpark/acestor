@@ -228,11 +228,52 @@ def load_predictions(results_dir: Path, model_key: str) -> pd.DataFrame | None:
 # ---------------------------------------------------------------------------
 
 
+class Metrics:
+    """
+    Each static method takes the raw error series (and optionally the actuals series)
+    and returns a single rounded float, or None when the metric can't be computed.
+
+    To add a new metric:
+      1. Add a static method here.
+      2. Include it in compute_metrics_for_group() below.
+      3. Add it to the HTML dropdown, district table columns, and CLI summary as needed.
+    """
+
+    @staticmethod
+    def mae(errors: pd.Series) -> float:
+        """Mean Absolute Error — average absolute difference (same units as case count)."""
+        return round(errors.abs().mean(), 4)
+
+    @staticmethod
+    def rmse(errors: pd.Series) -> float:
+        """Root Mean Squared Error — penalises large errors more than MAE."""
+        return round(math.sqrt((errors**2).mean()), 4)
+
+    @staticmethod
+    def nrmse(errors: pd.Series, actual: pd.Series) -> float | None:
+        """Normalised RMSE = RMSE / mean(actual). Dimensionless; comparable across districts."""
+        mean_actual = actual.mean()
+        if mean_actual <= 0:
+            return None
+        return round(Metrics.rmse(errors) / mean_actual, 4)
+
+    @staticmethod
+    def bias(errors: pd.Series) -> float:
+        """Signed mean error (prediction − actual). Positive = over-predicting."""
+        return round(errors.mean(), 4)
+
+    @staticmethod
+    def zone_accuracy(predicted: pd.Series, actual: pd.Series) -> float | None:
+        """Fraction of district-weeks where predicted WHO zone matches actual zone."""
+        pairs = pd.concat([predicted, actual], axis=1).dropna()
+        if pairs.empty:
+            return None
+        return round((pairs.iloc[:, 0] == pairs.iloc[:, 1]).mean(), 4)
+
+
 def compute_metrics_for_group(group: pd.DataFrame) -> dict:
     """
-    Compute accuracy metrics for a set of (prediction, actual) pairs.
-
-    To add a new metric, extend the returned dict here.
+    Compute all metrics for a (prediction, actual) group.
     Input columns: prediction, actual_cases, predicted_zone, actual_zone.
     """
     n = len(group)
@@ -247,26 +288,16 @@ def compute_metrics_for_group(group: pd.DataFrame) -> dict:
         }
 
     errors = group["prediction"] - group["actual_cases"]
-    mae = round(errors.abs().mean(), 4)
-    rmse = round(math.sqrt((errors**2).mean()), 4)
-    mean_actual = group["actual_cases"].mean()
-    nrmse = round(rmse / mean_actual, 4) if mean_actual > 0 else None
-    bias = round(errors.mean(), 4)
-
-    zone_pairs = group.dropna(subset=["predicted_zone", "actual_zone"])
-    zone_acc = (
-        round((zone_pairs["predicted_zone"] == zone_pairs["actual_zone"]).mean(), 4)
-        if len(zone_pairs) > 0
-        else None
-    )
 
     return {
         "n": n,
-        "mae": mae,
-        "rmse": rmse,
-        "nrmse": nrmse,
-        "zone_accuracy": zone_acc,
-        "bias": bias,
+        "mae": Metrics.mae(errors),
+        "rmse": Metrics.rmse(errors),
+        "nrmse": Metrics.nrmse(errors, group["actual_cases"]),
+        "zone_accuracy": Metrics.zone_accuracy(
+            group["predicted_zone"], group["actual_zone"]
+        ),
+        "bias": Metrics.bias(errors),
     }
 
 
