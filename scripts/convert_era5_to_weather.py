@@ -8,7 +8,7 @@ Usage:
                         temperature_max_deg.csv
                         temperature_min_deg.csv
                         relative_humidity_daymean.csv
-    output_base_dir — root output folder (default: datasets/ap-weather)
+    output_base_dir — root output folder (default: ap_datasets/weather)
 
 Outputs (written under output_base_dir):
     district/YYYY/YYYY_MM.csv   — one row per district per day
@@ -49,7 +49,7 @@ if len(sys.argv) < 2:
     sys.exit(1)
 
 ERA5_DIR = Path(sys.argv[1])
-OUTPUT_BASE = Path(sys.argv[2]) if len(sys.argv) > 2 else Path("datasets/ap-weather")
+OUTPUT_BASE = Path(sys.argv[2]) if len(sys.argv) > 2 else Path("ap_datasets/weather")
 
 if not ERA5_DIR.is_dir():
     print(f"ERROR: era5_dir not found: {ERA5_DIR}")

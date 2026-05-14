@@ -123,7 +123,7 @@ report_json = {
         },
         {
             "id": "FIX-B",
-            "file": "datasets/ap-weather/district/**/*.csv (48 files)",
+            "file": "ap_datasets/weather/district/**/*.csv (48 files)",
             "description": "Removed all district_0 rows from ERA5-converted monthly CSVs",
             "files_modified": 48,
             "rows_removed": 1491,
