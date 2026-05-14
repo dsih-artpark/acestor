@@ -548,15 +548,6 @@ def build_html_report(json_data: dict, actuals_date: str) -> str:
     <label>Runs</label>
     <div class="run-checkboxes" id="run-checkboxes"></div>
   </div>
-  <div class="group">
-    <label>Model</label>
-    <select id="model-select">
-      <option value="nbr">Negative Binomial (NBR)</option>
-      <option value="rf">Random Forest</option>
-      <option value="xgb">XGBoost</option>
-      <option value="ensemble">Ensemble</option>
-    </select>
-  </div>
 </div>
 
 <main>
@@ -623,9 +614,6 @@ function getSelectedRuns() {{
 }}
 function getDistrictRun() {{
   return document.getElementById('run-select').value;
-}}
-function getModel() {{
-  return document.getElementById('model-select').value;
 }}
 function getDistrictModel() {{
   return document.getElementById('district-model-select').value;
@@ -864,7 +852,6 @@ RUNS.forEach(r => {{ const o = document.createElement('option'); o.value = r; o.
 
 document.querySelectorAll('input[name=method]').forEach(el => el.addEventListener('change', renderAll));
 document.getElementById('metric-select').addEventListener('change', renderAll);
-document.getElementById('model-select').addEventListener('change', renderAll);
 document.getElementById('run-select').addEventListener('change', renderDistrictTable);
 document.getElementById('district-model-select').addEventListener('change', renderDistrictTable);
 
