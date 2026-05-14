@@ -67,7 +67,7 @@ class DownscalePredictionsStep(BaseStep[DownscalePredictionsInputs, DownscaleRes
 
         run_date_str = inputs.load_predictions.run_date.replace("-", "")
         dest = context.artifact_path(
-            f"results/Predictions_downscaled_{cfg.child_level}_{run_date_str}.csv"
+            f"results/Predictions_downscaled_{cfg.parent_level}_to_{cfg.child_level}_{run_date_str}.csv"
         )
         context.artifacts.write_text(child_preds.to_csv(index=False), dest)
 

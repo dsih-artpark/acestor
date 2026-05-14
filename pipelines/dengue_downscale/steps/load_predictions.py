@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import ClassVar
 
+import pandas as pd
+
 from acestor import BaseStep, FileStorage, NoInputs, PipelineContext
 from pipelines.dengue_downscale.configs import DownscaleRunConfig
 from pipelines.dengue_downscale.results import LoadPredictionsResult
@@ -40,10 +42,22 @@ class LoadPredictionsStep(BaseStep[NoInputs, LoadPredictionsResult]):
                 f"Expected a file without model-name suffix (e.g. Predictions_Mar 2026_20260301.csv)."
             )
 
+        if len(combined) > 1:
+            context.log.warning(
+                "load_predictions: found %d combined Predictions CSVs in %s, using %s",
+                len(combined),
+                results_dir,
+                combined[0].name,
+            )
         pred_path = combined[0]
-        import pandas as pd
 
-        df = pd.read_csv(pred_path, usecols=["dateOfComputingPrediction"])
+        try:
+            df = pd.read_csv(pred_path, usecols=["dateOfComputingPrediction"])
+        except ValueError as exc:
+            raise ValueError(
+                f"Could not read 'dateOfComputingPrediction' from {pred_path} "
+                f"(source_run_id={cfg.source_run_id!r}). Is this a valid dengue predictions CSV?"
+            ) from exc
         run_date = str(df["dateOfComputingPrediction"].iloc[0])
 
         context.log.info(
