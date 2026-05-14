@@ -9,6 +9,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from pipelines.dengue_downscale.configs import DownscaleConfig, DownscaleRunConfig
 from pipelines.dengue_downscale.lib.downscale import (
     _PREDICTION_COLS,
     build_parent_child_mapping,
@@ -276,3 +277,51 @@ def test_downscale_empty_parent_preds_returns_empty_df():
         )
     assert list(result.columns) == _PREDICTION_COLS
     assert len(result) == 0
+
+
+# ---------------------------------------------------------------------------
+# Config dataclasses
+# ---------------------------------------------------------------------------
+
+
+def test_downscale_run_config_requires_source_run_id():
+    with pytest.raises(ValueError, match="source_run_id"):
+        DownscaleRunConfig.from_raw({})
+
+
+def test_downscale_run_config_reads_source_run_id():
+    cfg = DownscaleRunConfig.from_raw({"source_run_id": "march-01-run"})
+    assert cfg.source_run_id == "march-01-run"
+
+
+def test_downscale_config_requires_parent_level():
+    with pytest.raises(ValueError, match="parent_level"):
+        DownscaleConfig.from_raw({"child_level": "mandals"})
+
+
+def test_downscale_config_requires_child_level():
+    with pytest.raises(ValueError, match="child_level"):
+        DownscaleConfig.from_raw({"parent_level": "districts"})
+
+
+def test_downscale_config_defaults():
+    cfg = DownscaleConfig.from_raw(
+        {"parent_level": "districts", "child_level": "mandals"}
+    )
+    assert cfg.window_weeks == 4
+    assert cfg.geojson_base_path == "ap_datasets/geojsons/geojsons_AP"
+
+
+def test_downscale_config_custom_values():
+    cfg = DownscaleConfig.from_raw(
+        {
+            "parent_level": "districts",
+            "child_level": "mandals",
+            "window_weeks": 8,
+            "cases_csv": "prepared_data/mandal/cases_daily.csv",
+            "geojson_base_path": "custom/path",
+        }
+    )
+    assert cfg.window_weeks == 8
+    assert cfg.cases_csv == "prepared_data/mandal/cases_daily.csv"
+    assert cfg.geojson_base_path == "custom/path"
