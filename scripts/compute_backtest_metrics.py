@@ -64,14 +64,6 @@ PREPARED_CASES_CSV = (
     Path(__file__).parent.parent / "prepared_data" / "district" / "cases_daily.csv"
 )
 
-DEFAULT_RUNS = [
-    "backtest-20260306",
-    "run-2026-03-13",
-    "run-2026-03-20",
-    "run-2026-03-27",
-    "run-2026-04-03",
-    "clean-config-test",
-]
 
 MODEL_FILE_PATTERNS = {
     "nbr": r"District_nbr_",
@@ -305,7 +297,9 @@ def evaluate_run(run_dir: Path, actuals: pd.DataFrame) -> list[dict]:
     run_id = run_dir.name
     results_dir = run_dir / "results"
     if not results_dir.exists():
-        print(f"  skip  {run_id}  (no results/ directory)")
+        print(
+            f"  skip  {run_id}  — no results/ directory (did the pipeline run complete successfully?)"
+        )
         return []
 
     records = []
@@ -328,7 +322,10 @@ def evaluate_run(run_dir: Path, actuals: pd.DataFrame) -> list[dict]:
         actuals.drop(columns=["_iso_year", "_iso_week"], inplace=True)
         if merged.empty:
             print(
-                f"  skip  {run_id}/{model_key}  (no matching weeks — likely future-only run)"
+                f"  skip  {run_id}/{model_key}  — predictions don't overlap with actuals\n"
+                f"         (actuals end {actuals['week_start'].max().date()}, "
+                f"predictions start {preds['week_start'].min().date()})\n"
+                f"         Use a run_date at least 5–6 weeks before {actuals['week_start'].max().date()}"
             )
             continue
 
@@ -841,30 +838,31 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 examples:
-  # Evaluate all default runs, open metrics_output/metrics_report.html
-  uv run python scripts/compute_backtest_metrics.py
+  # Evaluate a single run by name (looks in artifacts/ap/<name>/)
+  uv run python scripts/compute_backtest_metrics.py --runs backtest-march
 
-  # Evaluate specific runs by name
-  uv run python scripts/compute_backtest_metrics.py --runs backtest-20260306 run-2026-03-13
+  # Evaluate multiple runs side by side
+  uv run python scripts/compute_backtest_metrics.py --runs backtest-march march-01-run
 
-  # Only look at one model
-  uv run python scripts/compute_backtest_metrics.py --models nbr xgb
+  # Evaluate by path (relative or absolute)
+  uv run python scripts/compute_backtest_metrics.py --runs artifacts/ap/backtest-march
+
+  # Only look at specific models
+  uv run python scripts/compute_backtest_metrics.py --runs backtest-march --models nbr xgb
 
   # Only look at one threshold method
-  uv run python scripts/compute_backtest_metrics.py --method historical
+  uv run python scripts/compute_backtest_metrics.py --runs backtest-march --method historical
 
-  # All filters combined
-  uv run python scripts/compute_backtest_metrics.py --runs backtest-20260306 --models nbr --method historical
-
-  # Custom output directory
-  uv run python scripts/compute_backtest_metrics.py --output /tmp/eval
+  # Write output to a custom directory
+  uv run python scripts/compute_backtest_metrics.py --runs backtest-march --output /tmp/eval
         """,
     )
     parser.add_argument(
         "--runs",
         nargs="+",
+        required=True,
         metavar="RUN",
-        help="Run names or paths to evaluate (default: all runs in DEFAULT_RUNS)",
+        help="One or more run names (e.g. backtest-march) or paths (e.g. artifacts/ap/backtest-march)",
     )
     parser.add_argument(
         "--models",
@@ -895,16 +893,13 @@ examples:
     if args.method:
         THRESHOLD_METHODS[:] = [args.method]
 
-    if args.runs:
-        run_dirs = []
-        for r in args.runs:
-            p = Path(r)
-            if p.is_absolute() or p.exists():
-                run_dirs.append(p)
-            else:
-                run_dirs.append(ARTIFACTS_ROOT / r)
-    else:
-        run_dirs = [ARTIFACTS_ROOT / r for r in DEFAULT_RUNS]
+    run_dirs = []
+    for r in args.runs:
+        p = Path(r)
+        if p.is_absolute() or p.exists():
+            run_dirs.append(p)
+        else:
+            run_dirs.append(ARTIFACTS_ROOT / r)
 
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -913,7 +908,10 @@ examples:
     cases_csv, actuals_date, source_kind = find_best_cases_csv()
     if cases_csv is None:
         print(
-            "ERROR: No cases data found. Run the prep pipeline first or download prepared_data from S3."
+            "ERROR: No case data found to use as actuals.\n"
+            "  Expected: prepared_data/district/cases_daily.csv\n"
+            "  Fix: run the prep pipeline first, or download prepared_data from S3:\n"
+            "       python scripts/sync_data.py download --only prepared"
         )
         return
     try:
@@ -927,14 +925,24 @@ examples:
     all_records = []
     for run_dir in run_dirs:
         if not run_dir.exists():
-            print(f"  warn  {run_dir}  (directory not found)")
+            print(
+                f"  ERROR: run not found — {run_dir}\n"
+                f"         Run names are looked up under artifacts/ap/. "
+                f"Check the name with: ls artifacts/ap/"
+            )
             continue
         print(f"Evaluating: {run_dir.name}")
         all_records.extend(evaluate_run(run_dir, actuals))
 
     if not all_records:
         print(
-            "\nNo metrics computed. Ensure runs have results/ directories with prediction CSVs."
+            "\nNo metrics could be computed. Common reasons:\n"
+            "  1. The run date is too recent — predictions cover future weeks that have no actuals yet.\n"
+            "     Fix: use a run_date at least 5–6 weeks before today.\n"
+            "  2. The run's results/ folder has no prediction CSVs.\n"
+            "     Check: ls artifacts/ap/<run-id>/results/\n"
+            "  3. The model was filtered out with --models.\n"
+            "     Check: re-run without --models to see all models."
         )
         return
 
