@@ -7,12 +7,51 @@ Translated from GBA ``GenerateThresholds.py`` and ``utils.py``
 from __future__ import annotations
 
 import logging
+import math
 from copy import deepcopy
+from dataclasses import dataclass, field
+from typing import Callable
 
 import numpy as np
 import pandas as pd
 
 log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ThresholdContext:
+    """Params a threshold method can read. Mirrors ThresholdsConfig fields."""
+
+    n_weeks: int = 4
+    historical_n_years: int | None = None
+    excluded_years: list[int] = field(default_factory=list)
+    included_years: list[int] = field(default_factory=list)
+    # weighted_baseline knobs
+    recent_weeks: int = 4
+    sd_window_weeks: int = 8
+    weight_recent: float = 0.7
+    weight_seasonal: float = 0.3
+
+
+_THRESHOLD_REGISTRY: dict[str, Callable] = {}
+
+
+def register(name: str):
+    """Function decorator that adds the function to _THRESHOLD_REGISTRY."""
+
+    def decorator(fn: Callable) -> Callable:
+        _THRESHOLD_REGISTRY[name] = fn
+        return fn
+
+    return decorator
+
+
+def get_threshold_method(name: str) -> Callable:
+    if name not in _THRESHOLD_REGISTRY:
+        raise KeyError(
+            f"Unknown threshold method '{name}'. Available: {sorted(_THRESHOLD_REGISTRY)}"
+        )
+    return _THRESHOLD_REGISTRY[name]
 
 
 def align_dates_all_regions(df: pd.DataFrame) -> pd.DataFrame:
@@ -49,6 +88,21 @@ def align_dates_all_regions(df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def _inflate_std(df: pd.DataFrame) -> pd.DataFrame:
+    """Inflate StdDev to sqrt(Mean) where StdDev=0 and Mean>0 (PRISM-H §4.4)."""
+    # PRISM-H §4.4: negative Mean indicates corrupt input — hard error
+    neg_mask = df["Mean"] < 0
+    if neg_mask.any():
+        bad = df[neg_mask][["region_id", "date", "Mean"]].head(5).to_dict("records")
+        raise ValueError(
+            f"Negative Mean detected — should never occur (PRISM-H §4.4). "
+            f"First offending rows: {bad}"
+        )
+    mask = (df["StdDev"] == 0) & (df["Mean"] > 0)
+    df.loc[mask, "StdDev"] = np.sqrt(df.loc[mask, "Mean"])
+    return df
+
+
 def prev_nweeks_threshold_params(
     df: pd.DataFrame,
     n: int = 4,
@@ -75,9 +129,9 @@ def prev_nweeks_threshold_params(
         )
         target_vals = target.map(lambda d: lookup.get(d, np.nan))
         if stat == "mean":
-            return target_vals.mean(axis=1, skipna=True)
+            return target_vals.mean(axis=1, skipna=False)
         elif stat == "std":
-            return target_vals.std(axis=1, skipna=True)
+            return target_vals.std(axis=1, skipna=False)
         raise ValueError(f"Unsupported stat: {stat}")
 
     df = df.copy()
@@ -88,13 +142,17 @@ def prev_nweeks_threshold_params(
     for _, group in df.groupby("region_id"):
         g = group.reset_index(drop=True)
         col = f"Mean_N{n}week_k{k}days"
-        g[col] = _process_group(g, "case", "mean", n, k, closed="left")
-        g["Mean"] = _process_group(g, col, "mean", 3, k, closed="right")
-        g["StdDev"] = _process_group(g, col, "std", 3, k, closed="right")
+        # ν: mean of t-1..t-4 (excludes current week per PRISM-H §4.2.2)
+        g[col] = _process_group(g, "case", "mean", n, k, closed="right")
+        # μ: mean of νₜ, νₜ₋₁, νₜ₋₂ (3 values including current ν)
+        g["Mean"] = _process_group(g, col, "mean", 3, k, closed="left")
+        # σ: std of νₜ, νₜ₋₁, νₜ₋₂, νₜ₋₃ (4 values per PRISM-H §4.2.2)
+        g["StdDev"] = _process_group(g, col, "std", 4, k, closed="left")
         parts.append(g)
 
     result = pd.concat(parts, ignore_index=True)
     result["threshold_method"] = "previousNweeks"
+    result = _inflate_std(result)
     return result[["region_id", "date", "case", "Mean", "StdDev", "threshold_method"]]
 
 
@@ -159,7 +217,186 @@ def historical_threshold_params(
         .reset_index(drop=True)
     )
     result["threshold_method"] = "historical"
+    result = _inflate_std(result)
     return result[["region_id", "date", "case", "Mean", "StdDev", "threshold_method"]]
+
+
+@register("prev_nweeks")
+def _prev_nweeks_method(df: pd.DataFrame, ctx: ThresholdContext) -> pd.DataFrame:
+    return prev_nweeks_threshold_params(df, n=ctx.n_weeks)
+
+
+@register("historical")
+def _historical_method(df: pd.DataFrame, ctx: ThresholdContext) -> pd.DataFrame:
+    return historical_threshold_params(
+        df,
+        n_years=ctx.historical_n_years,
+        excluded_years=ctx.excluded_years,
+        included_years=ctx.included_years,
+    )
+
+
+def weighted_baseline_threshold_params(
+    df: pd.DataFrame,
+    recent_weeks: int = 4,
+    sd_window_weeks: int = 8,
+    weight_recent: float = 0.7,
+    weight_seasonal: float = 0.3,
+) -> pd.DataFrame:
+    """Compute weighted baseline (SOP) threshold parameters per region/date.
+
+    Weighted Mean = weight_recent × mean(last recent_weeks)
+                  + weight_seasonal × mean(same weeks, 52 weeks prior)
+    StdDev = rolling std over sd_window_weeks recent weeks.
+
+    When seasonal data is absent (cold start), weight falls back to recent only.
+    threshold_method label: "weightedBaseline".
+    """
+    df = df.copy()
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.sort_values(["region_id", "date"])
+
+    parts = []
+    for _, group in df.groupby("region_id"):
+        g = group.reset_index(drop=True)
+        lookup: dict = dict(zip(g["date"], g["case"]))
+
+        means: list = []
+        stds: list = []
+        for _, row in g.iterrows():
+            d = row["date"]
+
+            recent_dates = [d - pd.Timedelta(weeks=i) for i in range(recent_weeks)]
+            recent_vals = [lookup.get(rd, np.nan) for rd in recent_dates]
+            recent_valid = [v for v in recent_vals if not np.isnan(v)]
+            recent_mean = float(np.mean(recent_valid)) if recent_valid else np.nan
+
+            seasonal_dates = [
+                d - pd.Timedelta(weeks=52 + i) for i in range(recent_weeks)
+            ]
+            seasonal_vals = [lookup.get(sd, np.nan) for sd in seasonal_dates]
+            seasonal_valid = [v for v in seasonal_vals if not np.isnan(v)]
+            seasonal_mean = float(np.mean(seasonal_valid)) if seasonal_valid else np.nan
+
+            if np.isnan(recent_mean) and np.isnan(seasonal_mean):
+                wm = np.nan
+            elif np.isnan(seasonal_mean):
+                wm = recent_mean
+            elif np.isnan(recent_mean):
+                wm = seasonal_mean
+            else:
+                wm = weight_recent * recent_mean + weight_seasonal * seasonal_mean
+
+            sd_dates = [d - pd.Timedelta(weeks=i) for i in range(sd_window_weeks)]
+            sd_vals = [lookup.get(sd, np.nan) for sd in sd_dates]
+            sd_valid = [v for v in sd_vals if not np.isnan(v)]
+            sd_val = float(np.std(sd_valid, ddof=1)) if len(sd_valid) > 1 else np.nan
+
+            means.append(wm)
+            stds.append(sd_val)
+
+        g["Mean"] = means
+        g["StdDev"] = stds
+        parts.append(g)
+
+    result = pd.concat(parts, ignore_index=True)
+    result["threshold_method"] = "weightedBaseline"
+    result = _inflate_std(result)
+    return result[["region_id", "date", "case", "Mean", "StdDev", "threshold_method"]]
+
+
+@register("weighted_baseline")
+def _weighted_baseline_method(df: pd.DataFrame, ctx: ThresholdContext) -> pd.DataFrame:
+    return weighted_baseline_threshold_params(
+        df,
+        recent_weeks=ctx.recent_weeks,
+        sd_window_weeks=ctx.sd_window_weeks,
+        weight_recent=ctx.weight_recent,
+        weight_seasonal=ctx.weight_seasonal,
+    )
+
+
+def icmr_quartile_zones(
+    df: pd.DataFrame,
+    *,
+    prediction_col: str = "prediction",
+    date_col: str = "startDatePredictedWeek",
+) -> pd.DataFrame:
+    """Assign ICMR quartile strata (A1–A4) as predictionZone per date.
+
+    Cross-sectional: for each date, distinct predicted case values across all
+    regions are ranked descending and divided into 4 equal strata.
+    A1 Critical → zone 4, A2 High → zone 3, A3 Caution → zone 2, A4 Low → zone 1.
+
+    Algorithm (ICMR doc / PRISM-H §5.1):
+      values_per_stratum = ceil(n_distinct / 4)
+      top values_per_stratum → A1, next → A2, next → A3, rest → A4
+    """
+
+    def _classify_date(group: pd.DataFrame) -> pd.DataFrame:
+        preds = group[prediction_col].values
+        distinct = sorted(set(preds), reverse=True)
+        n_distinct = len(distinct)
+
+        group = group.copy()
+
+        # PRISM-H §5.4 — insufficient data guard: < 10 total predicted cases
+        # across all geographies → set all zones to None ("Insufficient data")
+        if group[prediction_col].sum() < 10:
+            group["predictionZone"] = pd.NA
+            return group
+
+        if n_distinct == 0 or all(v == 0 for v in distinct):
+            group["predictionZone"] = 1  # all A4 Low
+            return group
+
+        vps = math.ceil(n_distinct / 4)
+        zone_map: dict[float, int] = {}
+        for i, val in enumerate(distinct):
+            stratum = min(i // vps, 3)  # 0=A1, 1=A2, 2=A3, 3=A4
+            zone_map[val] = 4 - stratum  # A1→4, A2→3, A3→2, A4→1
+
+        group["predictionZone"] = group[prediction_col].map(zone_map)
+        return group
+
+    parts = [_classify_date(group) for _, group in df.groupby(date_col)]
+    return pd.concat(parts, ignore_index=True) if parts else df.copy()
+
+
+# PRISM-H §4.2 — method preference order (camelCase labels as they appear in thresholdMethod)
+_METHOD_PRIORITY = ["historical", "previousNweeks", "weightedBaseline"]
+
+
+def _select_best_method(final: pd.DataFrame) -> pd.DataFrame:
+    """Select one row per date from the `final` assess_thresholds DataFrame.
+
+    PRISM-H §4.2: historical is preferred when it has a non-null, non-zero
+    Mean; prev_nweeks is the fallback; weighted_baseline is last resort.
+    If no method in the priority list has a valid Mean, the first available
+    row is returned (graceful degradation, no crash).
+    """
+    date_col = "startDatePredictedWeek"
+    selected_rows: list[pd.DataFrame] = []
+
+    for _date_val, group in final.groupby(date_col):
+        picked: pd.DataFrame | None = None
+        for method in _METHOD_PRIORITY:
+            candidate = group[
+                (group["thresholdMethod"] == method)
+                & group["Mean"].notna()
+                & (group["Mean"] > 0)
+            ]
+            if not candidate.empty:
+                picked = candidate.iloc[[0]]
+                break
+        if picked is None:
+            # Graceful fallback — return first row regardless
+            picked = group.iloc[[0]]
+        selected_rows.append(picked)
+
+    if not selected_rows:
+        return final.iloc[0:0].copy()
+    return pd.concat(selected_rows, ignore_index=True)
 
 
 def combine_thresholds(dfs: list[pd.DataFrame]) -> pd.DataFrame:
@@ -217,6 +454,7 @@ def assess_thresholds(
             .agg(
                 Risk_Zone_Sum_Total=("predictionZone", "sum"),
                 Row_Count_Total=("predictionZone", "count"),
+                Mean=("prediction", "mean"),
             )
             .reset_index()
         )
@@ -242,12 +480,5 @@ def assess_thresholds(
         ["startDatePredictedWeek", "thresholdMethod"]
     ).reset_index(drop=True)
 
-    best = (
-        final.sort_values(
-            ["startDatePredictedWeek", "Risk_Zone_Sum_Total"], ascending=[True, False]
-        )
-        .groupby("startDatePredictedWeek")
-        .first()
-        .reset_index()
-    )
+    best = _select_best_method(final)
     return final, best

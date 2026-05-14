@@ -6,7 +6,7 @@ defaults, so the step's ``run()`` never touches raw dicts.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import os
 from typing import Any, Mapping
 
@@ -389,6 +389,13 @@ class ThresholdsConfig:
     historical_n_years: int | None
     excluded_years: list[int]
     included_years: list[int]  # empty = no restriction; non-empty = only these years
+    methods: list[str] = field(default_factory=lambda: ["historical", "prev_nweeks"])
+    classification_method: str = "who"  # "who" | "icmr"
+    # weighted_baseline knobs
+    recent_weeks: int = 4
+    sd_window_weeks: int = 8
+    weight_recent: float = 0.7
+    weight_seasonal: float = 0.3
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any]) -> ThresholdsConfig:
@@ -396,10 +403,54 @@ class ThresholdsConfig:
         return cls(
             region_type=raw.get("region_type", "zone"),
             n_weeks=int(raw.get("n_weeks", 4)),
-            historical_n_years=int(ny) if ny is not None else None,
+            historical_n_years=int(ny) if ny is not None else 4,
             excluded_years=[int(y) for y in raw.get("excluded_years", [2020, 2021])],
             included_years=[int(y) for y in raw.get("included_years", [])],
+            methods=list(raw.get("methods", ["historical", "prev_nweeks"])),
+            classification_method=str(raw.get("classification_method", "who"))
+            .strip()
+            .lower()
+            or "who",
+            recent_weeks=int(raw.get("recent_weeks", 4)),
+            sd_window_weeks=int(raw.get("sd_window_weeks", 8)),
+            weight_recent=float(raw.get("weight_recent", 0.7)),
+            weight_seasonal=float(raw.get("weight_seasonal", 0.3)),
         )
+
+
+def resolve_threshold_config(
+    base: ThresholdsConfig, raw_overrides: dict
+) -> ThresholdsConfig:
+    """Shallow-merge per-method YAML overrides onto a base ThresholdsConfig.
+
+    region_type, methods, and classification_method are always inherited from base.
+    Everything else is overridable per-method.
+    """
+
+    def _override(key, cast, default):
+        return cast(raw_overrides[key]) if key in raw_overrides else default
+
+    return ThresholdsConfig(
+        region_type=base.region_type,
+        methods=base.methods,
+        classification_method=base.classification_method,
+        n_weeks=_override("n_weeks", int, base.n_weeks),
+        historical_n_years=_override(
+            "historical_n_years",
+            lambda v: int(v) if v is not None else None,
+            base.historical_n_years,
+        ),
+        excluded_years=_override(
+            "excluded_years", lambda v: [int(y) for y in v], list(base.excluded_years)
+        ),
+        included_years=_override(
+            "included_years", lambda v: [int(y) for y in v], list(base.included_years)
+        ),
+        recent_weeks=_override("recent_weeks", int, base.recent_weeks),
+        sd_window_weeks=_override("sd_window_weeks", int, base.sd_window_weeks),
+        weight_recent=_override("weight_recent", float, base.weight_recent),
+        weight_seasonal=_override("weight_seasonal", float, base.weight_seasonal),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -412,7 +463,8 @@ class TrainPredictConfig:
     spatial_res: str
     data_features: list[str]
     lag_temp: list[int]
-    lag_rf: list[int]
+    lag_rainfall: list[int]
+    lag_humidity: list[int]
     years_to_exclude: list[int]
     years_to_include: list[int]  # empty = no restriction; non-empty = only these years
     list_alpha: list[float]
@@ -457,12 +509,13 @@ class TrainPredictConfig:
                 )
             ),
             lag_temp=list(lag.get("lag_temp", [12])),
-            lag_rf=list(lag.get("lag_rf", [4])),
+            lag_rainfall=list(lag.get("lag_rainfall", [4])),
+            lag_humidity=list(lag.get("lag_humidity", [4])),
             years_to_exclude=[
                 int(y) for y in raw.get("years_to_exclude", [2020, 2021])
             ],
             years_to_include=[int(y) for y in raw.get("years_to_include", [])],
-            list_alpha=[float(a) for a in raw.get("list_alpha", [1.0, 2.0])],
+            list_alpha=[float(a) for a in raw["list_alpha"]],
             models=list(raw.get("models", ["nbr", "tse"])),
             ensemble=ensemble,
             output=output,
@@ -478,12 +531,16 @@ def resolve_model_config(
 
     Keys present in *raw_overrides* win over the base. The ``lag`` sub-dict
     is merged key-by-key so that specifying only ``lag_temp`` leaves
-    ``lag_rf`` at its base value.
+    ``lag_rainfall`` and ``lag_humidity`` at their base values.
     """
     if not raw_overrides:
         return base
 
-    base_lag = {"lag_temp": list(base.lag_temp), "lag_rf": list(base.lag_rf)}
+    base_lag = {
+        "lag_temp": list(base.lag_temp),
+        "lag_rainfall": list(base.lag_rainfall),
+        "lag_humidity": list(base.lag_humidity),
+    }
     override_lag = dict(raw_overrides.get("lag", {}))
     merged_lag = {**base_lag, **override_lag}
 

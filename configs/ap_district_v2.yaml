@@ -39,7 +39,7 @@ model:
     - "t2m_mean"
     - "tp_sum"
     - "d2m_mean"
-  list_alpha: [2.0, 3.0]  # default is [1.0, 2.0]
+  list_alpha: [1.0, 2.0]  # default is [1.0, 2.0]
 
 assess:
   total_district_regions: 26   # AP has 26 districts (default would be 10)

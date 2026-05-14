@@ -25,7 +25,8 @@ def random_forest_regression(
     *,
     spatial_col: str,
     lag_temp: list[int],
-    lag_rf: list[int],
+    lag_rainfall: list[int],
+    lag_humidity: list[int],
     years_to_exclude: list[int],
     years_to_include: list[int],
     predict_upto_date: pd.Timestamp,
@@ -49,12 +50,12 @@ def random_forest_regression(
         lambda x: datetime.isocalendar(x).week
     )
 
-    df0 = _lag(df0, spatial_col, lag_temp, lag_rf)
+    df0 = _lag(df0, spatial_col, lag_temp, lag_rainfall, lag_humidity)
 
     lag_cols = (
         [f"temp_lag_{lg}" for lg in lag_temp]
-        + [f"rainfall_lag_{lg}" for lg in lag_rf]
-        + [f"relative_humidity_lag_{lg}" for lg in lag_rf]
+        + [f"rainfall_lag_{lg}" for lg in lag_rainfall]
+        + [f"relative_humidity_lag_{lg}" for lg in lag_humidity]
     )
     lag_cols = [c for c in lag_cols if c in df0.columns]
 
@@ -187,7 +188,8 @@ class RFModel:
             ctx.merged_df,
             spatial_col=ctx.cfg.spatial_res,
             lag_temp=ctx.cfg.lag_temp,
-            lag_rf=ctx.cfg.lag_rf,
+            lag_rainfall=ctx.cfg.lag_rainfall,
+            lag_humidity=ctx.cfg.lag_humidity,
             years_to_exclude=ctx.cfg.years_to_exclude,
             years_to_include=ctx.cfg.years_to_include,
             predict_upto_date=ctx.pred_upto,
