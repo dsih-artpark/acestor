@@ -10,12 +10,25 @@ import pandas as pd
 
 log = logging.getLogger(__name__)
 
+_PREDICTION_COLS = [
+    "dateOfComputingPrediction",
+    "startDatePredictedWeek",
+    "regionID",
+    "prediction",
+    "thresholdMethod",
+    "predictionZone",
+    "model",
+]
+
 
 def build_parent_child_mapping(geojson_dir: Path) -> dict[str, str]:
     """Read all .geojson files in geojson_dir and return {child_id: parent_id}.
 
     Each geojson must be a FeatureCollection whose first feature's properties
     contain 'region_id' and 'parent'. Files missing either field are skipped.
+
+    Note: We only read features[0] because in this dataset, each geojson file
+    represents a single region (one feature per file), so index 0 is the only feature.
     """
     mapping: dict[str, str] = {}
     for path in sorted(geojson_dir.glob("*.geojson")):
@@ -62,6 +75,14 @@ def compute_shares(
     )
     totals = cases_df.loc[mask].groupby("region_id")["case_count"].sum()
     totals = totals.reindex(child_ids, fill_value=0.0)
+    negative = totals[totals < 0]
+    if not negative.empty:
+        log.warning(
+            "compute_shares: negative case counts for parent %s in children %s — clamping to 0",
+            parent_id,
+            sorted(negative.index.tolist()),
+        )
+        totals = totals.clip(lower=0)
     grand_total = float(totals.sum())
     if grand_total <= 0:
         log.debug(
@@ -91,16 +112,6 @@ def downscale_predictions(
     predictionZone and thresholdMethod are inherited from the parent row.
     Parent rows with no children in child_mapping are dropped with a warning.
     """
-    _COLS = [
-        "dateOfComputingPrediction",
-        "startDatePredictedWeek",
-        "regionID",
-        "prediction",
-        "thresholdMethod",
-        "predictionZone",
-        "model",
-    ]
-
     parent_to_children: dict[str, list[str]] = {}
     for child_id, parent_id in child_mapping.items():
         parent_to_children.setdefault(parent_id, []).append(child_id)
@@ -139,4 +150,8 @@ def downscale_predictions(
             sorted(unknown_parents),
         )
 
-    return pd.DataFrame(rows, columns=_COLS) if rows else pd.DataFrame(columns=_COLS)
+    return (
+        pd.DataFrame(rows, columns=_PREDICTION_COLS)
+        if rows
+        else pd.DataFrame(columns=_PREDICTION_COLS)
+    )

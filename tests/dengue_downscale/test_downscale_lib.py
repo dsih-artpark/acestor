@@ -10,6 +10,7 @@ import pandas as pd
 import pytest
 
 from pipelines.dengue_downscale.lib.downscale import (
+    _PREDICTION_COLS,
     build_parent_child_mapping,
     compute_shares,
     downscale_predictions,
@@ -104,6 +105,25 @@ def test_build_mapping_skips_missing_parent(tmp_path):
     assert "x" not in mapping
 
 
+def test_build_mapping_skips_missing_region_id(tmp_path):
+    (tmp_path / "no_region_id.geojson").write_text(
+        json.dumps(
+            {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "properties": {"parent": "d1"},
+                        "geometry": None,
+                    }
+                ],
+            }
+        )
+    )
+    mapping = build_parent_child_mapping(tmp_path)
+    assert mapping == {}
+
+
 def test_build_mapping_empty_dir(tmp_path):
     assert build_parent_child_mapping(tmp_path) == {}
 
@@ -173,15 +193,7 @@ def test_downscale_output_schema():
         result = downscale_predictions(
             preds, mapping, cases, pd.Timestamp("2026-03-01"), window_weeks=4
         )
-    assert set(result.columns) == {
-        "dateOfComputingPrediction",
-        "startDatePredictedWeek",
-        "regionID",
-        "prediction",
-        "thresholdMethod",
-        "predictionZone",
-        "model",
-    }
+    assert list(result.columns) == _PREDICTION_COLS
 
 
 def test_downscale_child_predictions_sum_to_parent():
@@ -240,3 +252,27 @@ def test_downscale_preserves_metadata_columns():
     assert result["thresholdMethod"].iloc[0] == "historical"
     assert result["model"].iloc[0] == "ensembleModel"
     assert result["dateOfComputingPrediction"].iloc[0] == "2026-03-01"
+
+
+def test_downscale_empty_parent_preds_returns_empty_df():
+    with tempfile.TemporaryDirectory() as tmp:
+        geojson_dir = Path(tmp)
+        _write_geojsons(geojson_dir, [("m1", "d1")])
+        mapping = build_parent_child_mapping(geojson_dir)
+        cases = _make_cases_df(["m1"])
+        empty_preds = pd.DataFrame(
+            columns=[
+                "dateOfComputingPrediction",
+                "startDatePredictedWeek",
+                "regionID",
+                "prediction",
+                "thresholdMethod",
+                "predictionZone",
+                "model",
+            ]
+        )
+        result = downscale_predictions(
+            empty_preds, mapping, cases, pd.Timestamp("2026-03-01"), window_weeks=4
+        )
+    assert list(result.columns) == _PREDICTION_COLS
+    assert len(result) == 0
