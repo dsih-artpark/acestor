@@ -692,16 +692,18 @@ function renderHorizonCharts() {{
   const wrap = document.getElementById('horizon-charts');
   wrap.innerHTML = '';
 
-  // Collect all weeks across all runs
-  const allWeeks = new Set();
+  // Find the max number of forecast weeks any run has (for the x-axis length)
+  let maxWeeks = 0;
   RUNS.forEach(run => {{
     MODELS.forEach(m => {{
       const cell = DATA[run]?.[m]?.[method];
-      if (cell) Object.keys(cell.per_week || {{}}).forEach(w => allWeeks.add(w));
+      if (cell) maxWeeks = Math.max(maxWeeks, Object.keys(cell.per_week || {{}}).length);
     }});
   }});
-  const weeks = Array.from(allWeeks).sort();
-  if (weeks.length === 0) {{ wrap.innerHTML = '<p class="no-data">No week-level data.</p>'; return; }}
+  if (maxWeeks === 0) {{ wrap.innerHTML = '<p class="no-data">No week-level data.</p>'; return; }}
+
+  // x-axis: relative offsets Week 1, Week 2, ...
+  const weekLabels = Array.from({{length: maxWeeks}}, (_, i) => `Week ${{i + 1}}`);
 
   // One chart per model
   MODELS.forEach((model, mi) => {{
@@ -711,7 +713,12 @@ function renderHorizonCharts() {{
     wrap.appendChild(div);
 
     const datasets = RUNS.map((run, ri) => {{
-      const vals = weeks.map(w => DATA[run]?.[model]?.[method]?.per_week?.[w]?.[metric] ?? null);
+      const cell = DATA[run]?.[model]?.[method];
+      const sortedWeeks = Object.keys(cell?.per_week || {{}}).sort();
+      const vals = weekLabels.map((_, i) => {{
+        const w = sortedWeeks[i];
+        return w ? (cell.per_week[w]?.[metric] ?? null) : null;
+      }});
       return {{
         label: run,
         data: vals,
@@ -727,7 +734,7 @@ function renderHorizonCharts() {{
     const ctx = document.getElementById(`chart-${{model}}`);
     charts[model] = new Chart(ctx, {{
       type: 'line',
-      data: {{ labels: weeks, datasets }},
+      data: {{ labels: weekLabels, datasets }},
       options: {{
         responsive: true,
         plugins: {{
