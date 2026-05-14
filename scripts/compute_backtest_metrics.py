@@ -222,42 +222,44 @@ def load_predictions(results_dir: Path, model_key: str) -> pd.DataFrame | None:
 
 class Metrics:
     """
-    Each static method takes the raw error series (and optionally the actuals series)
-    and returns a single rounded float, or None when the metric can't be computed.
+    Each static method receives predicted and actual series and returns a single
+    rounded float, or None when the metric can't be computed.
 
     To add a new metric:
-      1. Add a static method here.
+      1. Add a static method here with signature (predicted, actual) -> float | None.
       2. Include it in compute_metrics_for_group() below.
       3. Add it to the HTML dropdown, district table columns, and CLI summary as needed.
     """
 
     @staticmethod
-    def mae(errors: pd.Series) -> float:
+    def mae(predicted: pd.Series, actual: pd.Series) -> float:
         """Mean Absolute Error — average absolute difference (same units as case count)."""
-        return round(errors.abs().mean(), 4)
+        return round((predicted - actual).abs().mean(), 4)
 
     @staticmethod
-    def rmse(errors: pd.Series) -> float:
+    def rmse(predicted: pd.Series, actual: pd.Series) -> float:
         """Root Mean Squared Error — penalises large errors more than MAE."""
-        return round(math.sqrt((errors**2).mean()), 4)
+        return round(math.sqrt(((predicted - actual) ** 2).mean()), 4)
 
     @staticmethod
-    def nrmse(errors: pd.Series, actual: pd.Series) -> float | None:
+    def nrmse(predicted: pd.Series, actual: pd.Series) -> float | None:
         """Normalised RMSE = RMSE / mean(actual). Dimensionless; comparable across districts."""
         mean_actual = actual.mean()
         if mean_actual <= 0:
             return None
-        return round(Metrics.rmse(errors) / mean_actual, 4)
+        return round(Metrics.rmse(predicted, actual) / mean_actual, 4)
 
     @staticmethod
-    def bias(errors: pd.Series) -> float:
+    def bias(predicted: pd.Series, actual: pd.Series) -> float:
         """Signed mean error (prediction − actual). Positive = over-predicting."""
-        return round(errors.mean(), 4)
+        return round((predicted - actual).mean(), 4)
 
     @staticmethod
-    def zone_accuracy(predicted: pd.Series, actual: pd.Series) -> float | None:
+    def zone_accuracy(
+        predicted_zone: pd.Series, actual_zone: pd.Series
+    ) -> float | None:
         """Fraction of district-weeks where predicted WHO zone matches actual zone."""
-        pairs = pd.concat([predicted, actual], axis=1).dropna()
+        pairs = pd.concat([predicted_zone, actual_zone], axis=1).dropna()
         if pairs.empty:
             return None
         return round((pairs.iloc[:, 0] == pairs.iloc[:, 1]).mean(), 4)
@@ -279,17 +281,18 @@ def compute_metrics_for_group(group: pd.DataFrame) -> dict:
             "bias": None,
         }
 
-    errors = group["prediction"] - group["actual_cases"]
+    predicted = group["prediction"]
+    actual = group["actual_cases"]
 
     return {
         "n": n,
-        "mae": Metrics.mae(errors),
-        "rmse": Metrics.rmse(errors),
-        "nrmse": Metrics.nrmse(errors, group["actual_cases"]),
+        "mae": Metrics.mae(predicted, actual),
+        "rmse": Metrics.rmse(predicted, actual),
+        "nrmse": Metrics.nrmse(predicted, actual),
         "zone_accuracy": Metrics.zone_accuracy(
             group["predicted_zone"], group["actual_zone"]
         ),
-        "bias": Metrics.bias(errors),
+        "bias": Metrics.bias(predicted, actual),
     }
 
 
