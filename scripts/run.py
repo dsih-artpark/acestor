@@ -6,20 +6,15 @@ from the command line using dotted-key notation, without touching any YAML file.
 
 QUICK START
 -----------
-Run with the default config and auto-generated run ID:
-
-    uv run python scripts/run.py
-
-Use a specific config file:
+A config file is always required:
 
     uv run python scripts/run.py --config configs/ap_district_v3.yaml
 
 Override any config value using dotted keys:
 
-    uv run python scripts/run.py --set run.run_date=2026-03-13
-    uv run python scripts/run.py --set thresholds.method_configs.prev_nweeks.n_weeks=8
-    uv run python scripts/run.py --set thresholds.historical_n_years=2
-    uv run python scripts/run.py --set model.models="[nbr, xgb]"
+    uv run python scripts/run.py --config configs/ap_district_v3.yaml --set run.run_date=2026-03-13
+    uv run python scripts/run.py --config configs/ap_district_v3.yaml --set thresholds.method_configs.prev_nweeks.n_weeks=8
+    uv run python scripts/run.py --config configs/ap_district_v3.yaml --set model.models="[nbr, xgb]"
 
 Multiple overrides at once:
 
@@ -66,7 +61,6 @@ from pathlib import Path
 
 import yaml
 
-DEFAULT_CONFIG = Path(__file__).parent.parent / "configs" / "ap_district_v3.yaml"
 DEFAULT_PIPELINE = "pipelines.dengue.pipeline:build_pipeline"
 
 
@@ -119,19 +113,19 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 examples:
-  # Run with default config
-  uv run python scripts/run.py
+  # Run with no overrides (--config is required)
+  uv run python scripts/run.py --config configs/ap_district_v3.yaml
 
   # Change run date
-  uv run python scripts/run.py --set run.run_date=2026-03-13
+  uv run python scripts/run.py --config configs/ap_district_v3.yaml --set run.run_date=2026-03-13
 
   # Change n_weeks and historical years
-  uv run python scripts/run.py \\
+  uv run python scripts/run.py --config configs/ap_district_v3.yaml \\
       --set thresholds.method_configs.prev_nweeks.n_weeks=8 \\
       --set thresholds.method_configs.historical.historical_n_years=2
 
   # Run only NBR and XGB models
-  uv run python scripts/run.py --set model.models="[nbr, xgb]"
+  uv run python scripts/run.py --config configs/ap_district_v3.yaml --set "model.models=[nbr, xgb]"
 
   # Full custom run
   uv run python scripts/run.py \\
@@ -145,9 +139,9 @@ examples:
     )
     parser.add_argument(
         "--config",
-        default=str(DEFAULT_CONFIG),
+        required=True,
         metavar="FILE",
-        help=f"Base config YAML file (default: {DEFAULT_CONFIG.name})",
+        help="Base config YAML file (e.g. configs/ap_district_v3.yaml)",
     )
     parser.add_argument(
         "--pipeline",

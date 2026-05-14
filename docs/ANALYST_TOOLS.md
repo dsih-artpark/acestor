@@ -62,7 +62,7 @@ uv run python scripts/run.py [--config FILE] [--run-id ID] [--set KEY=VALUE ...]
 
 | Argument | Default | Description |
 |---|---|---|
-| `--config` | `configs/ap_district_v3.yaml` | Base config file to start from |
+| `--config` | **required** | Base config file to start from |
 | `--run-id` | auto-generated | Name for the artifact folder |
 | `--set KEY=VALUE` | — | Override any config value (repeatable) |
 | `--dry-run` | off | Print the final config and command without running |
@@ -102,11 +102,11 @@ Values are parsed automatically — no need to quote types:
 #### Examples
 
 ```bash
-# Run with all defaults (uses ap_district_v3.yaml, today's date)
-uv run python scripts/run.py
+# --config is required
+uv run python scripts/run.py --config configs/ap_district_v3.yaml
 
 # Change the run date
-uv run python scripts/run.py --set run.run_date=2026-03-13
+uv run python scripts/run.py --config configs/ap_district_v3.yaml --set run.run_date=2026-03-13
 
 # Change the rolling window for the prev_nweeks threshold method
 uv run python scripts/run.py \
