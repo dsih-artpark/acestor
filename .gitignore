@@ -43,6 +43,7 @@ ap_datasets
 *_datasets/
 cache/
 .claude/
+metrics_output/
 
 # Internal / local-only (not published)
 parity/
