@@ -237,11 +237,20 @@ def compute_metrics_for_group(group: pd.DataFrame) -> dict:
     """
     n = len(group)
     if n == 0:
-        return {"n": 0, "mae": None, "rmse": None, "zone_accuracy": None, "bias": None}
+        return {
+            "n": 0,
+            "mae": None,
+            "rmse": None,
+            "nrmse": None,
+            "zone_accuracy": None,
+            "bias": None,
+        }
 
     errors = group["prediction"] - group["actual_cases"]
     mae = round(errors.abs().mean(), 4)
     rmse = round(math.sqrt((errors**2).mean()), 4)
+    mean_actual = group["actual_cases"].mean()
+    nrmse = round(rmse / mean_actual, 4) if mean_actual > 0 else None
     bias = round(errors.mean(), 4)
 
     zone_pairs = group.dropna(subset=["predicted_zone", "actual_zone"])
@@ -251,7 +260,14 @@ def compute_metrics_for_group(group: pd.DataFrame) -> dict:
         else None
     )
 
-    return {"n": n, "mae": mae, "rmse": rmse, "zone_accuracy": zone_acc, "bias": bias}
+    return {
+        "n": n,
+        "mae": mae,
+        "rmse": rmse,
+        "nrmse": nrmse,
+        "zone_accuracy": zone_acc,
+        "bias": bias,
+    }
 
 
 def evaluate_run(run_dir: Path, actuals: pd.DataFrame) -> list[dict]:
@@ -341,6 +357,7 @@ def build_json(records: list[dict]) -> dict:
             "n": rec["n"],
             "mae": rec["mae"],
             "rmse": rec["rmse"],
+            "nrmse": rec["nrmse"],
             "zone_accuracy": rec["zone_accuracy"],
             "bias": rec["bias"],
             "per_week": rec["per_week"],
@@ -475,6 +492,7 @@ def build_html_report(json_data: dict, actuals_date: str) -> str:
     <select id="metric-select">
       <option value="mae">MAE (lower is better)</option>
       <option value="rmse">RMSE (lower is better)</option>
+      <option value="nrmse">NRMSE — RMSE ÷ mean(actual) (lower is better)</option>
       <option value="zone_accuracy">Zone Accuracy (higher is better)</option>
       <option value="bias">Bias (closer to 0 is better)</option>
     </select>
@@ -504,10 +522,10 @@ def build_html_report(json_data: dict, actuals_date: str) -> str:
   <div id="heatmap-container"></div>
 </section>
 
-<!-- ── Section 2: Week-by-week accuracy ──────────────────────────────── -->
+<!-- ── Section 2: Error over forecast horizon ────────────────────────── -->
 <section>
-  <h2>Accuracy over forecast horizon</h2>
-  <p class="sub">How accuracy changes week-by-week into the future. Each run shows 4–8 forecast weeks.
+  <h2>Error over forecast horizon</h2>
+  <p class="sub">How error changes week-by-week into the future. Each run shows 4–8 forecast weeks.
      Longer-horizon weeks typically have higher error.</p>
   <div class="chart-row" id="horizon-charts"></div>
 </section>
@@ -552,7 +570,14 @@ function getModel() {{
 function fmt(v, metric) {{
   if (v == null) return '—';
   if (metric === 'zone_accuracy') return (v*100).toFixed(1) + '%';
+  if (metric === 'nrmse') return v.toFixed(3);
   return v.toFixed(3);
+}}
+
+function metricLabel(metric) {{
+  return {{
+    mae: 'MAE', rmse: 'RMSE', nrmse: 'NRMSE', zone_accuracy: 'Zone Accuracy', bias: 'Bias'
+  }}[metric] || metric;
 }}
 
 function maeColor(v) {{
@@ -666,11 +691,15 @@ function renderHorizonCharts() {{
       data: {{ labels: weeks, datasets }},
       options: {{
         responsive: true,
-        plugins: {{ legend: {{ position: 'bottom', labels: {{ font: {{ size: 11 }}, boxWidth: 12 }} }} }},
+        plugins: {{
+          legend: {{ position: 'bottom', labels: {{ font: {{ size: 11 }}, boxWidth: 12 }} }},
+          title: {{ display: false }},
+        }},
         scales: {{
           y: {{
             min: isZone ? 0 : undefined,
             max: isZone ? 1 : undefined,
+            title: {{ display: true, text: metricLabel(metric), font: {{ size: 11 }} }},
             ticks: {{ callback: v => isZone ? (v*100).toFixed(0)+'%' : v.toFixed(2), font: {{ size: 11 }} }},
           }},
           x: {{ ticks: {{ font: {{ size: 10 }}, maxRotation: 45 }} }},
@@ -703,6 +732,7 @@ function renderDistrictTable() {{
     {{ key: 'n',        label: 'N weeks',  fmt: v => v }},
     {{ key: 'mae',      label: 'MAE',      fmt: v => v?.toFixed(3) ?? '—' }},
     {{ key: 'rmse',     label: 'RMSE',     fmt: v => v?.toFixed(3) ?? '—' }},
+    {{ key: 'nrmse',    label: 'NRMSE',    fmt: v => v?.toFixed(3) ?? '—' }},
     {{ key: 'zone_accuracy', label: 'Zone Acc', fmt: v => v != null ? (v*100).toFixed(1)+'%' : '—' }},
     {{ key: 'bias',     label: 'Bias',     fmt: v => v?.toFixed(3) ?? '—' }},
   ];
@@ -897,16 +927,17 @@ examples:
 
     print("\n── Summary ──────────────────────────────────────────────")
     print(
-        f"  {'Run':<22} {'Model':<10} {'Method':<16} {'MAE':>6} {'RMSE':>6} {'ZoneAcc':>8}"
+        f"  {'Run':<22} {'Model':<10} {'Method':<16} {'MAE':>6} {'RMSE':>6} {'NRMSE':>7} {'ZoneAcc':>8}"
     )
-    print(f"  {'-'*22} {'-'*10} {'-'*16} {'-'*6} {'-'*6} {'-'*8}")
+    print(f"  {'-'*22} {'-'*10} {'-'*16} {'-'*6} {'-'*6} {'-'*7} {'-'*8}")
     for run, models in json_data.items():
         for model, methods in models.items():
             for method, m in methods.items():
                 za = f"{m['zone_accuracy']*100:.1f}%" if m["zone_accuracy"] else "  —"
+                nr = f"{m['nrmse']:.3f}" if m.get("nrmse") is not None else "  —"
                 print(
                     f"  {run:<22} {model:<10} {method:<16} "
-                    f"{m['mae']:>6.3f} {m['rmse']:>6.3f} {za:>8}"
+                    f"{m['mae']:>6.3f} {m['rmse']:>6.3f} {nr:>7} {za:>8}"
                 )
 
 
