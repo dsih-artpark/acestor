@@ -376,9 +376,15 @@ def main():
 
     # Resolve run directories
     if args.runs:
-        run_dirs = [
-            Path(r) if Path(r).is_absolute() else ARTIFACTS_ROOT / r for r in args.runs
-        ]
+        run_dirs = []
+        for r in args.runs:
+            p = Path(r)
+            # If absolute or the path exists as-is (e.g. "artifacts/ap/run-xxx" from project root),
+            # use it directly. Otherwise treat as a bare name like "run-2026-03-13".
+            if p.is_absolute() or p.exists():
+                run_dirs.append(p)
+            else:
+                run_dirs.append(ARTIFACTS_ROOT / r)
     else:
         run_dirs = [ARTIFACTS_ROOT / r for r in DEFAULT_RUNS]
 
