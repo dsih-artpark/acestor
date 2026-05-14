@@ -498,7 +498,7 @@ def build_html_report(json_data: dict, actuals_date: str) -> str:
     </select>
   </div>
   <div class="group">
-    <label>District breakdown — Run</label>
+    <label>Run</label>
     <select id="run-select"></select>
   </div>
   <div class="group">
