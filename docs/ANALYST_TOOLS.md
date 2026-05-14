@@ -1,9 +1,10 @@
 # Analyst Tools — Running Pipelines & Evaluating Forecasts
 
-Two scripts live in `scripts/` for everyday use by analysts and data scientists:
+Three scripts live in `scripts/` for everyday use by analysts and data scientists:
 
 | Script | Purpose |
 |---|---|
+| `scripts/sync_data.py` | Download / upload pipeline input data from S3 (run this first on a fresh clone) |
 | `scripts/run.py` | Run the forecast pipeline with any config overrides from the command line |
 | `scripts/compute_backtest_metrics.py` | Evaluate past forecast runs against observed case data |
 
@@ -16,6 +17,96 @@ All commands below assume you are in the project root (`acestor-v2/`) and have r
 ```bash
 uv sync --all-extras
 ```
+
+---
+
+## 0. Getting the data (`sync_data.py`)
+
+Before you can run anything, you need the input datasets locally. They live in S3 and are not checked into git.
+
+### One-time setup
+
+**1. Configure AWS credentials** (skip if already done):
+
+```bash
+aws configure   # fill in access key, secret, region: ap-south-1
+```
+
+Or set environment variables:
+
+```bash
+export AWS_ACCESS_KEY_ID=...
+export AWS_SECRET_ACCESS_KEY=...
+export AWS_DEFAULT_REGION=ap-south-1
+```
+
+**2. Set the S3 bucket** (add to `~/.zshrc` or `~/.bashrc`):
+
+```bash
+export ACESTOR_S3_BUCKET=artpark-1health-data-dumps
+```
+
+### Download everything (new teammate setup)
+
+```bash
+uv run python scripts/sync_data.py download
+```
+
+This pulls all four datasets into the right local folders:
+
+| Dataset | Local folder | Description |
+|---|---|---|
+| `cases` | `ap_datasets/raw_case/` | Raw IHIP case files (.xlsx / .csv) |
+| `geojsons` | `ap_datasets/geojsons/geojsons_AP/` | AP district boundary GeoJSONs |
+| `weather` | `ap_datasets/weather/` | Raw weather CSVs by month |
+| `prepared` | `prepared_data/district/` | Prepared cases + weather CSVs |
+
+Files that already exist locally with the same size are skipped automatically.
+
+### Download only what you need
+
+```bash
+# Cases only
+uv run python scripts/sync_data.py download --only cases
+
+# Weather only
+uv run python scripts/sync_data.py download --only weather
+
+# Prepared data only (skip raw inputs)
+uv run python scripts/sync_data.py download --only prepared
+```
+
+### Preview before downloading
+
+```bash
+uv run python scripts/sync_data.py download --dry-run
+```
+
+Shows exactly what would be transferred without touching any files.
+
+### Upload new data to S3
+
+After adding new raw case files or updating geojsons:
+
+```bash
+uv run python scripts/sync_data.py upload
+
+# Or target a specific dataset
+uv run python scripts/sync_data.py upload --only cases
+```
+
+### All options
+
+```
+uv run python scripts/sync_data.py {download,upload} [OPTIONS]
+
+--bucket NAME       Override the S3 bucket (default: ACESTOR_S3_BUCKET env var)
+--only DATASET      Sync only one dataset: cases | geojsons | weather | prepared
+--backend BACKEND   Transfer backend: boto3 (default, no CLI needed) | awscli
+--dry-run           Show what would be transferred without doing it
+```
+
+> **No AWS CLI required.** The default backend uses the `boto3` Python library, which reads the same credentials as the CLI. Install it with `uv sync --all-extras` — it's already in the project dependencies.
 
 ---
 
@@ -161,6 +252,7 @@ These are the values most commonly overridden:
 ---
 
 ## 2. Evaluating forecast accuracy (`compute_backtest_metrics.py`)
+
 
 This script compares past forecast runs against observed case data and produces:
 
