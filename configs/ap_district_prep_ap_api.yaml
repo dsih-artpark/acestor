@@ -33,7 +33,7 @@ data:
   weather_download:
     enabled: true
     source_mode: "ap_datasets.ap_state_api"
-    parsed_output_path: "datasets/ap-weather"
+    parsed_output_path: "ap_datasets/weather"
     temperature_unit: "celsius"   # AP API returns °C — step converts to Kelvin
     precipitation_unit: "mm"      # AP API returns mm — step converts to metres
 
