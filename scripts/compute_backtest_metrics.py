@@ -474,6 +474,11 @@ def build_html_report(json_data: dict, actuals_date: str) -> str:
   header {{ background: #1a2e44; color: #fff; padding: 18px 32px; }}
   header h1 {{ font-size: 20px; font-weight: 600; }}
   header p  {{ font-size: 12px; opacity: .7; margin-top: 4px; }}
+  .run-checkboxes {{ display: flex; flex-wrap: wrap; gap: 6px; }}
+  .run-checkboxes label {{ display: flex; align-items: center; gap: 4px; font-weight: 400;
+    color: #333; cursor: pointer; background: #f0f2f5; border: 1px solid #d0d4db;
+    border-radius: 4px; padding: 3px 8px; font-size: 12px; }}
+  .run-checkboxes label:has(input:checked) {{ background: #dbeafe; border-color: #3b82f6; color: #1d4ed8; }}
   .controls {{ background: #fff; border-bottom: 1px solid #e0e3e8;
                padding: 12px 32px; display: flex; gap: 24px; align-items: center; flex-wrap: wrap; }}
   .controls label {{ font-size: 12px; font-weight: 600; color: #555; margin-right: 6px; }}
@@ -540,8 +545,8 @@ def build_html_report(json_data: dict, actuals_date: str) -> str:
     </select>
   </div>
   <div class="group">
-    <label>Run</label>
-    <select id="run-select"></select>
+    <label>Runs</label>
+    <div class="run-checkboxes" id="run-checkboxes"></div>
   </div>
   <div class="group">
     <label>Model</label>
@@ -575,7 +580,18 @@ def build_html_report(json_data: dict, actuals_date: str) -> str:
 <!-- ── Section 3: District breakdown ─────────────────────────────────── -->
 <section>
   <h2>District-level breakdown</h2>
-  <p class="sub">Select a run and model above. Click column headers to sort.</p>
+  <p class="sub">Click column headers to sort.</p>
+  <div style="display:flex;gap:12px;align-items:center;margin-bottom:10px;flex-wrap:wrap;">
+    <div><label style="font-size:12px;font-weight:600;color:#555;margin-right:6px;">Run</label>
+      <select id="run-select"></select></div>
+    <div><label style="font-size:12px;font-weight:600;color:#555;margin-right:6px;">Model</label>
+      <select id="district-model-select">
+        <option value="nbr">Negative Binomial (NBR)</option>
+        <option value="rf">Random Forest</option>
+        <option value="xgb">XGBoost</option>
+        <option value="ensemble">Ensemble</option>
+      </select></div>
+  </div>
   <div class="district-table" id="district-table-wrap"></div>
 </section>
 
@@ -602,11 +618,17 @@ function getMethod() {{
 function getMetric() {{
   return document.getElementById('metric-select').value;
 }}
-function getRun() {{
+function getSelectedRuns() {{
+  return Array.from(document.querySelectorAll('#run-checkboxes input:checked')).map(el => el.value);
+}}
+function getDistrictRun() {{
   return document.getElementById('run-select').value;
 }}
 function getModel() {{
   return document.getElementById('model-select').value;
+}}
+function getDistrictModel() {{
+  return document.getElementById('district-model-select').value;
 }}
 
 function fmt(v, metric) {{
@@ -654,11 +676,12 @@ function cellColor(v, metric) {{
 function renderHeatmap() {{
   const method = getMethod();
   const metric = getMetric();
+  const selectedRuns = getSelectedRuns();
   let html = '<table><thead><tr><th class="run-col">Run</th>';
   MODELS.forEach(m => {{ html += `<th>${{MODEL_LABELS[m]}}</th>`; }});
   html += '</tr></thead><tbody>';
 
-  RUNS.forEach(run => {{
+  (selectedRuns.length ? selectedRuns : RUNS).forEach(run => {{
     html += `<tr><td class="run-label">${{run}}</td>`;
     MODELS.forEach(m => {{
       const cell = DATA[run]?.[m]?.[method];
@@ -687,6 +710,8 @@ const CHART_COLORS = ['#3b82f6','#10b981','#f59e0b','#ef4444'];
 function renderHorizonCharts() {{
   const method = getMethod();
   const metric = getMetric();
+  const selectedRuns = getSelectedRuns();
+  const activeRuns = selectedRuns.length ? selectedRuns : RUNS;
 
   // Destroy old charts
   Object.values(charts).forEach(c => c.destroy());
@@ -695,9 +720,9 @@ function renderHorizonCharts() {{
   const wrap = document.getElementById('horizon-charts');
   wrap.innerHTML = '';
 
-  // Find the max number of forecast weeks any run has (for the x-axis length)
+  // Find the max number of forecast weeks any active run has
   let maxWeeks = 0;
-  RUNS.forEach(run => {{
+  activeRuns.forEach(run => {{
     MODELS.forEach(m => {{
       const cell = DATA[run]?.[m]?.[method];
       if (cell) maxWeeks = Math.max(maxWeeks, Object.keys(cell.per_week || {{}}).length);
@@ -715,7 +740,7 @@ function renderHorizonCharts() {{
     div.innerHTML = `<h3>${{MODEL_LABELS[model]}}</h3><canvas id="chart-${{model}}"></canvas>`;
     wrap.appendChild(div);
 
-    const datasets = RUNS.map((run, ri) => {{
+    const datasets = activeRuns.map((run, ri) => {{
       const cell = DATA[run]?.[model]?.[method];
       const sortedWeeks = Object.keys(cell?.per_week || {{}}).sort();
       const vals = weekLabels.map((_, i) => {{
@@ -762,8 +787,8 @@ function renderHorizonCharts() {{
 let sortCol = 'mae', sortDir = 1;
 
 function renderDistrictTable() {{
-  const run = getRun();
-  const model = getModel();
+  const run = getDistrictRun();
+  const model = getDistrictModel();
   const method = getMethod();
   const cell = DATA[run]?.[model]?.[method];
   const wrap = document.getElementById('district-table-wrap');
@@ -821,14 +846,27 @@ function renderAll() {{
   renderDistrictTable();
 }}
 
-// Populate run selector
+// Populate run checkboxes (all checked by default)
+const runCheckboxWrap = document.getElementById('run-checkboxes');
+RUNS.forEach(r => {{
+  const lbl = document.createElement('label');
+  const cb = document.createElement('input');
+  cb.type = 'checkbox'; cb.value = r; cb.checked = true;
+  cb.addEventListener('change', renderAll);
+  lbl.appendChild(cb);
+  lbl.appendChild(document.createTextNode(' ' + r));
+  runCheckboxWrap.appendChild(lbl);
+}});
+
+// Populate district run selector
 const runSel = document.getElementById('run-select');
 RUNS.forEach(r => {{ const o = document.createElement('option'); o.value = r; o.text = r; runSel.appendChild(o); }});
 
 document.querySelectorAll('input[name=method]').forEach(el => el.addEventListener('change', renderAll));
 document.getElementById('metric-select').addEventListener('change', renderAll);
+document.getElementById('model-select').addEventListener('change', renderAll);
 document.getElementById('run-select').addEventListener('change', renderDistrictTable);
-document.getElementById('model-select').addEventListener('change', renderDistrictTable);
+document.getElementById('district-model-select').addEventListener('change', renderDistrictTable);
 
 renderAll();
 </script>
