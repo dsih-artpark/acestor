@@ -60,6 +60,9 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 # ---------------------------------------------------------------------------
 
 ARTIFACTS_ROOT = Path(__file__).parent.parent / "artifacts" / "ap"
+PREPARED_CASES_CSV = (
+    Path(__file__).parent.parent / "prepared_data" / "district" / "cases_daily.csv"
+)
 
 DEFAULT_RUNS = [
     "backtest-20260306",
@@ -131,11 +134,25 @@ def find_prediction_csv(results_dir: Path, model_key: str) -> Path | None:
     return None
 
 
-def find_best_cases_csv() -> tuple[Path | None, str]:
-    """Return (path, date_str) for the cases CSV with the most recent data."""
+def find_best_cases_csv() -> tuple[Path | None, str, str]:
+    """Return (path, date_str, source_kind) for the most up-to-date cases data.
+
+    Checks prepared_data/district/cases_daily.csv first (always up to date),
+    then falls back to the most recent cases_district_sampled.csv across artifact runs.
+    source_kind is 'daily' or 'sampled' — used by load_actuals to parse correctly.
+    """
+    # --- preferred: prepared_data daily CSV (real data, always fresh) ---
+    if PREPARED_CASES_CSV.exists():
+        try:
+            df = pd.read_csv(PREPARED_CASES_CSV, usecols=["date"], parse_dates=["date"])
+            last = df["date"].max()
+            return PREPARED_CASES_CSV, str(last.date()), "daily"
+        except Exception:
+            pass
+
+    # --- fallback: most recent sampled CSV inside artifact runs ---
     best_path = None
     best_date = pd.Timestamp.min
-
     for csv_path in ARTIFACTS_ROOT.glob("*/datasets/cases_district_sampled.csv"):
         try:
             df = pd.read_csv(
@@ -151,18 +168,35 @@ def find_best_cases_csv() -> tuple[Path | None, str]:
             continue
 
     date_str = str(best_date.date()) if best_path else "unknown"
-    return best_path, date_str
+    return best_path, date_str, "sampled"
 
 
-def load_actuals(cases_csv: Path) -> pd.DataFrame:
-    df = pd.read_csv(cases_csv, parse_dates=["metadata.primaryDate"])
-    return df.rename(
-        columns={
-            "location.admin2.ID": "regionID",
-            "metadata.primaryDate": "week_start",
-            "case": "actual_cases",
-        }
-    )[["regionID", "week_start", "actual_cases"]]
+def load_actuals(cases_csv: Path, source_kind: str) -> pd.DataFrame:
+    if source_kind == "daily":
+        df = pd.read_csv(cases_csv, parse_dates=["date"])
+        df = df.rename(
+            columns={
+                "region_id": "regionID",
+                "date": "date",
+                "case_count": "actual_cases",
+            }
+        )
+        # aggregate daily → weekly using Friday as the week label (matches pipeline sampling)
+        df["week_start"] = df["date"] + pd.to_timedelta(
+            (4 - df["date"].dt.dayofweek) % 7, unit="D"
+        )
+        return df.groupby(["regionID", "week_start"], as_index=False)[
+            "actual_cases"
+        ].sum()[["regionID", "week_start", "actual_cases"]]
+    else:
+        df = pd.read_csv(cases_csv, parse_dates=["metadata.primaryDate"])
+        return df.rename(
+            columns={
+                "location.admin2.ID": "regionID",
+                "metadata.primaryDate": "week_start",
+                "case": "actual_cases",
+            }
+        )[["regionID", "week_start", "actual_cases"]]
 
 
 def normalise_threshold_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -804,15 +838,19 @@ examples:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print("\nLooking for actuals data...")
-    cases_csv, actuals_date = find_best_cases_csv()
+    cases_csv, actuals_date, source_kind = find_best_cases_csv()
     if cases_csv is None:
-        print("ERROR: No cases CSV found under artifacts/ap/*/datasets/")
+        print(
+            "ERROR: No cases data found. Run the prep pipeline first or download prepared_data from S3."
+        )
         return
-    print(
-        f"  Found: {cases_csv.relative_to(ARTIFACTS_ROOT)} (through {actuals_date})\n"
-    )
+    try:
+        display_path = cases_csv.relative_to(Path(__file__).parent.parent)
+    except ValueError:
+        display_path = cases_csv
+    print(f"  Found: {display_path} (through {actuals_date})\n")
 
-    actuals = load_actuals(cases_csv)
+    actuals = load_actuals(cases_csv, source_kind)
 
     all_records = []
     for run_dir in run_dirs:
