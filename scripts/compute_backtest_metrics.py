@@ -64,14 +64,6 @@ PREPARED_CASES_CSV = (
     Path(__file__).parent.parent / "prepared_data" / "district" / "cases_daily.csv"
 )
 
-DEFAULT_RUNS = [
-    "backtest-20260306",
-    "run-2026-03-13",
-    "run-2026-03-20",
-    "run-2026-03-27",
-    "run-2026-04-03",
-    "clean-config-test",
-]
 
 MODEL_FILE_PATTERNS = {
     "nbr": r"District_nbr_",
@@ -228,11 +220,54 @@ def load_predictions(results_dir: Path, model_key: str) -> pd.DataFrame | None:
 # ---------------------------------------------------------------------------
 
 
+class Metrics:
+    """
+    Each static method receives predicted and actual series and returns a single
+    rounded float, or None when the metric can't be computed.
+
+    To add a new metric:
+      1. Add a static method here with signature (predicted, actual) -> float | None.
+      2. Include it in compute_metrics_for_group() below.
+      3. Add it to the HTML dropdown, district table columns, and CLI summary as needed.
+    """
+
+    @staticmethod
+    def mae(predicted: pd.Series, actual: pd.Series) -> float:
+        """Mean Absolute Error — average absolute difference (same units as case count)."""
+        return round((predicted - actual).abs().mean(), 4)
+
+    @staticmethod
+    def rmse(predicted: pd.Series, actual: pd.Series) -> float:
+        """Root Mean Squared Error — penalises large errors more than MAE."""
+        return round(math.sqrt(((predicted - actual) ** 2).mean()), 4)
+
+    @staticmethod
+    def nrmse(predicted: pd.Series, actual: pd.Series) -> float | None:
+        """Normalised RMSE = RMSE / mean(actual). Dimensionless; comparable across districts."""
+        mean_actual = actual.mean()
+        if mean_actual <= 0:
+            return None
+        return round(Metrics.rmse(predicted, actual) / mean_actual, 4)
+
+    @staticmethod
+    def bias(predicted: pd.Series, actual: pd.Series) -> float:
+        """Signed mean error (prediction − actual). Positive = over-predicting."""
+        return round((predicted - actual).mean(), 4)
+
+    @staticmethod
+    def zone_accuracy(
+        predicted_zone: pd.Series, actual_zone: pd.Series
+    ) -> float | None:
+        """Fraction of district-weeks where predicted WHO zone matches actual zone."""
+        pairs = pd.concat([predicted_zone, actual_zone], axis=1).dropna()
+        if pairs.empty:
+            return None
+        return round((pairs.iloc[:, 0] == pairs.iloc[:, 1]).mean(), 4)
+
+
 def compute_metrics_for_group(group: pd.DataFrame) -> dict:
     """
-    Compute accuracy metrics for a set of (prediction, actual) pairs.
-
-    To add a new metric, extend the returned dict here.
+    Compute all metrics for a (prediction, actual) group.
     Input columns: prediction, actual_cases, predicted_zone, actual_zone.
     """
     n = len(group)
@@ -246,27 +281,18 @@ def compute_metrics_for_group(group: pd.DataFrame) -> dict:
             "bias": None,
         }
 
-    errors = group["prediction"] - group["actual_cases"]
-    mae = round(errors.abs().mean(), 4)
-    rmse = round(math.sqrt((errors**2).mean()), 4)
-    mean_actual = group["actual_cases"].mean()
-    nrmse = round(rmse / mean_actual, 4) if mean_actual > 0 else None
-    bias = round(errors.mean(), 4)
-
-    zone_pairs = group.dropna(subset=["predicted_zone", "actual_zone"])
-    zone_acc = (
-        round((zone_pairs["predicted_zone"] == zone_pairs["actual_zone"]).mean(), 4)
-        if len(zone_pairs) > 0
-        else None
-    )
+    predicted = group["prediction"]
+    actual = group["actual_cases"]
 
     return {
         "n": n,
-        "mae": mae,
-        "rmse": rmse,
-        "nrmse": nrmse,
-        "zone_accuracy": zone_acc,
-        "bias": bias,
+        "mae": Metrics.mae(predicted, actual),
+        "rmse": Metrics.rmse(predicted, actual),
+        "nrmse": Metrics.nrmse(predicted, actual),
+        "zone_accuracy": Metrics.zone_accuracy(
+            group["predicted_zone"], group["actual_zone"]
+        ),
+        "bias": Metrics.bias(predicted, actual),
     }
 
 
@@ -274,7 +300,9 @@ def evaluate_run(run_dir: Path, actuals: pd.DataFrame) -> list[dict]:
     run_id = run_dir.name
     results_dir = run_dir / "results"
     if not results_dir.exists():
-        print(f"  skip  {run_id}  (no results/ directory)")
+        print(
+            f"  skip  {run_id}  — no results/ directory (did the pipeline run complete successfully?)"
+        )
         return []
 
     records = []
@@ -283,10 +311,24 @@ def evaluate_run(run_dir: Path, actuals: pd.DataFrame) -> list[dict]:
         if preds is None:
             continue
 
-        merged = preds.merge(actuals, on=["regionID", "week_start"], how="inner")
+        # Join on ISO year+week so sampling-day differences (Fri vs Sun etc.) don't break the match
+        preds["_iso_year"] = preds["week_start"].dt.isocalendar().year
+        preds["_iso_week"] = preds["week_start"].dt.isocalendar().week
+        actuals["_iso_year"] = actuals["week_start"].dt.isocalendar().year
+        actuals["_iso_week"] = actuals["week_start"].dt.isocalendar().week
+        merged = preds.merge(
+            actuals.drop(columns=["week_start"]),
+            on=["regionID", "_iso_year", "_iso_week"],
+            how="inner",
+        ).drop(columns=["_iso_year", "_iso_week"])
+        preds.drop(columns=["_iso_year", "_iso_week"], inplace=True)
+        actuals.drop(columns=["_iso_year", "_iso_week"], inplace=True)
         if merged.empty:
             print(
-                f"  skip  {run_id}/{model_key}  (no matching weeks — likely future-only run)"
+                f"  skip  {run_id}/{model_key}  — predictions don't overlap with actuals\n"
+                f"         (actuals end {actuals['week_start'].max().date()}, "
+                f"predictions start {preds['week_start'].min().date()})\n"
+                f"         Use a run_date at least 5–6 weeks before {actuals['week_start'].max().date()}"
             )
             continue
 
@@ -432,6 +474,11 @@ def build_html_report(json_data: dict, actuals_date: str) -> str:
   header {{ background: #1a2e44; color: #fff; padding: 18px 32px; }}
   header h1 {{ font-size: 20px; font-weight: 600; }}
   header p  {{ font-size: 12px; opacity: .7; margin-top: 4px; }}
+  .run-checkboxes {{ display: flex; flex-wrap: wrap; gap: 6px; }}
+  .run-checkboxes label {{ display: flex; align-items: center; gap: 4px; font-weight: 400;
+    color: #333; cursor: pointer; background: #f0f2f5; border: 1px solid #d0d4db;
+    border-radius: 4px; padding: 3px 8px; font-size: 12px; }}
+  .run-checkboxes label:has(input:checked) {{ background: #dbeafe; border-color: #3b82f6; color: #1d4ed8; }}
   .controls {{ background: #fff; border-bottom: 1px solid #e0e3e8;
                padding: 12px 32px; display: flex; gap: 24px; align-items: center; flex-wrap: wrap; }}
   .controls label {{ font-size: 12px; font-weight: 600; color: #555; margin-right: 6px; }}
@@ -498,17 +545,8 @@ def build_html_report(json_data: dict, actuals_date: str) -> str:
     </select>
   </div>
   <div class="group">
-    <label>District breakdown — Run</label>
-    <select id="run-select"></select>
-  </div>
-  <div class="group">
-    <label>Model</label>
-    <select id="model-select">
-      <option value="nbr">Negative Binomial (NBR)</option>
-      <option value="rf">Random Forest</option>
-      <option value="xgb">XGBoost</option>
-      <option value="ensemble">Ensemble</option>
-    </select>
+    <label>Runs</label>
+    <div class="run-checkboxes" id="run-checkboxes"></div>
   </div>
 </div>
 
@@ -533,7 +571,18 @@ def build_html_report(json_data: dict, actuals_date: str) -> str:
 <!-- ── Section 3: District breakdown ─────────────────────────────────── -->
 <section>
   <h2>District-level breakdown</h2>
-  <p class="sub">Select a run and model above. Click column headers to sort.</p>
+  <p class="sub">Click column headers to sort.</p>
+  <div style="display:flex;gap:12px;align-items:center;margin-bottom:10px;flex-wrap:wrap;">
+    <div><label style="font-size:12px;font-weight:600;color:#555;margin-right:6px;">Run</label>
+      <select id="run-select"></select></div>
+    <div><label style="font-size:12px;font-weight:600;color:#555;margin-right:6px;">Model</label>
+      <select id="district-model-select">
+        <option value="nbr">Negative Binomial (NBR)</option>
+        <option value="rf">Random Forest</option>
+        <option value="xgb">XGBoost</option>
+        <option value="ensemble">Ensemble</option>
+      </select></div>
+  </div>
   <div class="district-table" id="district-table-wrap"></div>
 </section>
 
@@ -560,11 +609,14 @@ function getMethod() {{
 function getMetric() {{
   return document.getElementById('metric-select').value;
 }}
-function getRun() {{
+function getSelectedRuns() {{
+  return Array.from(document.querySelectorAll('#run-checkboxes input:checked')).map(el => el.value);
+}}
+function getDistrictRun() {{
   return document.getElementById('run-select').value;
 }}
-function getModel() {{
-  return document.getElementById('model-select').value;
+function getDistrictModel() {{
+  return document.getElementById('district-model-select').value;
 }}
 
 function fmt(v, metric) {{
@@ -612,11 +664,12 @@ function cellColor(v, metric) {{
 function renderHeatmap() {{
   const method = getMethod();
   const metric = getMetric();
+  const selectedRuns = getSelectedRuns();
   let html = '<table><thead><tr><th class="run-col">Run</th>';
   MODELS.forEach(m => {{ html += `<th>${{MODEL_LABELS[m]}}</th>`; }});
   html += '</tr></thead><tbody>';
 
-  RUNS.forEach(run => {{
+  (selectedRuns.length ? selectedRuns : RUNS).forEach(run => {{
     html += `<tr><td class="run-label">${{run}}</td>`;
     MODELS.forEach(m => {{
       const cell = DATA[run]?.[m]?.[method];
@@ -645,6 +698,8 @@ const CHART_COLORS = ['#3b82f6','#10b981','#f59e0b','#ef4444'];
 function renderHorizonCharts() {{
   const method = getMethod();
   const metric = getMetric();
+  const selectedRuns = getSelectedRuns();
+  const activeRuns = selectedRuns.length ? selectedRuns : RUNS;
 
   // Destroy old charts
   Object.values(charts).forEach(c => c.destroy());
@@ -653,16 +708,18 @@ function renderHorizonCharts() {{
   const wrap = document.getElementById('horizon-charts');
   wrap.innerHTML = '';
 
-  // Collect all weeks across all runs
-  const allWeeks = new Set();
-  RUNS.forEach(run => {{
+  // Find the max number of forecast weeks any active run has
+  let maxWeeks = 0;
+  activeRuns.forEach(run => {{
     MODELS.forEach(m => {{
       const cell = DATA[run]?.[m]?.[method];
-      if (cell) Object.keys(cell.per_week || {{}}).forEach(w => allWeeks.add(w));
+      if (cell) maxWeeks = Math.max(maxWeeks, Object.keys(cell.per_week || {{}}).length);
     }});
   }});
-  const weeks = Array.from(allWeeks).sort();
-  if (weeks.length === 0) {{ wrap.innerHTML = '<p class="no-data">No week-level data.</p>'; return; }}
+  if (maxWeeks === 0) {{ wrap.innerHTML = '<p class="no-data">No week-level data.</p>'; return; }}
+
+  // x-axis: relative offsets Week 1, Week 2, ...
+  const weekLabels = Array.from({{length: maxWeeks}}, (_, i) => `Week ${{i + 1}}`);
 
   // One chart per model
   MODELS.forEach((model, mi) => {{
@@ -671,8 +728,13 @@ function renderHorizonCharts() {{
     div.innerHTML = `<h3>${{MODEL_LABELS[model]}}</h3><canvas id="chart-${{model}}"></canvas>`;
     wrap.appendChild(div);
 
-    const datasets = RUNS.map((run, ri) => {{
-      const vals = weeks.map(w => DATA[run]?.[model]?.[method]?.per_week?.[w]?.[metric] ?? null);
+    const datasets = activeRuns.map((run, ri) => {{
+      const cell = DATA[run]?.[model]?.[method];
+      const sortedWeeks = Object.keys(cell?.per_week || {{}}).sort();
+      const vals = weekLabels.map((_, i) => {{
+        const w = sortedWeeks[i];
+        return w ? (cell.per_week[w]?.[metric] ?? null) : null;
+      }});
       return {{
         label: run,
         data: vals,
@@ -688,7 +750,7 @@ function renderHorizonCharts() {{
     const ctx = document.getElementById(`chart-${{model}}`);
     charts[model] = new Chart(ctx, {{
       type: 'line',
-      data: {{ labels: weeks, datasets }},
+      data: {{ labels: weekLabels, datasets }},
       options: {{
         responsive: true,
         plugins: {{
@@ -713,8 +775,8 @@ function renderHorizonCharts() {{
 let sortCol = 'mae', sortDir = 1;
 
 function renderDistrictTable() {{
-  const run = getRun();
-  const model = getModel();
+  const run = getDistrictRun();
+  const model = getDistrictModel();
   const method = getMethod();
   const cell = DATA[run]?.[model]?.[method];
   const wrap = document.getElementById('district-table-wrap');
@@ -772,14 +834,26 @@ function renderAll() {{
   renderDistrictTable();
 }}
 
-// Populate run selector
+// Populate run checkboxes (all checked by default)
+const runCheckboxWrap = document.getElementById('run-checkboxes');
+RUNS.forEach(r => {{
+  const lbl = document.createElement('label');
+  const cb = document.createElement('input');
+  cb.type = 'checkbox'; cb.value = r; cb.checked = true;
+  cb.addEventListener('change', renderAll);
+  lbl.appendChild(cb);
+  lbl.appendChild(document.createTextNode(' ' + r));
+  runCheckboxWrap.appendChild(lbl);
+}});
+
+// Populate district run selector
 const runSel = document.getElementById('run-select');
 RUNS.forEach(r => {{ const o = document.createElement('option'); o.value = r; o.text = r; runSel.appendChild(o); }});
 
 document.querySelectorAll('input[name=method]').forEach(el => el.addEventListener('change', renderAll));
 document.getElementById('metric-select').addEventListener('change', renderAll);
 document.getElementById('run-select').addEventListener('change', renderDistrictTable);
-document.getElementById('model-select').addEventListener('change', renderDistrictTable);
+document.getElementById('district-model-select').addEventListener('change', renderDistrictTable);
 
 renderAll();
 </script>
@@ -799,30 +873,31 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 examples:
-  # Evaluate all default runs, open metrics_output/metrics_report.html
-  uv run python scripts/compute_backtest_metrics.py
+  # Evaluate a single run by name (looks in artifacts/ap/<name>/)
+  uv run python scripts/compute_backtest_metrics.py --runs backtest-march
 
-  # Evaluate specific runs by name
-  uv run python scripts/compute_backtest_metrics.py --runs backtest-20260306 run-2026-03-13
+  # Evaluate multiple runs side by side
+  uv run python scripts/compute_backtest_metrics.py --runs backtest-march march-01-run
 
-  # Only look at one model
-  uv run python scripts/compute_backtest_metrics.py --models nbr xgb
+  # Evaluate by path (relative or absolute)
+  uv run python scripts/compute_backtest_metrics.py --runs artifacts/ap/backtest-march
+
+  # Only look at specific models
+  uv run python scripts/compute_backtest_metrics.py --runs backtest-march --models nbr xgb
 
   # Only look at one threshold method
-  uv run python scripts/compute_backtest_metrics.py --method historical
+  uv run python scripts/compute_backtest_metrics.py --runs backtest-march --method historical
 
-  # All filters combined
-  uv run python scripts/compute_backtest_metrics.py --runs backtest-20260306 --models nbr --method historical
-
-  # Custom output directory
-  uv run python scripts/compute_backtest_metrics.py --output /tmp/eval
+  # Write output to a custom directory
+  uv run python scripts/compute_backtest_metrics.py --runs backtest-march --output /tmp/eval
         """,
     )
     parser.add_argument(
         "--runs",
         nargs="+",
+        required=True,
         metavar="RUN",
-        help="Run names or paths to evaluate (default: all runs in DEFAULT_RUNS)",
+        help="One or more run names (e.g. backtest-march) or paths (e.g. artifacts/ap/backtest-march)",
     )
     parser.add_argument(
         "--models",
@@ -853,16 +928,13 @@ examples:
     if args.method:
         THRESHOLD_METHODS[:] = [args.method]
 
-    if args.runs:
-        run_dirs = []
-        for r in args.runs:
-            p = Path(r)
-            if p.is_absolute() or p.exists():
-                run_dirs.append(p)
-            else:
-                run_dirs.append(ARTIFACTS_ROOT / r)
-    else:
-        run_dirs = [ARTIFACTS_ROOT / r for r in DEFAULT_RUNS]
+    run_dirs = []
+    for r in args.runs:
+        p = Path(r)
+        if p.is_absolute() or p.exists():
+            run_dirs.append(p)
+        else:
+            run_dirs.append(ARTIFACTS_ROOT / r)
 
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -871,7 +943,10 @@ examples:
     cases_csv, actuals_date, source_kind = find_best_cases_csv()
     if cases_csv is None:
         print(
-            "ERROR: No cases data found. Run the prep pipeline first or download prepared_data from S3."
+            "ERROR: No case data found to use as actuals.\n"
+            "  Expected: prepared_data/district/cases_daily.csv\n"
+            "  Fix: run the prep pipeline first, or download prepared_data from S3:\n"
+            "       python scripts/sync_data.py download --only prepared"
         )
         return
     try:
@@ -885,14 +960,24 @@ examples:
     all_records = []
     for run_dir in run_dirs:
         if not run_dir.exists():
-            print(f"  warn  {run_dir}  (directory not found)")
+            print(
+                f"  ERROR: run not found — {run_dir}\n"
+                f"         Run names are looked up under artifacts/ap/. "
+                f"Check the name with: ls artifacts/ap/"
+            )
             continue
         print(f"Evaluating: {run_dir.name}")
         all_records.extend(evaluate_run(run_dir, actuals))
 
     if not all_records:
         print(
-            "\nNo metrics computed. Ensure runs have results/ directories with prediction CSVs."
+            "\nNo metrics could be computed. Common reasons:\n"
+            "  1. The run date is too recent — predictions cover future weeks that have no actuals yet.\n"
+            "     Fix: use a run_date at least 5–6 weeks before today.\n"
+            "  2. The run's results/ folder has no prediction CSVs.\n"
+            "     Check: ls artifacts/ap/<run-id>/results/\n"
+            "  3. The model was filtered out with --models.\n"
+            "     Check: re-run without --models to see all models."
         )
         return
 
