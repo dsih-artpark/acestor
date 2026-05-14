@@ -283,7 +283,18 @@ def evaluate_run(run_dir: Path, actuals: pd.DataFrame) -> list[dict]:
         if preds is None:
             continue
 
-        merged = preds.merge(actuals, on=["regionID", "week_start"], how="inner")
+        # Join on ISO year+week so sampling-day differences (Fri vs Sun etc.) don't break the match
+        preds["_iso_year"] = preds["week_start"].dt.isocalendar().year
+        preds["_iso_week"] = preds["week_start"].dt.isocalendar().week
+        actuals["_iso_year"] = actuals["week_start"].dt.isocalendar().year
+        actuals["_iso_week"] = actuals["week_start"].dt.isocalendar().week
+        merged = preds.merge(
+            actuals.drop(columns=["week_start"]),
+            on=["regionID", "_iso_year", "_iso_week"],
+            how="inner",
+        ).drop(columns=["_iso_year", "_iso_week"])
+        preds.drop(columns=["_iso_year", "_iso_week"], inplace=True)
+        actuals.drop(columns=["_iso_year", "_iso_week"], inplace=True)
         if merged.empty:
             print(
                 f"  skip  {run_id}/{model_key}  (no matching weeks — likely future-only run)"
