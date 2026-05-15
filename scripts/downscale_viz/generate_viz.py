@@ -5,12 +5,12 @@ Reads pipeline artifacts and GeoJSONs, generates a single self-contained HTML
 file with interactive district/mandal maps and interpretability panels.
 
 Usage:
-    uv run python diagnostic_report/downscale_viz/generate_viz.py \
-        --district-run-id march-10-run \
-        --mandal-run-id   downscale-march-10
+    uv run python scripts/downscale_viz/generate_viz.py \
+        --parent-run-id march-10-run \
+        --child-run-id  downscale-march-10
 
 Output:
-    diagnostic_report/downscale_viz/output/dengue_downscale_viz_<district-run-id>.html
+    scripts/downscale_viz/output/dengue_downscale_viz_<parent-run-id>.html
 """
 
 from __future__ import annotations

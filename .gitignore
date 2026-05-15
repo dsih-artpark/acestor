@@ -31,11 +31,7 @@ build/
 !docs/*.md
 configs-example/
 *prepared_data/
-diagnostic_report/**
-!diagnostic_report/downscale_viz/
-!diagnostic_report/downscale_viz/generate_viz.py
-!diagnostic_report/downscale_viz/template.html
-!diagnostic_report/downscale_viz/README.md
+diagnostic_report/
 
 
 runs/
@@ -54,6 +50,8 @@ parity/
 execution_steps.txt
 test_email.py
 validate_outputs.py
+
+scripts/downscale_viz/output/
 
 *.log
 logs/
