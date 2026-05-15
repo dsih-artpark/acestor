@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Dengue Forecast — {{PARENT_LABEL}} vs {{CHILD_LABEL}} · {{RUN_ID}}</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<!-- forecast_data.js replaced inline by generate_viz.py -->
+<script src="forecast_data.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+  --navy:   #0D2B4E;
+  --accent: #1A6EBF;
+  --text:   #1A202C;
+  --muted:  #5A6578;
+  --border: #DDE3EC;
+  --bg:     #F4F6F9;
+  --card:   #FFFFFF;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  background: var(--bg); color: var(--text);
+  height: 100vh; display: flex; flex-direction: column; overflow: hidden;
+  font-size: 13px; line-height: 1.5;
+}
+
+/* ── Header ── */
+header {
+  background: linear-gradient(135deg, #0D2B4E 0%, #1A4A7A 100%);
+  color: white; padding: 10px 18px;
+  display: flex; align-items: center; gap: 20px; flex-wrap: wrap; flex-shrink: 0;
+}
+header h1 { font-size: 13px; font-weight: 700; letter-spacing: 0.02em; white-space: nowrap; }
+.controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.ctrl { display: flex; align-items: center; gap: 6px; }
+.ctrl label { font-size: 10px; color: rgba(255,255,255,0.6); text-transform: uppercase; letter-spacing: 0.07em; }
+select {
+  background: rgba(255,255,255,0.12); color: white; border: 1px solid rgba(255,255,255,0.25);
+  border-radius: 5px; padding: 4px 10px; font-size: 12px; cursor: pointer; font-family: inherit;
+}
+select option { background: #1A4A7A; color: white; }
+select:focus { outline: none; }
+.pill-group { display: flex; padding: 2px; gap: 2px; background: rgba(255,255,255,0.1); border-radius: 6px; border: 1px solid rgba(255,255,255,0.2); }
+.pill { padding: 3px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; color: rgba(255,255,255,0.7); transition: all 0.15s; user-select: none; }
+.pill.active { background: white; color: var(--navy); font-weight: 600; }
+
+/* ── Layout ── */
+.main-row { display: flex; flex: 1; min-height: 0; gap: 6px; padding: 6px; background: var(--bg); }
+.panel {
+  display: flex; flex-direction: column;
+  border-radius: 8px; overflow: hidden;
+  border: 1px solid var(--border); background: var(--card); min-width: 0;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+.map-panel { flex: 1; }
+.panel-header {
+  padding: 6px 12px; background: var(--card); border-bottom: 1px solid var(--border);
+  display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; gap: 8px;
+}
+.ph-left { display: flex; flex-direction: column; gap: 1px; }
+.ph-title { font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.ph-title .ta { color: var(--accent); }
+.ph-sub { font-size: 10px; color: #A3B0C2; }
+.ph-hint { font-size: 10px; color: #A3B0C2; white-space: nowrap; }
+.map-container { flex: 1; min-height: 0; }
+#map-d, #map-m { width: 100%; height: 100%; }
+
+/* ── Info panel ── */
+#info-panel {
+  width: 0; overflow: hidden; flex-shrink: 0;
+  transition: width 0.25s ease;
+  border-radius: 8px; border: 1px solid var(--border); background: var(--card);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  display: flex; flex-direction: column;
+}
+#info-panel.open { width: 300px; }
+.info-header {
+  padding: 10px 14px 8px;
+  background: linear-gradient(135deg, #0D2B4E, #1A4A7A);
+  color: white; flex-shrink: 0;
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;
+}
+.info-header-text { flex: 1; min-width: 0; }
+.info-region-name { font-size: 13px; font-weight: 700; line-height: 1.3; word-break: break-word; }
+.info-region-sub  { font-size: 10px; opacity: 0.6; margin-top: 2px; }
+.info-close {
+  background: rgba(255,255,255,0.15); border: none; color: white; cursor: pointer;
+  border-radius: 4px; padding: 2px 7px; font-size: 13px; line-height: 1; flex-shrink: 0;
+  font-family: inherit;
+}
+.info-close:hover { background: rgba(255,255,255,0.28); }
+.info-body { flex: 1; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 11px; }
+
+/* Welcome state */
+.info-welcome {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; flex: 1; padding: 20px; color: var(--muted); gap: 10px;
+}
+.info-welcome .wi { font-size: 32px; }
+.info-welcome p { font-size: 12px; line-height: 1.6; }
+
+/* Zone badge */
+.zone-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 12px; border-radius: 20px; font-size: 12px; font-weight: 700;
+}
+
+/* Sections */
+.info-section { display: flex; flex-direction: column; gap: 5px; }
+.sec-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); }
+
+/* Stat cards */
+.stat-row { display: flex; gap: 7px; }
+.stat-box { flex: 1; background: var(--bg); border-radius: 6px; padding: 7px 10px; border: 1px solid var(--border); }
+.stat-value { font-size: 18px; font-weight: 700; color: var(--navy); line-height: 1.1; }
+.stat-label { font-size: 10px; color: var(--muted); margin-top: 2px; }
+.stat-full  { background: var(--bg); border-radius: 6px; padding: 7px 10px; border: 1px solid var(--border); text-align: center; }
+
+/* Callout boxes */
+.box-blue  { background: #EFF6FF; border-left: 3px solid #3b82f6; border-radius: 0 6px 6px 0; padding: 8px 10px; font-size: 11px; color: #1e40af; line-height: 1.6; }
+.box-green { background: #F0FDF4; border-left: 3px solid #16a34a; border-radius: 0 6px 6px 0; padding: 8px 10px; font-size: 11px; color: #166534; line-height: 1.6; }
+.box-amber { background: #FEFCE8; border-left: 3px solid #ca8a04; border-radius: 0 6px 6px 0; padding: 8px 10px; font-size: 11px; color: #713f12; line-height: 1.6; }
+
+/* Threshold gauge */
+.gauge-wrap { background: var(--bg); border: 1px solid var(--border); border-radius: 7px; padding: 10px 12px; }
+.gauge-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 8px; }
+.gauge-bar-wrap { position: relative; height: 22px; border-radius: 4px; overflow: visible; margin: 0 4px; }
+.gauge-track {
+  position: absolute; top: 6px; left: 0; right: 0; height: 10px; border-radius: 3px;
+  background: linear-gradient(to right, #86EFAC 0%, #86EFAC 33%, #FDE047 33%, #FDE047 56%, #FB923C 56%, #FB923C 78%, #F87171 78%, #F87171 100%);
+}
+.gauge-marker {
+  position: absolute; top: 0; width: 3px; height: 22px; background: #0D2B4E;
+  border-radius: 2px; transform: translateX(-50%); z-index: 2;
+}
+.gauge-labels { display: flex; justify-content: space-between; margin-top: 6px; }
+.gauge-labels span { font-size: 9px; color: var(--muted); }
+.gauge-values { display: flex; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+.gauge-val { font-size: 10px; }
+.gauge-val .gv-label { color: var(--muted); }
+.gauge-val .gv-num   { font-weight: 600; color: var(--navy); }
+
+/* Mandal list */
+.mandal-item {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 5px 8px; border-radius: 5px; background: var(--bg); border: 1px solid var(--border); font-size: 11px;
+}
+.mandal-item .mname { color: var(--text); font-weight: 500; }
+.mandal-item .mval  { color: var(--muted); font-size: 10px; text-align: right; }
+.mbar-wrap { width: 50px; height: 5px; background: var(--border); border-radius: 3px; margin-top: 3px; }
+.mbar { height: 5px; border-radius: 3px; background: #3b82f6; }
+
+/* ── Footer ── */
+footer {
+  padding: 7px 18px; background: var(--card); border-top: 1px solid var(--border);
+  display: flex; align-items: center; gap: 14px; flex-shrink: 0; flex-wrap: wrap;
+}
+.leg-title { font-size: 10px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap; }
+.zone-swatches { display: flex; gap: 5px; align-items: center; }
+.zone-swatch { display: flex; align-items: center; gap: 3px; font-size: 10px; color: var(--muted); }
+.dot { width: 11px; height: 11px; border-radius: 2px; border: 1px solid rgba(0,0,0,0.12); flex-shrink: 0; }
+.leg-divider { width: 1px; height: 24px; background: var(--border); }
+.grad-bar { width: 90px; height: 9px; border-radius: 3px; background: linear-gradient(to right, #dbeafe, #1e3a8a); border: 1px solid rgba(0,0,0,0.08); }
+.grad-ticks { display: flex; justify-content: space-between; width: 90px; }
+.grad-ticks span { font-size: 9px; color: var(--muted); }
+.scale-note { font-size: 10px; color: var(--muted); font-style: italic; }
+
+/* ⓘ tooltip */
+.info-tip { position: relative; display: inline-flex; }
+.info-tip .i-btn {
+  width: 15px; height: 15px; border-radius: 50%; background: var(--accent); color: white;
+  font-size: 9px; font-weight: 700; border: none; cursor: pointer; font-family: inherit;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0; line-height: 1;
+}
+.info-tip .i-popup {
+  display: none; position: absolute; bottom: 22px; left: 50%; transform: translateX(-50%);
+  background: #1A202C; color: white; font-size: 11px; line-height: 1.55;
+  padding: 8px 11px; border-radius: 7px; width: 230px; z-index: 9999;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.25); pointer-events: none;
+}
+.info-tip .i-popup::after {
+  content: ''; position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
+  border: 5px solid transparent; border-top-color: #1A202C;
+}
+.info-tip:hover .i-popup { display: block; }
+
+.deselect-btn {
+  font-size: 11px; color: var(--muted); cursor: pointer; text-decoration: underline;
+  margin-left: auto; background: none; border: none; font-family: inherit; padding: 0;
+}
+.deselect-btn:hover { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Dengue Forecast — {{PARENT_LABEL}} vs {{CHILD_LABEL}} · {{RUN_ID}}</h1>
+  <div class="controls">
+    <div class="ctrl">
+      <label>Week</label>
+      <select id="week-sel"></select>
+    </div>
+    <div class="ctrl">
+      <label>Threshold</label>
+      <div class="pill-group">
+        <div class="pill active" data-method="historical">Historical</div>
+        <div class="pill" data-method="previousNweeks">Prev N-weeks</div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<div class="main-row">
+
+  <div class="panel map-panel">
+    <div class="panel-header">
+      <div class="ph-left">
+        <div class="ph-title">{{PARENT_LABEL}} <span class="ta">· risk zone</span></div>
+        <div class="ph-sub">Color = model risk classification · click for details</div>
+      </div>
+      <span class="ph-hint">Click any {{PARENT_LABEL}} →</span>
+    </div>
+    <div class="map-container"><div id="map-d"></div></div>
+  </div>
+
+  <div class="panel map-panel">
+    <div class="panel-header">
+      <div class="ph-left">
+        <div class="ph-title" id="child-panel-title">{{CHILD_LABEL}} <span class="ta">· predicted cases / week</span></div>
+        <div class="ph-sub" id="child-panel-sub">Darker blue = more cases · click a {{CHILD_LABEL}} for details</div>
+      </div>
+    </div>
+    <div class="map-container"><div id="map-m"></div></div>
+  </div>
+
+  <div class="panel" id="info-panel">
+    <div class="info-header">
+      <div class="info-header-text">
+        <div class="info-region-name" id="info-name">—</div>
+        <div class="info-region-sub"  id="info-sub"></div>
+      </div>
+      <button class="info-close" onclick="closeInfo()">✕</button>
+    </div>
+    <div class="info-body" id="info-body">
+      <div class="info-welcome">
+        <div class="wi">🗺️</div>
+        <p><strong>Click any {{PARENT_LABEL}}</strong> on the left to see its risk classification, threshold breakdown, and top {{CHILD_LABEL}}s.</p>
+        <p style="margin-top:6px"><strong>Click any {{CHILD_LABEL}}</strong> on the right to see how its prediction was calculated.</p>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<footer>
+  <span class="leg-title">{{PARENT_LABEL}} zone</span>
+  <div class="zone-swatches">
+    <div class="zone-swatch"><div class="dot" style="background:#E5E7EB"></div>No data</div>
+    <div class="zone-swatch"><div class="dot" style="background:#16a34a"></div>Low</div>
+    <div class="zone-swatch"><div class="dot" style="background:#ca8a04"></div>Moderate</div>
+    <div class="zone-swatch"><div class="dot" style="background:#ea580c"></div>High</div>
+    <div class="zone-swatch"><div class="dot" style="background:#dc2626"></div>Very High</div>
+  </div>
+
+  <div class="leg-divider"></div>
+
+  <span class="leg-title">{{CHILD_LABEL}} burden</span>
+  <div style="display:flex;align-items:center;gap:5px">
+    <div>
+      <div class="grad-bar"></div>
+      <div class="grad-ticks"><span>0</span><span id="leg-mid"></span><span id="leg-max"></span></div>
+    </div>
+    <div class="info-tip">
+      <button class="i-btn" tabindex="0">i</button>
+      <div class="i-popup">
+        <strong>What does the blue shade mean?</strong><br><br>
+        Shows predicted dengue cases/week per {{CHILD_LABEL}}.<br>
+        <strong>White</strong> = near zero &nbsp; <strong>Dark blue</strong> = most cases.<br><br>
+        When a {{PARENT_LABEL}} is selected the scale adjusts to that {{PARENT_LABEL}}'s range — so within-{{PARENT_LABEL}} variation is always visible even when overall case counts are low.
+      </div>
+    </div>
+  </div>
+  <span class="scale-note" id="scale-note"></span>
+
+  <button class="deselect-btn" id="deselect-btn" style="display:none" onclick="clearSelection()">← All {{PARENT_LABEL}}s</button>
+</footer>
+
+<script>
+// Geography labels injected by generate_viz.py
+const PARENT_LABEL = "{{PARENT_LABEL}}";
+const CHILD_LABEL  = "{{CHILD_LABEL}}";
+
+// ── Zone config ───────────────────────────────────────────────────────────────
+const ZONES = {
+  0: { color: '#9CA3AF', bg: '#F3F4F6', text: '#374151', label: 'No data'   },
+  1: { color: '#16a34a', bg: '#DCFCE7', text: '#166534', label: 'Low'       },
+  2: { color: '#ca8a04', bg: '#FEF9C3', text: '#713f12', label: 'Moderate'  },
+  3: { color: '#ea580c', bg: '#FFEDD5', text: '#7c2d12', label: 'High'      },
+  4: { color: '#dc2626', bg: '#FEE2E2', text: '#7f1d1d', label: 'Very High' },
+};
+const ZONE_WHY = {
+  0: 'Insufficient historical case data to compute thresholds. No classification is possible this week.',
+  1: 'Predicted cases are within the normal seasonal range. No unusual activity detected.',
+  2: 'Predicted cases exceed the seasonal mean but are below the alert threshold. Activity is elevated above baseline.',
+  3: 'Predicted cases are significantly above seasonal norms — above the alert threshold.',
+  4: 'Predicted cases are in the extreme range — above the epidemic threshold derived from multi-year historical data.',
+};
+const ZONE_ACTION = {
+  0: 'Ensure case reporting is active. Classification will be available once sufficient history exists.',
+  1: 'Routine surveillance and standard vector control.',
+  2: 'Increase surveillance frequency. Ensure rapid diagnostics are stocked. Alert local health officers.',
+  3: `Deploy rapid response teams. Activate ${PARENT_LABEL.toLowerCase()} dengue action plan. Report to state health authority.`,
+  4: `Immediate intervention. Escalate to state/national level. Prioritise highest-burden ${CHILD_LABEL.toLowerCase()}s below.`,
+};
+const METHOD_EXPLAIN = {
+  historical:     `Thresholds use up to 4 years of historical case data for this ${PARENT_LABEL.toLowerCase()} and the same calendar week. Stable, but may lag recent changes.`,
+  previousNweeks:  'Thresholds use a rolling mean/variance of the past 4 weeks. More responsive to recent trends, but sensitive to short-term noise.',
+};
+
+function zoneOf(v) { return ZONES[Math.round(v ?? 0)] ?? ZONES[0]; }
+function zoneBadgeHtml(zoneNum) {
+  const z = zoneOf(zoneNum);
+  return `<span class="zone-badge" style="background:${z.bg};color:${z.text}">
+    <span style="width:9px;height:9px;border-radius:50%;background:${z.color};display:inline-block;flex-shrink:0"></span>
+    ${z.label} Risk Zone
+  </span>`;
+}
+
+// ── Threshold gauge ───────────────────────────────────────────────────────────
+function thresholdGaugeHtml(prediction, mean, std) {
+  if (mean === null || mean === undefined) {
+    return `<div class="box-amber" style="font-size:11px">Threshold values not available for this ${PARENT_LABEL.toLowerCase()}/week.</div>`;
+  }
+
+  const t1 = mean;
+  const t2 = mean + std;
+  const t3 = mean + 2 * std;
+  const maxVal = Math.max(t3 * 1.4, prediction * 1.2, 0.001);
+
+  // Marker position as %
+  const pct = Math.min((prediction / maxVal) * 100, 100);
+
+  // Zone band widths
+  const w1 = (t1 / maxVal * 100).toFixed(1);
+  const w2 = ((t2 - t1) / maxVal * 100).toFixed(1);
+  const w3 = ((t3 - t2) / maxVal * 100).toFixed(1);
+  const w4 = (100 - parseFloat(w1) - parseFloat(w2) - parseFloat(w3)).toFixed(1);
+
+  const markerColor = prediction > t3 ? '#dc2626' : prediction > t2 ? '#ea580c' : prediction > t1 ? '#ca8a04' : '#16a34a';
+
+  return `<div class="gauge-wrap">
+    <div class="gauge-title">Where does this week's prediction sit?</div>
+    <div class="gauge-bar-wrap">
+      <div style="position:absolute;top:6px;left:0;right:0;height:10px;border-radius:3px;display:flex;overflow:hidden">
+        <div style="width:${w1}%;background:#86EFAC"></div>
+        <div style="width:${w2}%;background:#FDE047"></div>
+        <div style="width:${w3}%;background:#FB923C"></div>
+        <div style="width:${Math.max(parseFloat(w4),0)}%;background:#F87171"></div>
+      </div>
+      <div class="gauge-marker" style="left:${pct}%;background:${markerColor}"></div>
+    </div>
+    <div class="gauge-labels">
+      <span>0</span>
+      <span>μ=${mean.toFixed(2)}</span>
+      <span>μ+σ=${t2.toFixed(2)}</span>
+      <span>μ+2σ=${t3.toFixed(2)}</span>
+    </div>
+    <div class="gauge-values">
+      <div class="gauge-val"><span class="gv-label">Predicted: </span><span class="gv-num" style="color:${markerColor}">${prediction.toFixed(3)}</span></div>
+      <div class="gauge-val"><span class="gv-label">Mean (μ): </span><span class="gv-num">${mean.toFixed(3)}</span></div>
+      <div class="gauge-val"><span class="gv-label">Std (σ): </span><span class="gv-num">${std.toFixed(3)}</span></div>
+    </div>
+    <div style="font-size:10px;color:var(--muted);margin-top:6px;line-height:1.5">
+      Zone boundaries: Low ≤ μ &nbsp;·&nbsp; Moderate ≤ μ+σ &nbsp;·&nbsp; High ≤ μ+2σ &nbsp;·&nbsp; Very High > μ+2σ
+    </div>
+  </div>`;
+}
+
+// ── Mandal gradient (white → dark blue) ─────────────────────────────────────
+function predColor(val, max) {
+  if (!max || val <= 0) return '#F0F4FF';
+  const stops = ['#dbeafe','#93c5fd','#3b82f6','#1d4ed8','#1e3a8a'];
+  const t = Math.min(val / max, 1) * (stops.length - 1);
+  const i = Math.floor(t), f = t - i;
+  if (i >= stops.length - 1) return stops[stops.length - 1];
+  return lerpHex(stops[i], stops[i+1], f);
+}
+function lerpHex(a, b, t) {
+  const p = h => [parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)];
+  const [ar,ag,ab] = p(a), [br,bg,bb] = p(b);
+  return '#' + [ar+(br-ar)*t,ag+(bg-ag)*t,ab+(bb-ab)*t].map(v=>Math.round(v).toString(16).padStart(2,'0')).join('');
+}
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let currentWeek      = WEEKS[0];
+let currentMethod    = 'historical';
+let selectedDistrict = null;
+let globalMandalMax  = 0;
+let activeMandalMax  = 0;
+
+// ── Maps ──────────────────────────────────────────────────────────────────────
+const AP_CENTER = [15.9, 79.7], AP_ZOOM = 7;
+const mapD = L.map('map-d', { zoomControl: true,  attributionControl: false }).setView(AP_CENTER, AP_ZOOM);
+const mapM = L.map('map-m', { zoomControl: false, attributionControl: false }).setView(AP_CENTER, AP_ZOOM);
+const TILE = 'https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png';
+L.tileLayer(TILE, { maxZoom: 19 }).addTo(mapD);
+L.tileLayer(TILE, { maxZoom: 19 }).addTo(mapM);
+mapD.on('moveend', () => { if (!selectedDistrict) mapM.setView(mapD.getCenter(), mapD.getZoom(), { animate: false }); });
+
+let layerD = null, layerM = null, districtOutlineLayer = null;
+
+// ── Render ────────────────────────────────────────────────────────────────────
+function render() {
+  const data = FORECAST_DATA[currentWeek][currentMethod];
+  globalMandalMax = Math.max(...data.mandal.features.map(f => f.properties.prediction), 0.001);
+  activeMandalMax = globalMandalMax;
+  updateGradLegend(activeMandalMax, false);
+
+  if (layerD) mapD.removeLayer(layerD);
+  layerD = L.geoJSON(data.district, {
+    style: f => {
+      const z   = Math.round(f.properties.zone ?? 0);
+      const sel = selectedDistrict && f.properties.id === selectedDistrict.id;
+      const dim = selectedDistrict && !sel;
+      return {
+        fillColor:   ZONES[z]?.color ?? '#9CA3AF',
+        fillOpacity: dim ? 0.35 : 0.72,
+        color:       sel ? '#0D2B4E' : dim ? '#C9D4DF' : '#9CA3AF',
+        weight:      sel ? 2.5 : 0.8,
+        opacity:     dim ? 0.6 : 1,
+      };
+    },
+    onEachFeature: (feature, layer) => {
+      layer.on('mouseover', function() {
+        if (selectedDistrict && feature.properties.id !== selectedDistrict.id) return;
+        this.setStyle({ weight: 2, color: '#0D2B4E', fillOpacity: 0.88 });
+        const z = zoneOf(feature.properties.zone);
+        this.bindTooltip(
+          `<strong>${feature.properties.name}</strong><br>` +
+          `<span style="font-size:10px;color:#5A6578">${feature.properties.prediction.toFixed(2)} cases/week &nbsp;·&nbsp; ` +
+          `<span style="font-weight:600;color:${z.color}">${z.label}</span></span>`,
+          { sticky: true, className: 'tt' }
+        ).openTooltip();
+      });
+      layer.on('mouseout', function() {
+        layerD.resetStyle(this);
+        if (selectedDistrict && feature.properties.id === selectedDistrict.id)
+          this.setStyle({ color: '#0D2B4E', weight: 2.5 });
+        this.closeTooltip();
+      });
+      layer.on('click', function() {
+        const id = feature.properties.id;
+        if (selectedDistrict && selectedDistrict.id === id) clearSelection();
+        else {
+          selectDistrict(id, feature.properties.name, Math.round(feature.properties.zone ?? 0));
+          showDistrictInfo(feature, data);
+        }
+      });
+    }
+  }).addTo(mapD);
+
+  renderMandals(data);
+}
+
+function renderMandals(data) {
+  if (layerM) mapM.removeLayer(layerM);
+  if (districtOutlineLayer) mapM.removeLayer(districtOutlineLayer);
+
+  let mandalsToShow = data.mandal;
+
+  if (selectedDistrict) {
+    const filtered  = data.mandal.features.filter(f => f.properties.parent === selectedDistrict.id);
+    mandalsToShow   = { type: 'FeatureCollection', features: filtered };
+    activeMandalMax = Math.max(...filtered.map(f => f.properties.prediction), 0.001);
+    updateGradLegend(activeMandalMax, true);
+
+    const df = data.district.features.find(f => f.properties.id === selectedDistrict.id);
+    if (df) {
+      districtOutlineLayer = L.geoJSON(
+        { type: 'FeatureCollection', features: [df] },
+        { style: { fillOpacity: 0, color: '#0D2B4E', weight: 2.5, opacity: 0.8 } }
+      ).addTo(mapM);
+    }
+  }
+
+  layerM = L.geoJSON(mandalsToShow, {
+    style: f => ({
+      fillColor:   predColor(f.properties.prediction, activeMandalMax),
+      fillOpacity: f.properties.prediction <= 0 ? 0.3 : 0.82,
+      color: '#9CA3AF', weight: 0.5, opacity: 0.7,
+    }),
+    onEachFeature: (feature, layer) => {
+      layer.on('mouseover', function() {
+        this.setStyle({ weight: 1.5, color: '#0D2B4E', fillOpacity: 0.95 });
+        this.bindTooltip(
+          `<strong>${feature.properties.name}</strong><br>` +
+          `<span style="font-size:10px;color:#5A6578">${feature.properties.parent_name}</span><br>` +
+          `<span style="font-size:13px;font-weight:700">${feature.properties.prediction.toFixed(3)}</span>` +
+          `<span style="font-size:10px;color:#5A6578"> cases/week</span>`,
+          { sticky: true, className: 'tt' }
+        ).openTooltip();
+      });
+      layer.on('mouseout',  function() { layerM.resetStyle(this); this.closeTooltip(); });
+      layer.on('click', function() { showMandalInfo(feature, data); });
+    }
+  }).addTo(mapM);
+
+  if (selectedDistrict) {
+    const bounds = districtOutlineLayer
+      ? districtOutlineLayer.getBounds()
+      : layerM.getLayers().length > 0 ? layerM.getBounds() : null;
+    if (bounds) mapM.fitBounds(bounds.pad(0.12), { animate: true, duration: 0.4 });
+  }
+}
+
+function updateGradLegend(max, isLocal) {
+  document.getElementById('leg-max').textContent  = max.toFixed(2);
+  document.getElementById('leg-mid').textContent  = (max / 2).toFixed(2);
+  document.getElementById('scale-note').textContent = isLocal
+    ? `↑ local scale (${selectedDistrict?.name ?? ''})`
+    : `↑ all ${CHILD_LABEL.toLowerCase()}s`;
+}
+
+// ── Info panel ────────────────────────────────────────────────────────────────
+function openInfoPanel(name, sub, bodyHtml) {
+  document.getElementById('info-name').textContent = name;
+  document.getElementById('info-sub').textContent  = sub;
+  document.getElementById('info-body').innerHTML   = bodyHtml;
+  const panel = document.getElementById('info-panel');
+  if (!panel.classList.contains('open')) {
+    panel.classList.add('open');
+    setTimeout(() => { mapD.invalidateSize(); mapM.invalidateSize(); }, 260);
+  }
+}
+
+function closeInfo() {
+  document.getElementById('info-panel').classList.remove('open');
+  document.getElementById('info-body').innerHTML = `
+    <div class="info-welcome">
+      <div class="wi">🗺️</div>
+      <p><strong>Click any ${PARENT_LABEL}</strong> on the left to see its risk classification and threshold breakdown.</p>
+      <p style="margin-top:6px"><strong>Click any ${CHILD_LABEL}</strong> on the right to see how its prediction was calculated.</p>
+    </div>`;
+  setTimeout(() => { mapD.invalidateSize(); mapM.invalidateSize(); }, 260);
+}
+
+function showDistrictInfo(feature, data) {
+  const p       = feature.properties;
+  const zoneNum = Math.round(p.zone ?? 0);
+  const method  = currentMethod;
+
+  const all        = data.district.features;
+  const stateTotal = all.reduce((s, f) => s + f.properties.prediction, 0);
+  const statePct   = stateTotal > 0 ? (p.prediction / stateTotal * 100) : 0;
+  const rank       = [...all].sort((a,b) => b.properties.prediction - a.properties.prediction)
+                             .findIndex(f => f.properties.id === p.id) + 1;
+
+  const mandalsHere = data.mandal.features.filter(f => f.properties.parent === p.id);
+  const localMax    = Math.max(...mandalsHere.map(f => f.properties.prediction), 0.001);
+  const topMandals  = [...mandalsHere].sort((a,b) => b.properties.prediction - a.properties.prediction).slice(0, 4);
+
+  const mandalListHtml = topMandals.length === 0
+    ? `<p style="font-size:11px;color:var(--muted)">No ${CHILD_LABEL.toLowerCase()} data.</p>`
+    : topMandals.map(m => {
+        const barW = Math.round(m.properties.prediction / localMax * 100);
+        const pct  = p.prediction > 0 ? (m.properties.prediction / p.prediction * 100).toFixed(0) : '—';
+        return `<div class="mandal-item">
+          <div>
+            <div class="mname">${m.properties.name}</div>
+            <div class="mbar-wrap"><div class="mbar" style="width:${barW}%"></div></div>
+          </div>
+          <div class="mval">${m.properties.prediction.toFixed(3)}<br>${pct}% of ${PARENT_LABEL.toLowerCase()}</div>
+        </div>`;
+      }).join('');
+
+  const weekLabel = new Date(currentWeek + 'T00:00:00').toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'numeric' });
+
+  openInfoPanel(p.name, `${PARENT_LABEL} · ${weekLabel}`,
+    `<div class="info-section">
+      ${zoneBadgeHtml(zoneNum)}
+      <p style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.55">
+        Zone thresholds are <strong>calibrated to this ${PARENT_LABEL.toLowerCase()}'s own history</strong> — the same predicted case count may be Low in one ${PARENT_LABEL.toLowerCase()} and High in another, depending on each area's baseline transmission. See the gauge below.
+      </p>
+    </div>
+
+    <div class="info-section">
+      <div class="stat-row">
+        <div class="stat-box">
+          <div class="stat-value">${p.prediction.toFixed(2)}</div>
+          <div class="stat-label">cases/week predicted</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value">#${rank}<span style="font-size:11px;color:var(--muted)"> / ${all.length}</span></div>
+          <div class="stat-label">rank in AP this week</div>
+        </div>
+      </div>
+      <div class="stat-full">
+        <div class="stat-value">${statePct.toFixed(1)}%</div>
+        <div class="stat-label">of AP's total predicted cases this week</div>
+      </div>
+    </div>
+
+    <div class="info-section">
+      <div class="sec-title">Threshold gauge — ${method === 'historical' ? 'Historical' : 'Prev N-weeks'}</div>
+      ${thresholdGaugeHtml(p.prediction, p.mean, p.std)}
+    </div>
+
+    <div class="info-section">
+      <div class="sec-title">Why this zone?</div>
+      <div class="box-blue">${ZONE_WHY[zoneNum]}</div>
+    </div>
+
+    <div class="info-section">
+      <div class="sec-title">Recommended action</div>
+      <div class="box-green">${ZONE_ACTION[zoneNum]}</div>
+    </div>
+
+    <div class="info-section">
+      <div class="sec-title">Threshold method</div>
+      <div class="box-amber">${METHOD_EXPLAIN[method] ?? ''}</div>
+    </div>
+
+    <div class="info-section">
+      <div class="sec-title">Top ${CHILD_LABEL.toLowerCase()}s by predicted burden</div>
+      ${mandalListHtml}
+    </div>`
+  );
+}
+
+function showMandalInfo(feature, data) {
+  const p          = feature.properties;
+  const parentId   = p.parent;
+  const df         = data.district.features.find(f => f.properties.id === parentId);
+  const distPred   = df?.properties?.prediction ?? 0;
+  const zoneNum    = Math.round(df?.properties?.zone ?? 0);
+  const distPct    = distPred > 0 ? (p.prediction / distPred * 100) : 0;
+  const siblings   = data.mandal.features.filter(f => f.properties.parent === parentId);
+  const rank       = [...siblings].sort((a,b) => b.properties.prediction - a.properties.prediction)
+                                  .findIndex(f => f.properties.id === p.id) + 1;
+
+  openInfoPanel(p.name, `${CHILD_LABEL} · ${p.parent_name}`,
+    `<div class="info-section">
+      ${zoneBadgeHtml(zoneNum)}
+      <p style="font-size:10px;color:var(--muted);margin-top:3px">Inherited from parent ${PARENT_LABEL.toLowerCase()} <strong>${p.parent_name}</strong></p>
+    </div>
+
+    <div class="info-section">
+      <div class="stat-row">
+        <div class="stat-box">
+          <div class="stat-value">${p.prediction.toFixed(3)}</div>
+          <div class="stat-label">cases/week predicted</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value">#${rank}<span style="font-size:11px;color:var(--muted)"> / ${siblings.length}</span></div>
+          <div class="stat-label">rank in ${p.parent_name}</div>
+        </div>
+      </div>
+      <div class="stat-full">
+        <div class="stat-value">${distPct.toFixed(1)}%</div>
+        <div class="stat-label">of ${p.parent_name}'s total predicted cases this week</div>
+      </div>
+    </div>
+
+    <div class="info-section">
+      <div class="sec-title">How was this number derived?</div>
+      <div class="box-blue">
+        The district model predicted <strong>${distPred.toFixed(2)} cases/week</strong> for ${p.parent_name}.<br><br>
+        That total was split across its ${CHILD_LABEL.toLowerCase()}s <strong>proportionally</strong> — each ${CHILD_LABEL.toLowerCase()}'s share is based on its reported case history in the <strong>past 4 weeks</strong>.<br><br>
+        ${distPct < 0.5
+          ? `${p.name} had very few reported cases in the recent window, so it receives a near-zero share.`
+          : `${p.name} accounted for <strong>${distPct.toFixed(1)}%</strong> of ${p.parent_name}'s recent case history.`}
+      </div>
+    </div>
+
+    <div class="info-section">
+      <div class="sec-title">Why no individual risk zone?</div>
+      <div class="box-amber">
+        Risk zones require multi-year historical thresholds, currently computed at ${PARENT_LABEL.toLowerCase()} level only. The blue shading shows <em>where within the ${PARENT_LABEL.toLowerCase()}</em> cases are concentrated — not an independent risk classification.
+      </div>
+    </div>`
+  );
+}
+
+// ── Selection ─────────────────────────────────────────────────────────────────
+function selectDistrict(id, name, zone) {
+  selectedDistrict = { id, name, zone };
+  document.getElementById('child-panel-title').innerHTML = `${CHILD_LABEL} <span class="ta">· ${name}</span>`;
+  document.getElementById('child-panel-sub').textContent  = `Darker blue = more cases · local scale · click a ${CHILD_LABEL.toLowerCase()} for details`;
+  document.getElementById('deselect-btn').style.display    = 'inline';
+  layerD.eachLayer(l => {
+    const fid = l.feature.properties.id;
+    const z   = Math.round(l.feature.properties.zone ?? 0);
+    l.setStyle(fid === id
+      ? { fillColor: ZONES[z]?.color, fillOpacity: 0.82, color: '#0D2B4E', weight: 2.5, opacity: 1 }
+      : { fillColor: ZONES[z]?.color, fillOpacity: 0.35, color: '#C9D4DF', weight: 0.8, opacity: 0.6 }
+    );
+  });
+  renderMandals(FORECAST_DATA[currentWeek][currentMethod]);
+}
+
+function clearSelection() {
+  selectedDistrict = null;
+  document.getElementById('child-panel-title').innerHTML  = `${CHILD_LABEL} <span class="ta">· predicted cases / week</span>`;
+  document.getElementById('child-panel-sub').textContent   = `Darker blue = more cases · click a ${CHILD_LABEL.toLowerCase()} for details`;
+  document.getElementById('deselect-btn').style.display     = 'none';
+  closeInfo();
+  mapM.setView(AP_CENTER, AP_ZOOM, { animate: true });
+  render();
+}
+
+// ── Controls ─────────────────────────────────────────────────────────────────
+const weekSel = document.getElementById('week-sel');
+WEEKS.forEach(w => {
+  const o = document.createElement('option');
+  o.value = w;
+  o.textContent = new Date(w + 'T00:00:00').toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'numeric' });
+  weekSel.appendChild(o);
+});
+weekSel.addEventListener('change', () => { currentWeek = weekSel.value; render(); });
+document.querySelectorAll('.pill').forEach(p => {
+  p.addEventListener('click', () => {
+    document.querySelectorAll('.pill').forEach(x => x.classList.remove('active'));
+    p.classList.add('active'); currentMethod = p.dataset.method; render();
+  });
+});
+
+// ── Tooltip style ─────────────────────────────────────────────────────────────
+const s = document.createElement('style');
+s.textContent = `.tt{background:#fff;border:1px solid #DDE3EC;color:#1A202C;font-size:12px;padding:7px 11px;border-radius:7px;box-shadow:0 4px 14px rgba(0,0,0,0.1);font-family:'Inter',system-ui;line-height:1.55}.tt::before,.leaflet-tooltip-left.tt::before,.leaflet-tooltip-right.tt::before{display:none}`;
+document.head.appendChild(s);
+
+render();
+</script>
+</body>
+</html>

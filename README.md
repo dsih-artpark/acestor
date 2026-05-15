@@ -1,13 +1,14 @@
 # acestor
 
-**acestor** is a production dengue intelligence system built around two pipelines:
+**acestor** is a production dengue intelligence system built around three pipelines:
 
 | Pipeline | Purpose |
 |---|---|
 | **`dengue_prep`** | Downloads and prepares raw case and weather data into `prepared_data/` |
 | **`dengue`** | Reads from `prepared_data/`, runs forecasting models, produces maps and reports |
+| **`dengue_downscale`** | Disaggregates district-level predictions to mandal (or sub-district) level |
 
-Both are driven from a single YAML config file each and can be run independently or scheduled together.
+All three are driven from YAML config files and can be run independently or chained together.
 
 ---
 
@@ -28,9 +29,10 @@ Both are driven from a single YAML config file each and can be run independently
 8. [Development](#development)
 9. [Architecture](docs/Architecture.md)
 10. [dengue_prep pipeline](docs/DENGUE_PREP.md)
-11. [Running & scheduling both pipelines](docs/RUNNING_PIPELINES.md)
-12. [Config reference](docs/CONFIG_REFERENCE.md)
-13. [Troubleshooting](docs/TROUBLESHOOTING.md)
+11. [Running & scheduling pipelines](docs/RUNNING_PIPELINES.md)
+12. [Downscale pipeline & visualization](docs/downscale.md)
+13. [Config reference](docs/CONFIG_REFERENCE.md)
+14. [Troubleshooting](docs/TROUBLESHOOTING.md)
 
 ---
 
@@ -314,6 +316,18 @@ Steps execute in DAG order. Names match logs and code under `pipelines/dengue/st
 | 11 | `generate_report` | JSON + LaTeX bundle + maps zip + optional PDF |
 | 12 | `notify_run` | Sends success email (if configured) |
 
+### dengue_downscale
+
+Runs after the `dengue` pipeline. Takes a completed forecast run ID and disaggregates
+district-level predictions down to mandal (or any sub-district) level using recent case history.
+See **[docs/downscale.md](docs/downscale.md)** for full run instructions.
+
+| # | Step | What it does |
+|---|------|-------------|
+| 1 | `load_predictions` | Loads parent-level predictions CSV from a completed dengue run |
+| 2 | `downscale_predictions` | Builds parent→child mapping from GeoJSONs, computes case-share weights, disaggregates |
+| 3 | `write_output` | Writes `Predictions_downscaled_*.csv` to the downscale run's artifacts |
+
 ---
 
 ## Project layout
@@ -323,12 +337,14 @@ acestor-v2/
 ├── acestor/                  # Core runtime: config, orchestration, storage, CLI
 ├── pipelines/
 │   ├── dengue_prep/          # Data preparation pipeline (download + parse)
-│   └── dengue/               # Forecast pipeline (model + maps + report)
-├── configs/                  # Example YAML configs (ap_district.yaml, ap_district_prep.yaml, …)
-├── docs/                     # Guides: Architecture, DENGUE_PREP, RUNNING_PIPELINES, CONFIG_REFERENCE, …
+│   ├── dengue/               # Forecast pipeline (model + maps + report)
+│   └── dengue_downscale/     # Disaggregation pipeline (district → mandal)
+├── configs/                  # Example YAML configs (ap_district.yaml, ap_district_to_mandal.yaml, …)
+├── docs/                     # Guides: Architecture, DENGUE_PREP, RUNNING_PIPELINES, downscale, …
 ├── scripts/
 │   ├── run_schedules.py      # Multi-pipeline APScheduler process
-│   └── install_schedule.py  # Crontab installer (single-pipeline alternative)
+│   ├── install_schedule.py   # Crontab installer (single-pipeline alternative)
+│   └── downscale_viz/        # Interactive HTML visualization generator for downscale output
 ├── logs/                     # Per-run log files (created at runtime)
 ├── Dockerfile
 └── pyproject.toml

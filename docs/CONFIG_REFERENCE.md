@@ -451,3 +451,38 @@ storages:
 | `s3.bucket` | string | S3 bucket name |
 | `s3.base_prefix` | string | Key prefix (folder) within the bucket |
 | `s3.region` | string | AWS region |
+
+---
+
+## `run.source_run_id` *(dengue_downscale pipeline)*
+
+```yaml
+run:
+  source_run_id: "march-10-run"
+```
+
+| Key | Type | Default | Notes |
+|---|---|---|---|
+| `source_run_id` | string | **required** | Run ID of the `dengue` forecast run whose predictions to disaggregate. Must exist under `storages.artifacts.filesystem.base_path`. |
+
+---
+
+## `downscale` *(dengue_downscale pipeline)*
+
+```yaml
+downscale:
+  parent_level: district
+  child_level: mandal
+  window_weeks: 4
+  cases_csv: "prepared_data/mandal/cases_daily.csv"
+  geojson_base_path: "ap_datasets/geojsons/geojsons_AP"
+```
+
+| Key | Type | Default | Notes |
+|---|---|---|---|
+| `parent_level` | string | **required** | Singular geography of the source predictions (e.g. `district`, `state`) |
+| `child_level` | string | **required** | Singular geography to disaggregate into (e.g. `mandal`, `block`). Must differ from `parent_level`. |
+| `window_weeks` | int | `4` | How many recent weeks of child-level case history to use when computing each child's share. Must be > 0. |
+| `cases_csv` | string | `"prepared_data/mandal/cases_daily.csv"` | Path to child-level daily case counts produced by `dengue_prep` at the child spatial level. |
+| `geojson_base_path` | string | `"ap_datasets/geojsons/geojsons_AP"` | Base directory containing `{child_level}s/` subdirectory with per-region GeoJSON files. Each file must have `region_id` and `parent` properties. |
+

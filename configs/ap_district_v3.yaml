@@ -3,7 +3,7 @@ pipeline:
   title: "Dengue Early Warning System — Andhra Pradesh"
 
 run:
-  run_date: "2026-04-17"   # leave blank to use today's date
+  run_date: "2026-03-10"   # leave blank to use today's date
 
 data:
   prepared_data:

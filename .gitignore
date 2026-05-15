@@ -51,6 +51,8 @@ execution_steps.txt
 test_email.py
 validate_outputs.py
 
+scripts/downscale_viz/output/
+
 *.log
 logs/
 .DS_Store
