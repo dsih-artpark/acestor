@@ -580,7 +580,12 @@ function showDistrictInfo(feature, data) {
   const weekLabel = new Date(currentWeek + 'T00:00:00').toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'numeric' });
 
   openInfoPanel(p.name, `${PARENT_LABEL} · ${weekLabel}`,
-    `<div class="info-section">${zoneBadgeHtml(zoneNum)}</div>
+    `<div class="info-section">
+      ${zoneBadgeHtml(zoneNum)}
+      <p style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.55">
+        Zone thresholds are <strong>calibrated to this ${PARENT_LABEL.toLowerCase()}'s own history</strong> — the same predicted case count may be Low in one ${PARENT_LABEL.toLowerCase()} and High in another, depending on each area's baseline transmission. See the gauge below.
+      </p>
+    </div>
 
     <div class="info-section">
       <div class="stat-row">
