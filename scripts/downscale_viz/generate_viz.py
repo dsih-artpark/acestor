@@ -428,7 +428,11 @@ def main() -> None:
     out_path.write_text(html, encoding="utf-8")
 
     size_mb = out_path.stat().st_size / 1_000_000
-    print(f"\n[done] {out_path.relative_to(REPO_ROOT)}  ({size_mb:.1f} MB)")
+    try:
+        display_path = out_path.relative_to(REPO_ROOT)
+    except ValueError:
+        display_path = out_path
+    print(f"\n[done] {display_path}  ({size_mb:.1f} MB)")
     print("       Open in any browser — fully self-contained, no server needed.")
 
 
