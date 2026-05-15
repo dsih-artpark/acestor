@@ -69,12 +69,13 @@ uv run python -m acestor.run \
 Trains models, generates predictions, and computes zone classifications.
 Set `run_date` to the Monday of the forecast week.
 
+Set `run_date` in `configs/ap_district_v3.yaml` to the Monday of the forecast week, then run:
+
 ```bash
 uv run python -m acestor.run \
   --pipeline pipelines.dengue.pipeline:build_pipeline \
   --config configs/ap_district_v3.yaml \
-  --run-id march-10-run \
-  --set run.run_date=2026-03-10
+  --run-id march-10-run
 ```
 
 Produces under `artifacts/ap/march-10-run/`:
