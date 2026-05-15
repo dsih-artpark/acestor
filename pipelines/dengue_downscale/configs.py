@@ -34,10 +34,17 @@ class DownscaleConfig:
             raise ValueError("downscale.parent_level is required")
         if not child_level:
             raise ValueError("downscale.child_level is required")
+        if parent_level == child_level:
+            raise ValueError(
+                f"downscale.parent_level and child_level must differ, got {parent_level!r} for both"
+            )
+        window_weeks = int(raw.get("window_weeks", 4))
+        if window_weeks <= 0:
+            raise ValueError(f"downscale.window_weeks must be > 0, got {window_weeks}")
         return cls(
             parent_level=parent_level,
             child_level=child_level,
-            window_weeks=int(raw.get("window_weeks", 4)),
+            window_weeks=window_weeks,
             cases_csv=str(
                 raw.get("cases_csv", "prepared_data/mandal/cases_daily.csv")
             ).strip(),

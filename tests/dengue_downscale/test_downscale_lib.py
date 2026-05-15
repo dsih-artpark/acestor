@@ -325,3 +325,24 @@ def test_downscale_config_custom_values():
     assert cfg.window_weeks == 8
     assert cfg.cases_csv == "prepared_data/mandal/cases_daily.csv"
     assert cfg.geojson_base_path == "custom/path"
+
+
+def test_downscale_config_rejects_zero_window_weeks():
+    with pytest.raises(ValueError, match="window_weeks"):
+        DownscaleConfig.from_raw(
+            {"parent_level": "districts", "child_level": "mandals", "window_weeks": 0}
+        )
+
+
+def test_downscale_config_rejects_negative_window_weeks():
+    with pytest.raises(ValueError, match="window_weeks"):
+        DownscaleConfig.from_raw(
+            {"parent_level": "districts", "child_level": "mandals", "window_weeks": -1}
+        )
+
+
+def test_downscale_config_rejects_same_parent_and_child_level():
+    with pytest.raises(ValueError, match="differ"):
+        DownscaleConfig.from_raw(
+            {"parent_level": "districts", "child_level": "districts"}
+        )
