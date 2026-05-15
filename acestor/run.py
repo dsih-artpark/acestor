@@ -43,6 +43,24 @@ def _load_builder(spec: str) -> Callable[[PipelineConfig], PipelineDAG]:
     return builder
 
 
+def _apply_overrides(raw: dict, overrides: list[str]) -> dict:
+    """Apply --set key.path=value overrides to a raw config dict in-place."""
+    import yaml as _yaml
+
+    for item in overrides:
+        if "=" not in item:
+            raise ValueError(f"--set value must be key=value, got: {item!r}")
+        key_path, _, raw_value = item.partition("=")
+        keys = key_path.strip().split(".")
+        # Parse the value as YAML so booleans, ints, lists work naturally
+        value = _yaml.safe_load(raw_value)
+        target = raw
+        for k in keys[:-1]:
+            target = target.setdefault(k, {})
+        target[keys[-1]] = value
+    return raw
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run acestor.")
     parser.add_argument(
@@ -61,10 +79,31 @@ def main(argv: list[str] | None = None) -> int:
         required=False,
         help="Optional run identifier. If omitted, a UUID will be generated.",
     )
+    parser.add_argument(
+        "--set",
+        metavar="KEY=VALUE",
+        action="append",
+        default=[],
+        dest="overrides",
+        help="Override a config value using dot-notation, e.g. --set model_configs.rf.tune=true. "
+        "Values are parsed as YAML (booleans, ints, lists all work). Repeatable.",
+    )
 
     args = parser.parse_args(argv)
 
-    config = PipelineConfig.from_yaml(args.config)
+    if args.overrides:
+        import yaml as _yaml
+        from pathlib import Path as _Path
+        from acestor.core.config import _resolve_env_recursive
+
+        with open(args.config) as f:
+            raw_config = _yaml.safe_load(f) or {}
+        _apply_overrides(raw_config, args.overrides)
+        config = PipelineConfig(
+            path=_Path(args.config), raw=_resolve_env_recursive(raw_config)
+        )
+    else:
+        config = PipelineConfig.from_yaml(args.config)
     run_id = args.run_id or str(uuid.uuid4())
 
     builder = _load_builder(args.pipeline)
