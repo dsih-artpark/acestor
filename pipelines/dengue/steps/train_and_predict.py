@@ -127,6 +127,7 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
                 pred_upto=pred_upto,
                 cutoff_case=cutoff_case,
                 artifacts=context.artifacts,
+                run_id=context.run_id,
                 log=context.log,
             )
             model = get_model(model_name)

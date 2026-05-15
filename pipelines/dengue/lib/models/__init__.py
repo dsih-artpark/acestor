@@ -34,6 +34,7 @@ class ModelContext:
     artifacts: Any = (
         None  # Storage backend — None in unit tests, set in train_and_predict
     )
+    run_id: str = ""  # Pipeline run ID — used for scoping debug output paths
     log: Any = None  # Pipeline logger — None in unit tests, set in train_and_predict
 
 

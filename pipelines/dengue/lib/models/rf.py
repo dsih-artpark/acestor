@@ -146,15 +146,17 @@ def _save_debug(
 ):
     import json as _json
 
-    prefix = f"debug/{model_name}"
+    prefix = f"{ctx.run_id}/debug/{model_name}"
     train_df = pd.DataFrame(X_train, columns=lag_cols)
     train_df["case"] = y_train
     ctx.artifacts.write_text(train_df.to_csv(index=False), f"{prefix}/X_train.csv")
     ctx.artifacts.write_text(
-        test_data[[c for c in test_data.columns]].to_csv(index=False),
+        test_data.to_csv(index=False),
         f"{prefix}/X_test_predictions.csv",
     )
-    importance_dict = dict(sorted(zip(lag_cols, importances), key=lambda x: -x[1]))
+    importance_dict = dict(
+        sorted(zip(lag_cols, [float(v) for v in importances]), key=lambda x: -x[1])
+    )
     ctx.artifacts.write_text(
         _json.dumps(importance_dict, indent=2), f"{prefix}/feature_importance.json"
     )
