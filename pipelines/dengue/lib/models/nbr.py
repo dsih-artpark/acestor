@@ -98,6 +98,14 @@ def negative_binomial_regression(
     df0 = _lag(df0, spatial_col, lag_temp, lag_rainfall, lag_humidity)
 
     train_data = df0[~df0["recordDate"].isin(last_4)].copy()
+    # Drop synthetic rows (inserted by ret_na_filled_df) that have no real weather
+    # data — NaN raw weather means their lag features are also unreliable.
+    _weather_cols = [
+        c for c in ["t2m_mean", "tp_sum", "d2m_mean"] if c in train_data.columns
+    ]
+    if _weather_cols:
+        train_data = train_data.dropna(subset=_weather_cols).reset_index(drop=True)
+
     filtered = _filter_features(
         train_data,
         feature_cols,
