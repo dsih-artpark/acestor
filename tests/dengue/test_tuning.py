@@ -195,7 +195,8 @@ def test_rf_runs_tuning_when_no_cache():
     ) as mock_tune:
         model.predict(ctx)
     mock_tune.assert_called_once()
-    storage.write_text.assert_called_once()
+    # write_text called twice: once for params JSON, once for fingerprint JSON
+    assert storage.write_text.call_count == 2
 
 
 def test_rf_force_retune_ignores_cache():

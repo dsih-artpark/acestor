@@ -112,8 +112,9 @@ def xgboost_regression(
         X_test[col] = 0
     X_test = X_test[X_train.columns]
 
+    train_max_date = str(train_data["recordDate"].max().date())
     hp = (
-        _get_xgb_params(ctx, X_train.values, y_train)
+        _get_xgb_params(ctx, X_train.values, y_train, train_max_date)
         if ctx is not None
         else {
             "n_estimators": n_estimators,
@@ -141,7 +142,9 @@ def xgboost_regression(
     return test_data.reset_index(drop=True)
 
 
-def _get_xgb_params(ctx: "ModelContext", X_train: Any, y_train: Any) -> dict:
+def _get_xgb_params(
+    ctx: "ModelContext", X_train: Any, y_train: Any, train_max_date: str
+) -> dict:
     """Load cached XGB hyperparams or run Optuna tuning if needed."""
     defaults = {
         "n_estimators": 300,
@@ -161,6 +164,9 @@ def _get_xgb_params(ctx: "ModelContext", X_train: Any, y_train: Any) -> dict:
 
     cached = _tuning_mod.load_cached_params(ctx.artifacts, "xgb")
     if cached is not None and not ctx.cfg.tune:
+        _tuning_mod.check_fingerprint(
+            ctx.artifacts, "xgb", ctx.cfg, train_max_date, _log
+        )
         _log.info(
             "XGB: using cached hyperparameters (tuned %s, RMSE=%.4f) from hp/xgb_best_params.json",
             cached["tuned_at"],
@@ -186,6 +192,11 @@ def _get_xgb_params(ctx: "ModelContext", X_train: Any, y_train: Any) -> dict:
         rmse=rmse,
         n_trials=ctx.cfg.n_trials,
         tuned_at=tuned_at,
+    )
+    _tuning_mod.save_fingerprint(
+        ctx.artifacts,
+        "xgb",
+        _tuning_mod.compute_fingerprint(ctx.cfg, train_max_date),
     )
     _log.info(
         "XGB: tuning complete — best RMSE=%.4f, params saved to hp/xgb_best_params.json",
