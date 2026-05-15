@@ -131,10 +131,15 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
             model = get_model(model_name)
             pred = model.predict(ctx)
             if pred.empty:
-                context.log.warning(
-                    "train_and_predict: %s returned no predictions — "
-                    "check that weather region_ids match case region_ids in prepared_data",
+                context.log.error(
+                    "train_and_predict: %s returned no predictions. "
+                    "Most likely cause: prediction dates (%s … %s) fall after the case data "
+                    "cutoff (%s), so case-lag features are NaN for all regions. "
+                    "Fix: set run_date to a date within the case data window.",
                     model_name,
+                    pred_upto - pd.Timedelta(weeks=3),
+                    pred_upto,
+                    cutoff_case.date(),
                 )
                 continue
             out = zones.merge_predictions_thresholds(
@@ -148,15 +153,19 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
             per_model_dfs[model_name] = out
             prediction_dfs.append(out)
 
-        if not prediction_dfs:
-            context.log.warning(
-                "train_and_predict: no predictions from any model — "
-                "returning empty result (all regions will appear white/hatched on maps)"
+        failed_models = [m for m in cfg.models if m not in per_model_dfs]
+        if failed_models:
+            context.log.error(
+                "train_and_predict: %d/%d configured model(s) produced no predictions: %s",
+                len(failed_models),
+                len(cfg.models),
+                failed_models,
             )
-            return PredictionResult(
-                predictions_csv_path="",
-                region_type=cfg.spatial_res,
-                month_string="",
+
+        if not prediction_dfs:
+            raise RuntimeError(
+                f"train_and_predict: all configured models ({cfg.models}) returned empty "
+                f"predictions — cannot continue. Check ERROR logs above for the likely cause."
             )
 
         # Combine via the configured ensemble strategy (or skip if "none").

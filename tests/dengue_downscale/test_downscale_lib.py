@@ -307,7 +307,7 @@ def test_downscale_run_config_latest_sentinel():
 
 
 def _make_run_dir(base: Path, run_id: str, with_predictions: bool = True) -> Path:
-    results = base / run_id / "results"
+    results = base / run_id / "outputs"
     results.mkdir(parents=True)
     if with_predictions:
         (results / f"Predictions_{run_id}.csv").write_text(
@@ -333,7 +333,7 @@ def test_resolve_latest_run_skips_dirs_without_predictions(tmp_path):
 
 def test_resolve_latest_run_skips_downscaled_csvs(tmp_path):
     # A dir that only has a downscaled CSV should not be picked as a parent run
-    results = tmp_path / "downscale-run" / "results"
+    results = tmp_path / "downscale-run" / "outputs"
     results.mkdir(parents=True)
     (results / "Predictions_downscaled_district_to_mandal_20260101.csv").write_text("x")
     _make_run_dir(tmp_path, "real-run")

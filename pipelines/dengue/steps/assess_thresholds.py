@@ -41,7 +41,7 @@ class AssessThresholdsStep(BaseStep[AssessThresholdsInputs, ThresholdAssessmentR
         ]
 
         run_date = str(
-            (_section(context.config, "run") or {}).get("run_date", "")
+            (_section(context.config, "run") or {}).get("run_date", "") or ""
         ).strip()
         end_str = (
             pd.Timestamp(run_date).date().strftime("%Y%m%d")
