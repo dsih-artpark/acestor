@@ -258,6 +258,7 @@ def _make_ctx(
         lag_temp=[12],
         lag_rainfall=[4],
         lag_humidity=[4],
+        lag_cases=[],
         years_to_exclude=[],
         years_to_include=[],
         list_alpha=[1.0, 2.0],

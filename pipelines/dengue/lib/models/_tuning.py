@@ -39,6 +39,7 @@ def compute_fingerprint(cfg: Any, train_max_date: str) -> str:
         "lag_temp": sorted(cfg.lag_temp),
         "lag_rainfall": sorted(cfg.lag_rainfall),
         "lag_humidity": sorted(cfg.lag_humidity),
+        "lag_cases": sorted(cfg.lag_cases),
         "data_features": sorted(cfg.data_features),
         "years_to_exclude": sorted(cfg.years_to_exclude),
         "years_to_include": sorted(cfg.years_to_include),

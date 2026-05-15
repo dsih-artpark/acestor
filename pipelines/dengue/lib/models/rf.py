@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestRegressor
 
-from pipelines.dengue.lib.models._shared import _lag, _one_hot
+from pipelines.dengue.lib.models._shared import _lag
 from pipelines.dengue.lib.models import _tuning as _tuning_mod
 
 log = logging.getLogger(__name__)
@@ -27,6 +27,7 @@ def random_forest_regression(
     lag_temp: list[int],
     lag_rainfall: list[int],
     lag_humidity: list[int],
+    lag_cases: list[int],
     years_to_exclude: list[int],
     years_to_include: list[int],
     predict_upto_date: pd.Timestamp,
@@ -50,12 +51,13 @@ def random_forest_regression(
         lambda x: datetime.isocalendar(x).week
     )
 
-    df0 = _lag(df0, spatial_col, lag_temp, lag_rainfall, lag_humidity)
+    df0 = _lag(df0, spatial_col, lag_temp, lag_rainfall, lag_humidity, lag_cases)
 
     lag_cols = (
         [f"temp_lag_{lg}" for lg in lag_temp]
         + [f"rainfall_lag_{lg}" for lg in lag_rainfall]
         + [f"relative_humidity_lag_{lg}" for lg in lag_humidity]
+        + [f"case_lag_{lg}" for lg in lag_cases]
     )
     lag_cols = [c for c in lag_cols if c in df0.columns]
 
@@ -76,10 +78,7 @@ def random_forest_regression(
         )
         return pd.DataFrame()
 
-    encoded_train = _one_hot(train_data)
-    X_train = pd.concat(
-        [train_data[lag_cols].reset_index(drop=True), encoded_train], axis=1
-    )
+    X_train = train_data[lag_cols].reset_index(drop=True)
     y_train = train_data["case"].values
 
     test_data = df0[df0["recordDate"].isin(last_4)].copy().reset_index(drop=True)
@@ -99,13 +98,7 @@ def random_forest_regression(
         )
         return pd.DataFrame()
 
-    encoded_test = _one_hot(test_data)
-    X_test = pd.concat(
-        [test_data[lag_cols].reset_index(drop=True), encoded_test], axis=1
-    )
-    for col in set(X_train.columns) - set(X_test.columns):
-        X_test[col] = 0
-    X_test = X_test[X_train.columns]
+    X_test = test_data[lag_cols].reset_index(drop=True)
 
     train_max_date = str(train_data["recordDate"].max().date())
     hp = (
@@ -201,6 +194,7 @@ class RFModel:
             lag_temp=ctx.cfg.lag_temp,
             lag_rainfall=ctx.cfg.lag_rainfall,
             lag_humidity=ctx.cfg.lag_humidity,
+            lag_cases=ctx.cfg.lag_cases,
             years_to_exclude=ctx.cfg.years_to_exclude,
             years_to_include=ctx.cfg.years_to_include,
             predict_upto_date=ctx.pred_upto,

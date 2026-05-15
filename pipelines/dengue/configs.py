@@ -465,6 +465,7 @@ class TrainPredictConfig:
     lag_temp: list[int]
     lag_rainfall: list[int]
     lag_humidity: list[int]
+    lag_cases: list[int]
     years_to_exclude: list[int]
     years_to_include: list[int]  # empty = no restriction; non-empty = only these years
     list_alpha: list[float]
@@ -497,6 +498,7 @@ class TrainPredictConfig:
             lag_temp=list(lag.get("lag_temp", [12])),
             lag_rainfall=list(lag.get("lag_rainfall", [4])),
             lag_humidity=list(lag.get("lag_humidity", [4])),
+            lag_cases=list(lag.get("lag_cases", [])),
             years_to_exclude=[
                 int(y) for y in raw.get("years_to_exclude", [2020, 2021])
             ],
@@ -526,6 +528,7 @@ def resolve_model_config(
         "lag_temp": list(base.lag_temp),
         "lag_rainfall": list(base.lag_rainfall),
         "lag_humidity": list(base.lag_humidity),
+        "lag_cases": list(base.lag_cases),
     }
     override_lag = dict(raw_overrides.get("lag", {}))
     merged_lag = {**base_lag, **override_lag}
