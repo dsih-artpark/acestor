@@ -54,14 +54,12 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
             pipeline=_section(context.config, "pipeline"),
         )
 
-        case_path = context.artifact_path(
-            f"datasets/cases_{cfg.spatial_res}_sampled.csv"
-        )
+        case_path = context.artifact_path(f"inputs/cases_{cfg.spatial_res}_sampled.csv")
         case_csv = context.artifacts.read_text(case_path)
         case_df = pd.read_csv(io.StringIO(case_csv))
 
         weather_path = context.artifact_path(
-            f"datasets/weather_{cfg.spatial_res}_sampled.csv"
+            f"inputs/weather_{cfg.spatial_res}_sampled.csv"
         )
         weather_csv = context.artifacts.read_text(weather_path)
         weather_df = pd.read_csv(io.StringIO(weather_csv))
@@ -232,7 +230,7 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
 
             suffix_part = f"_{suffix}" if suffix else ""
             dest = context.artifact_path(
-                f"results/Predictions_{local_month_string}_{cfg.spatial_res.capitalize()}{suffix_part}_{end_str}.csv"
+                f"outputs/Predictions_{local_month_string}_{cfg.spatial_res.capitalize()}{suffix_part}_{end_str}.csv"
             )
             context.artifacts.write_text(classified.to_csv(index=False), dest)
             context.log.info(

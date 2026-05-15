@@ -118,7 +118,7 @@ class LoadPreparedWeatherDataStep(
         }
         renamed = sampled.rename(columns=rename_map) if rename_map else sampled
 
-        dest = context.artifact_path(f"datasets/weather_{cfg.region_type}_sampled.csv")
+        dest = context.artifact_path(f"inputs/weather_{cfg.region_type}_sampled.csv")
         context.artifacts.write_text(renamed.to_csv(index=False), dest)
         context.log.info(
             "load_prepared_weather_data: region_type=%s rows=%d",

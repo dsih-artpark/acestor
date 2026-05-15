@@ -78,11 +78,11 @@ assess:
   total_mandal_regions: 689   # AP has 689 mandals
 
 maps:
-  output_dir: "plots"
+  output_dir: "outputs/maps"
   figure_title: "Andhra Pradesh Dengue Risk Map (Mandal)"
 
 report:
-  output_dir: "reports"
+  output_dir: "outputs/report"
   compile_pdf: true
   caption_primary: "AP mandals"
   caption_secondary: ""

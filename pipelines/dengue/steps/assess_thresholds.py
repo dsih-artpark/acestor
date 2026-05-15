@@ -59,7 +59,7 @@ class AssessThresholdsStep(BaseStep[AssessThresholdsInputs, ThresholdAssessmentR
             # (AssessThresholdPerformance.py L145–149).
             if len(best) > 0:
                 best = report_lib.add_latex_figure_metadata(best, run_date=run_date)
-            dest = context.artifact_path(f"dumps/best_method_{region}_{end_str}.csv")
+            dest = context.artifact_path(f"outputs/best_method_{region}_{end_str}.csv")
             context.artifacts.write_text(best.to_csv(index=False), dest)
             best_method_by_region[region] = dest
             context.log.info("assess_thresholds: %s=%d rows", region, len(best))

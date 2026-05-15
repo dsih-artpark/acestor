@@ -155,7 +155,7 @@ class GenerateReportStep(BaseStep[GenerateReportInputs, ReportResult]):
 
         plots_dir = context.artifact_fs_path(plots_rel)
         all_maps_zip_path = context.artifact_fs_path(
-            f"results/AllMaps_{safe_month}_{end_str}.zip"
+            f"outputs/AllMaps_{safe_month}_{end_str}.zip"
         )
         all_names = (list(fnames_c) if fnames_c else []) + (
             list(fnames_z) if fnames_z else []
@@ -186,7 +186,7 @@ class GenerateReportStep(BaseStep[GenerateReportInputs, ReportResult]):
 
         bundle_token = report_lib.safe_bundle_filename_prefix(cfg.bundle_prefix)
         bundle_fs = context.artifact_fs_path(
-            f"results/{bundle_token}_{safe_month}_{end_str}.zip"
+            f"outputs/{bundle_token}_{safe_month}_{end_str}.zip"
         )
         report_lib.create_latex_bundle_zip(
             rep_dict=rep_dict,
@@ -196,7 +196,7 @@ class GenerateReportStep(BaseStep[GenerateReportInputs, ReportResult]):
             destination_zip=bundle_fs,
         )
         latex_bundle_key = context.artifact_path(
-            f"results/{bundle_token}_{safe_month}_{end_str}.zip"
+            f"outputs/{bundle_token}_{safe_month}_{end_str}.zip"
         )
 
         details_corp = corp_details
@@ -204,7 +204,7 @@ class GenerateReportStep(BaseStep[GenerateReportInputs, ReportResult]):
         pdf_path: str | None = None
         if cfg.compile_pdf:
             dest_pdf = context.artifact_fs_path(
-                f"results/Report_{safe_month}_{end_str}.pdf"
+                f"outputs/Report_{safe_month}_{end_str}.pdf"
             )
             pdf = report_lib.compile_latex_bundle_zip(
                 bundle_fs,

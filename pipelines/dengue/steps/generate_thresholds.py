@@ -78,9 +78,7 @@ class GenerateThresholdsStep(BaseStep[GenerateThresholdsInputs, ThresholdsResult
                 f"thresholds.methods = {cfg.methods}"
             )
 
-        case_path = context.artifact_path(
-            f"datasets/cases_{cfg.region_type}_sampled.csv"
-        )
+        case_path = context.artifact_path(f"inputs/cases_{cfg.region_type}_sampled.csv")
         case_csv = context.artifacts.read_text(case_path)
         df = pd.read_csv(io.StringIO(case_csv))
 
@@ -133,7 +131,7 @@ class GenerateThresholdsStep(BaseStep[GenerateThresholdsInputs, ThresholdsResult
         combined = combine_thresholds(method_dfs)
 
         dest = context.artifact_path(
-            f"datasets/thresholds/{cfg.region_type}_all_thresholds.csv"
+            f"inputs/thresholds/{cfg.region_type}_all_thresholds.csv"
         )
         context.artifacts.write_text(combined.to_csv(index=False), dest)
         context.log.info(

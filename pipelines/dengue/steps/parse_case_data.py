@@ -226,7 +226,7 @@ class ParseCaseDataStep(BaseStep[ParseCaseDataInputs, ParseCaseDataResult]):
         daily: pd.DataFrame,
         region_type: str,
     ) -> dict[str, str]:
-        daily_dest = context.artifact_path(f"datasets/cases_{region_type}_daily.csv")
+        daily_dest = context.artifact_path(f"inputs/cases_{region_type}_daily.csv")
         context.artifacts.write_text(daily.to_csv(index=False), daily_dest)
 
         rolling = case_data.rolling_aggregate(daily, n_days=7)
@@ -236,9 +236,7 @@ class ParseCaseDataStep(BaseStep[ParseCaseDataInputs, ParseCaseDataResult]):
         )
         sampled = case_data.sample_data(rolling, end_date=latest_day)
         renamed = case_data.rename_columns_for_output(sampled, region_type)
-        sampled_dest = context.artifact_path(
-            f"datasets/cases_{region_type}_sampled.csv"
-        )
+        sampled_dest = context.artifact_path(f"inputs/cases_{region_type}_sampled.csv")
         context.artifacts.write_text(renamed.to_csv(index=False), sampled_dest)
         context.log.info(
             "parse_case_data: region_type=%s daily_rows=%d sampled_rows=%d",

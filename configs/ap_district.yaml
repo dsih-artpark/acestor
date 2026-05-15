@@ -78,11 +78,11 @@ assess:
   total_district_regions: 26   # AP has 26 districts (post-2022 reorganisation)
 
 maps:
-  output_dir: "plots"
+  output_dir: "outputs/maps"
   figure_title: "Andhra Pradesh Dengue Risk Map"
 
 report:
-  output_dir: "reports"
+  output_dir: "outputs/report"
   compile_pdf: true
   caption_primary: "AP districts"
   caption_secondary: ""

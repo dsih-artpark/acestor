@@ -98,7 +98,7 @@ class LoadPreparedCaseDataStep(
         sampled = case_data.sample_data(rolling, end_date=latest_day)
         renamed = case_data.rename_columns_for_output(sampled, cfg.region_type)
 
-        dest = context.artifact_path(f"datasets/cases_{cfg.region_type}_sampled.csv")
+        dest = context.artifact_path(f"inputs/cases_{cfg.region_type}_sampled.csv")
         context.artifacts.write_text(renamed.to_csv(index=False), dest)
         context.log.info(
             "load_prepared_case_data: region_type=%s rows=%d sampled_rows=%d",
