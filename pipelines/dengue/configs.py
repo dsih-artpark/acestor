@@ -475,6 +475,7 @@ class TrainPredictConfig:
     output: str  # "ensemble" | "per_model" | "both"
     tune: bool  # False = use cache; True = force Optuna retune
     n_trials: int  # Optuna trials when tuning runs
+    debug: bool  # True = save intermediate CSVs to artifacts/debug/<model>/
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any]) -> TrainPredictConfig:
@@ -509,6 +510,7 @@ class TrainPredictConfig:
             output=output,
             tune=bool(raw.get("tune", False)),
             n_trials=int(raw.get("n_trials", 50)),
+            debug=bool(raw.get("debug", False)),
         )
 
 
@@ -544,6 +546,7 @@ def resolve_model_config(
         "years_to_include": list(base.years_to_include),
         "tune": base.tune,
         "n_trials": base.n_trials,
+        "debug": base.debug,
     }
 
     for key in (
@@ -552,6 +555,7 @@ def resolve_model_config(
         "years_to_include",
         "tune",
         "n_trials",
+        "debug",
     ):
         if key in raw_overrides:
             merged[key] = raw_overrides[key]

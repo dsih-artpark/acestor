@@ -132,6 +132,25 @@ def xgboost_regression(
     test_data["prediction"] = np.maximum(0.0, xgb_model.predict(X_test.values))
     test_data["recordDate"] = pd.to_datetime(test_data["recordDate"])
     test_data["model"] = "xgboostRegression"
+
+    if (
+        ctx is not None
+        and getattr(ctx.cfg, "debug", False)
+        and ctx.artifacts is not None
+    ):
+        from pipelines.dengue.lib.models.rf import _save_debug
+
+        _save_debug(
+            ctx,
+            "xgb",
+            X_train,
+            y_train,
+            X_test,
+            test_data,
+            xgb_model.feature_importances_,
+            lag_cols,
+        )
+
     return test_data.reset_index(drop=True)
 
 

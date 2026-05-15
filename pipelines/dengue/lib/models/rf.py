@@ -121,7 +121,43 @@ def random_forest_regression(
     test_data["prediction"] = np.maximum(0.0, rf.predict(X_test.values))
     test_data["recordDate"] = pd.to_datetime(test_data["recordDate"])
     test_data["model"] = "randomForestRegression"
+
+    if (
+        ctx is not None
+        and getattr(ctx.cfg, "debug", False)
+        and ctx.artifacts is not None
+    ):
+        _save_debug(
+            ctx,
+            "rf",
+            X_train,
+            y_train,
+            X_test,
+            test_data,
+            rf.feature_importances_,
+            lag_cols,
+        )
+
     return test_data.reset_index(drop=True)
+
+
+def _save_debug(
+    ctx, model_name, X_train, y_train, X_test, test_data, importances, lag_cols
+):
+    import json as _json
+
+    prefix = f"debug/{model_name}"
+    train_df = pd.DataFrame(X_train, columns=lag_cols)
+    train_df["case"] = y_train
+    ctx.artifacts.write_text(train_df.to_csv(index=False), f"{prefix}/X_train.csv")
+    ctx.artifacts.write_text(
+        test_data[[c for c in test_data.columns]].to_csv(index=False),
+        f"{prefix}/X_test_predictions.csv",
+    )
+    importance_dict = dict(sorted(zip(lag_cols, importances), key=lambda x: -x[1]))
+    ctx.artifacts.write_text(
+        _json.dumps(importance_dict, indent=2), f"{prefix}/feature_importance.json"
+    )
 
 
 def _get_rf_params(
