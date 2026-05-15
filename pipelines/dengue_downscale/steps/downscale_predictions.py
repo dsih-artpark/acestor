@@ -31,7 +31,6 @@ class DownscalePredictionsStep(BaseStep[DownscalePredictionsInputs, DownscaleRes
         cfg = DownscaleConfig.from_raw(context.config.get("downscale") or {})
 
         parent_preds = pd.read_csv(inputs.load_predictions.predictions_csv_path)
-        as_of_date = pd.Timestamp(inputs.load_predictions.run_date)
 
         cases_path = Path(cfg.cases_csv)
         if not cases_path.exists():
@@ -40,6 +39,11 @@ class DownscalePredictionsStep(BaseStep[DownscalePredictionsInputs, DownscaleRes
                 f"Run dengue_prep at the child spatial level ({cfg.child_level!r}) first."
             )
         cases_df = pd.read_csv(cases_path, parse_dates=["date"])
+        as_of_date = cases_df["date"].max()
+        context.log.info(
+            "downscale_predictions: using as_of_date=%s (last date in cases CSV)",
+            as_of_date.date(),
+        )
 
         geojson_dir = Path(cfg.geojson_base_path) / cfg.child_level
         if not geojson_dir.exists():
