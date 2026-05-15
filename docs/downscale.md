@@ -7,14 +7,15 @@ why a district received its risk classification.
 
 ---
 
-## Folder contents
+## Files
 
 ```
-downscale_viz/
+scripts/downscale_viz/
 ├── generate_viz.py   — builds the HTML from pipeline artifacts
 ├── template.html     — HTML/JS template (data injected at generation time)
-├── README.md         — this file
 └── output/           — generated HTML files land here (git-ignored)
+
+docs/downscale.md     — this guide
 ```
 
 Running `generate_viz.py` produces a **single self-contained HTML file**
@@ -104,14 +105,14 @@ Produces `artifacts/ap/downscale-march-10/results/Predictions_downscaled_*.csv`.
 ## Step 5 — Generate the visualization
 
 ```bash
-uv run python diagnostic_report/downscale_viz/generate_viz.py \
-  --district-run-id march-10-run \
-  --mandal-run-id   downscale-march-10
+uv run python scripts/downscale_viz/generate_viz.py \
+  --parent-run-id march-10-run \
+  --child-run-id  downscale-march-10
 ```
 
 Output:
 ```
-diagnostic_report/downscale_viz/output/dengue_downscale_viz_march-10-run.html
+scripts/downscale_viz/output/dengue_downscale_viz_march-10-run.html
 ```
 
 Open this file in any browser. It is fully self-contained — GeoJSONs,
@@ -121,13 +122,15 @@ predictions, and threshold values are all embedded as inline JavaScript.
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--district-run-id` | `march-10-run` | Run ID from Step 3 |
-| `--mandal-run-id` | `downscale-march-10` | Run ID from Step 4 |
+| `--parent-run-id` | `march-10-run` | Run ID from Step 3 (parent-level forecast) |
+| `--child-run-id` | `downscale-march-10` | Run ID from Step 4 (downscale pipeline) |
+| `--parent-level` | `district` | Parent geography singular (e.g. `district`, `state`) |
+| `--child-level` | `mandal` | Child geography singular (e.g. `mandal`, `block`) |
 | `--artifacts-dir` | `artifacts/ap` | Base path for all run artifacts |
 | `--geojson-dir` | `ap_datasets/geojsons/geojsons_AP` | GeoJSON base directory |
 | `--out` | *(auto)* | Override the output HTML path |
-| `--dist-simplify` | `0.01` | Shapely tolerance for district GeoJSON simplification |
-| `--mandal-simplify` | `0.005` | Shapely tolerance for mandal GeoJSON simplification |
+| `--parent-simplify` | `0.01` | Shapely tolerance for parent GeoJSON simplification |
+| `--child-simplify` | `0.005` | Shapely tolerance for child GeoJSON simplification |
 
 ---
 

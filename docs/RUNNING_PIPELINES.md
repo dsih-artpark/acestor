@@ -1,13 +1,14 @@
 # Running the Pipelines
 
-There are two separate pipelines in this repo that work together to produce a dengue forecast:
+There are three pipelines in this repo:
 
 | Pipeline | Module | Purpose |
 |---|---|---|
 | **dengue_prep** | `pipelines.dengue_prep.pipeline` | Downloads and prepares raw case and weather data into `prepared_data/` |
 | **dengue** | `pipelines.dengue.pipeline` | Reads from `prepared_data/`, runs the forecast model, generates maps and reports |
+| **dengue_downscale** | `pipelines.dengue_downscale.pipeline` | Disaggregates district-level predictions to mandal (or sub-district) level |
 
-They are **independent processes** — `dengue_prep` writes files to disk that `dengue` later reads. You can run them back-to-back or on separate schedules (e.g., prep daily, forecast weekly).
+`dengue_prep` and `dengue` are the core pair — prep writes files that dengue reads. You can run them back-to-back or on separate schedules (e.g., prep daily, forecast weekly). `dengue_downscale` is an optional post-processing step that runs after a completed `dengue` forecast.
 
 ---
 
@@ -127,6 +128,26 @@ data:
 ```
 
 If you change `base_dir` or `region_type` in the prep config, update the forecast config to match.
+
+---
+
+## Running the downscale pipeline (optional)
+
+After a completed `dengue` forecast run, you can disaggregate predictions to sub-district level:
+
+```bash
+# Step 2b — downscale district predictions to mandal level
+python -m acestor.run \
+  --pipeline pipelines.dengue_downscale.pipeline:build_pipeline \
+  --config configs/ap_district_to_mandal.yaml \
+  --run-id downscale-my-first-run
+```
+
+Set `run.source_run_id` in the config (or pass `--set run.source_run_id=my-first-run`) to point
+at the `dengue` run whose predictions you want to disaggregate.
+
+For full prerequisites, step-by-step instructions, and the interactive visualization script, see
+**[docs/downscale.md](downscale.md)**.
 
 ---
 
