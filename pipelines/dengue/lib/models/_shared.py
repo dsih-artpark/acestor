@@ -12,6 +12,7 @@ def _lag(
     lag_temp: list[int],
     lag_rainfall: list[int],
     lag_humidity: list[int],
+    lag_cases: list[int] | None = None,
 ) -> pd.DataFrame:
     for lg in lag_temp:
         df[f"temp_lag_{lg}"] = df.groupby(spatial_col)["t2m_mean"].shift(lg)
@@ -21,6 +22,8 @@ def _lag(
         df[f"relative_humidity_lag_{lg}"] = df.groupby(spatial_col)["d2m_mean"].shift(
             lg
         )
+    for lg in lag_cases or []:
+        df[f"case_lag_{lg}"] = df.groupby(spatial_col)["case"].shift(lg)
     return df
 
 

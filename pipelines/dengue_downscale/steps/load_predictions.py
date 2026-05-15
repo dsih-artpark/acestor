@@ -20,7 +20,7 @@ def _resolve_latest_run(base_path: Path) -> str:
     for run_dir in base_path.iterdir():
         if not run_dir.is_dir():
             continue
-        results_dir = run_dir / "results"
+        results_dir = run_dir / "outputs"
         if not results_dir.exists():
             continue
         has_combined = any(
@@ -59,7 +59,7 @@ class LoadPredictionsStep(BaseStep[NoInputs, LoadPredictionsResult]):
                 "load_predictions: source_run_id='latest' resolved to %r", source_run_id
             )
 
-        results_dir = storage.base_path / source_run_id / "results"
+        results_dir = storage.base_path / source_run_id / "outputs"
         if not results_dir.exists():
             raise FileNotFoundError(
                 f"Source run artifacts not found at {results_dir}. "

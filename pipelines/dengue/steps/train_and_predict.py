@@ -54,14 +54,12 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
             pipeline=_section(context.config, "pipeline"),
         )
 
-        case_path = context.artifact_path(
-            f"datasets/cases_{cfg.spatial_res}_sampled.csv"
-        )
+        case_path = context.artifact_path(f"inputs/cases_{cfg.spatial_res}_sampled.csv")
         case_csv = context.artifacts.read_text(case_path)
         case_df = pd.read_csv(io.StringIO(case_csv))
 
         weather_path = context.artifact_path(
-            f"datasets/weather_{cfg.spatial_res}_sampled.csv"
+            f"inputs/weather_{cfg.spatial_res}_sampled.csv"
         )
         weather_csv = context.artifacts.read_text(weather_path)
         weather_df = pd.read_csv(io.StringIO(weather_csv))
@@ -127,37 +125,47 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
                 pred_upto=pred_upto,
                 cutoff_case=cutoff_case,
                 artifacts=context.artifacts,
+                run_id=context.run_id,
                 log=context.log,
             )
             model = get_model(model_name)
             pred = model.predict(ctx)
             if pred.empty:
-                context.log.warning(
-                    "train_and_predict: %s returned no predictions — "
-                    "check that weather region_ids match case region_ids in prepared_data",
+                context.log.error(
+                    "train_and_predict: %s returned no predictions. "
+                    "Most likely cause: prediction dates (%s … %s) fall after the case data "
+                    "cutoff (%s), so case-lag features are NaN for all regions. "
+                    "Fix: set run_date to a date within the case data window.",
                     model_name,
+                    pred_upto - pd.Timedelta(weeks=3),
+                    pred_upto,
+                    cutoff_case.date(),
                 )
                 continue
             out = zones.merge_predictions_thresholds(
                 case_df,
                 pred,
                 spatial_col=cfg.spatial_res,
-                list_alpha=cfg.list_alpha,
+                list_alpha=thresh_cfg.list_alpha,
                 to_date=model.threshold_to_date(ctx),
                 precomputed_thresholds=precomputed_thresholds,
             )
             per_model_dfs[model_name] = out
             prediction_dfs.append(out)
 
-        if not prediction_dfs:
-            context.log.warning(
-                "train_and_predict: no predictions from any model — "
-                "returning empty result (all regions will appear white/hatched on maps)"
+        failed_models = [m for m in cfg.models if m not in per_model_dfs]
+        if failed_models:
+            context.log.error(
+                "train_and_predict: %d/%d configured model(s) produced no predictions: %s",
+                len(failed_models),
+                len(cfg.models),
+                failed_models,
             )
-            return PredictionResult(
-                predictions_csv_path="",
-                region_type=cfg.spatial_res,
-                month_string="",
+
+        if not prediction_dfs:
+            raise RuntimeError(
+                f"train_and_predict: all configured models ({cfg.models}) returned empty "
+                f"predictions — cannot continue. Check ERROR logs above for the likely cause."
             )
 
         # Combine via the configured ensemble strategy (or skip if "none").
@@ -231,7 +239,7 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
 
             suffix_part = f"_{suffix}" if suffix else ""
             dest = context.artifact_path(
-                f"results/Predictions_{local_month_string}_{cfg.spatial_res.capitalize()}{suffix_part}_{end_str}.csv"
+                f"outputs/Predictions_{local_month_string}_{cfg.spatial_res.capitalize()}{suffix_part}_{end_str}.csv"
             )
             context.artifacts.write_text(classified.to_csv(index=False), dest)
             context.log.info(

@@ -82,7 +82,7 @@ class ParseWeatherDataStep(BaseStep[ParseWeatherDataInputs, ParseWeatherDataResu
         for (year, month), grp in out.groupby(
             [out["date"].dt.year, out["date"].dt.month]
         ):
-            rel = f"datasets/{folder}/{region_type}/{year}/{year}_{month:02d}.csv"
+            rel = f"inputs/{folder}/{region_type}/{year}/{year}_{month:02d}.csv"
             dest = context.artifact_path(rel)
             context.artifacts.write_text(grp.to_csv(index=False), dest)
 
@@ -118,7 +118,7 @@ class ParseWeatherDataStep(BaseStep[ParseWeatherDataInputs, ParseWeatherDataResu
         ]
         if not raw_dfs:
             dest = context.artifact_path(
-                f"datasets/weather_{cfg.region_type}_sampled.csv"
+                f"inputs/weather_{cfg.region_type}_sampled.csv"
             )
             context.artifacts.write_text("", dest)
             return ParseWeatherDataResult(
@@ -188,7 +188,7 @@ class ParseWeatherDataStep(BaseStep[ParseWeatherDataInputs, ParseWeatherDataResu
             k: v for k, v in cfg.intermediate_col_rename.items() if k in sampled.columns
         }
         renamed = sampled.rename(columns=rename_map) if rename_map else sampled
-        dest = context.artifact_path(f"datasets/weather_{cfg.region_type}_sampled.csv")
+        dest = context.artifact_path(f"inputs/weather_{cfg.region_type}_sampled.csv")
         context.artifacts.write_text(renamed.to_csv(index=False), dest)
         context.log.info(
             "parse_weather_data: %d rows, region_type=%s", len(renamed), cfg.region_type

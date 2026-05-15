@@ -5,6 +5,7 @@ Fold logic and search spaces ported from vbd-modelbench tune_rf_cv / tune_xgb_cv
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from typing import Any
@@ -22,6 +23,76 @@ log = logging.getLogger(__name__)
 
 def hp_cache_path(model_name: str) -> str:
     return f"hp/{model_name}_best_params.json"
+
+
+def fingerprint_path(model_name: str) -> str:
+    return f"hp/{model_name}_fingerprint.json"
+
+
+def compute_fingerprint(cfg: Any, train_max_date: str) -> str:
+    """Return a short hash of the inputs that would invalidate cached hyperparams.
+
+    Covers lag windows, feature list, year filters, and the training data cutoff.
+    If any of these change, cached params from a previous run are stale.
+    """
+    payload = {
+        "lag_temp": sorted(cfg.lag_temp),
+        "lag_rainfall": sorted(cfg.lag_rainfall),
+        "lag_humidity": sorted(cfg.lag_humidity),
+        "lag_cases": sorted(cfg.lag_cases),
+        "data_features": sorted(cfg.data_features),
+        "years_to_exclude": sorted(cfg.years_to_exclude),
+        "years_to_include": sorted(cfg.years_to_include),
+        "train_max_date": train_max_date,
+    }
+    raw = json.dumps(payload, sort_keys=True).encode()
+    return hashlib.sha256(raw).hexdigest()[:16]
+
+
+def save_fingerprint(storage: Any, model_name: str, fingerprint: str) -> None:
+    storage.write_text(
+        json.dumps({"fingerprint": fingerprint}),
+        fingerprint_path(model_name),
+    )
+
+
+def load_fingerprint(storage: Any, model_name: str) -> str | None:
+    try:
+        data = storage.read_json(fingerprint_path(model_name))
+        return data.get("fingerprint")
+    except (FileNotFoundError, KeyError):
+        return None
+
+
+def check_fingerprint(
+    storage: Any,
+    model_name: str,
+    cfg: Any,
+    train_max_date: str,
+    _log: Any,
+) -> bool:
+    """Return True if cached params are valid for the current config.
+
+    Logs a warning if the fingerprint is missing or stale so the operator knows
+    to set tune=true to regenerate hyperparameters.
+    """
+    current = compute_fingerprint(cfg, train_max_date)
+    saved = load_fingerprint(storage, model_name)
+    if saved is None:
+        _log.warning(
+            "%s: no tuning fingerprint found alongside cached params — "
+            "if you changed lag config or features, set tune=true to retune",
+            model_name.upper(),
+        )
+        return True  # allow cached params through; operator must opt-in to retune
+    if saved != current:
+        _log.warning(
+            "%s: tuning fingerprint mismatch — cached params may be stale "
+            "(config changed since last tune). Set tune=true to regenerate.",
+            model_name.upper(),
+        )
+        return False
+    return True
 
 
 def load_cached_params(storage: Any, model_name: str) -> dict | None:
@@ -97,7 +168,7 @@ def tune_rf(
         return float(np.mean(fold_rmses)) if fold_rmses else float("inf")
 
     study = optuna.create_study(direction="minimize")
-    study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
+    study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
     return study.best_params, study.best_value
 
 
@@ -137,5 +208,5 @@ def tune_xgb(
         return float(np.mean(fold_rmses)) if fold_rmses else float("inf")
 
     study = optuna.create_study(direction="minimize")
-    study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
+    study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
     return study.best_params, study.best_value

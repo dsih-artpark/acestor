@@ -389,6 +389,7 @@ class ThresholdsConfig:
     historical_n_years: int | None
     excluded_years: list[int]
     included_years: list[int]  # empty = no restriction; non-empty = only these years
+    list_alpha: list[float] = field(default_factory=lambda: [1.0, 2.0])
     methods: list[str] = field(default_factory=lambda: ["historical", "prev_nweeks"])
     classification_method: str = "who"  # "who" | "icmr"
     # weighted_baseline knobs
@@ -406,6 +407,7 @@ class ThresholdsConfig:
             historical_n_years=int(ny) if ny is not None else 4,
             excluded_years=[int(y) for y in raw.get("excluded_years", [2020, 2021])],
             included_years=[int(y) for y in raw.get("included_years", [])],
+            list_alpha=[float(a) for a in raw.get("list_alpha", [1.0, 2.0])],
             methods=list(raw.get("methods", ["historical", "prev_nweeks"])),
             classification_method=str(raw.get("classification_method", "who"))
             .strip()
@@ -465,14 +467,15 @@ class TrainPredictConfig:
     lag_temp: list[int]
     lag_rainfall: list[int]
     lag_humidity: list[int]
+    lag_cases: list[int]
     years_to_exclude: list[int]
     years_to_include: list[int]  # empty = no restriction; non-empty = only these years
-    list_alpha: list[float]
     models: list[str]
     ensemble: str  # registered ensemble strategy name, or "none"
     output: str  # "ensemble" | "per_model" | "both"
     tune: bool  # False = use cache; True = force Optuna retune
     n_trials: int  # Optuna trials when tuning runs
+    debug: bool  # True = save intermediate CSVs to artifacts/debug/<model>/
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any]) -> TrainPredictConfig:
@@ -493,34 +496,21 @@ class TrainPredictConfig:
 
         return cls(
             spatial_res=raw.get("spatial_res", "zone"),
-            data_features=list(
-                raw.get(
-                    "data_features",
-                    [
-                        "case",
-                        "recordDate",
-                        "recordYear",
-                        "recordMonth",
-                        "ISOWeek",
-                        "2mTemperature",
-                        "totalPrecipitation",
-                        "2mDewpointTemperature",
-                    ],
-                )
-            ),
+            data_features=list(raw.get("data_features", [])),
             lag_temp=list(lag.get("lag_temp", [12])),
             lag_rainfall=list(lag.get("lag_rainfall", [4])),
             lag_humidity=list(lag.get("lag_humidity", [4])),
+            lag_cases=list(lag.get("lag_cases", [])),
             years_to_exclude=[
                 int(y) for y in raw.get("years_to_exclude", [2020, 2021])
             ],
             years_to_include=[int(y) for y in raw.get("years_to_include", [])],
-            list_alpha=[float(a) for a in raw["list_alpha"]],
             models=list(raw.get("models", ["nbr", "tse"])),
             ensemble=ensemble,
             output=output,
             tune=bool(raw.get("tune", False)),
             n_trials=int(raw.get("n_trials", 50)),
+            debug=bool(raw.get("debug", False)),
         )
 
 
@@ -540,6 +530,7 @@ def resolve_model_config(
         "lag_temp": list(base.lag_temp),
         "lag_rainfall": list(base.lag_rainfall),
         "lag_humidity": list(base.lag_humidity),
+        "lag_cases": list(base.lag_cases),
     }
     override_lag = dict(raw_overrides.get("lag", {}))
     merged_lag = {**base_lag, **override_lag}
@@ -550,21 +541,21 @@ def resolve_model_config(
         "ensemble": base.ensemble,
         "output": base.output,
         "lag": merged_lag,
-        "list_alpha": list(base.list_alpha),
         "data_features": list(base.data_features),
         "years_to_exclude": list(base.years_to_exclude),
         "years_to_include": list(base.years_to_include),
         "tune": base.tune,
         "n_trials": base.n_trials,
+        "debug": base.debug,
     }
 
     for key in (
-        "list_alpha",
         "data_features",
         "years_to_exclude",
         "years_to_include",
         "tune",
         "n_trials",
+        "debug",
     ):
         if key in raw_overrides:
             merged[key] = raw_overrides[key]

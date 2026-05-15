@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 from xgboost import XGBRegressor
 
-from pipelines.dengue.lib.models._shared import _lag, _one_hot
+from pipelines.dengue.lib.models._shared import _lag
 from pipelines.dengue.lib.models import _tuning as _tuning_mod
 
 log = logging.getLogger(__name__)
@@ -27,6 +27,7 @@ def xgboost_regression(
     lag_temp: list[int],
     lag_rainfall: list[int],
     lag_humidity: list[int],
+    lag_cases: list[int],
     years_to_exclude: list[int],
     years_to_include: list[int],
     predict_upto_date: pd.Timestamp,
@@ -55,12 +56,13 @@ def xgboost_regression(
         lambda x: datetime.isocalendar(x).week
     )
 
-    df0 = _lag(df0, spatial_col, lag_temp, lag_rainfall, lag_humidity)
+    df0 = _lag(df0, spatial_col, lag_temp, lag_rainfall, lag_humidity, lag_cases)
 
     lag_cols = (
         [f"temp_lag_{lg}" for lg in lag_temp]
         + [f"rainfall_lag_{lg}" for lg in lag_rainfall]
         + [f"relative_humidity_lag_{lg}" for lg in lag_humidity]
+        + [f"case_lag_{lg}" for lg in lag_cases]
     )
     lag_cols = [c for c in lag_cols if c in df0.columns]
 
@@ -81,10 +83,7 @@ def xgboost_regression(
         )
         return pd.DataFrame()
 
-    encoded_train = _one_hot(train_data)
-    X_train = pd.concat(
-        [train_data[lag_cols].reset_index(drop=True), encoded_train], axis=1
-    )
+    X_train = train_data[lag_cols].reset_index(drop=True)
     y_train = train_data["case"].values
 
     test_data = df0[df0["recordDate"].isin(last_4)].copy().reset_index(drop=True)
@@ -104,16 +103,11 @@ def xgboost_regression(
         )
         return pd.DataFrame()
 
-    encoded_test = _one_hot(test_data)
-    X_test = pd.concat(
-        [test_data[lag_cols].reset_index(drop=True), encoded_test], axis=1
-    )
-    for col in set(X_train.columns) - set(X_test.columns):
-        X_test[col] = 0
-    X_test = X_test[X_train.columns]
+    X_test = test_data[lag_cols].reset_index(drop=True)
 
+    train_max_date = str(train_data["recordDate"].max().date())
     hp = (
-        _get_xgb_params(ctx, X_train.values, y_train)
+        _get_xgb_params(ctx, X_train.values, y_train, train_max_date)
         if ctx is not None
         else {
             "n_estimators": n_estimators,
@@ -138,10 +132,31 @@ def xgboost_regression(
     test_data["prediction"] = np.maximum(0.0, xgb_model.predict(X_test.values))
     test_data["recordDate"] = pd.to_datetime(test_data["recordDate"])
     test_data["model"] = "xgboostRegression"
+
+    if (
+        ctx is not None
+        and getattr(ctx.cfg, "debug", False)
+        and ctx.artifacts is not None
+    ):
+        from pipelines.dengue.lib.models.rf import _save_debug
+
+        _save_debug(
+            ctx,
+            "xgb",
+            X_train,
+            y_train,
+            X_test,
+            test_data,
+            xgb_model.feature_importances_,
+            lag_cols,
+        )
+
     return test_data.reset_index(drop=True)
 
 
-def _get_xgb_params(ctx: "ModelContext", X_train: Any, y_train: Any) -> dict:
+def _get_xgb_params(
+    ctx: "ModelContext", X_train: Any, y_train: Any, train_max_date: str
+) -> dict:
     """Load cached XGB hyperparams or run Optuna tuning if needed."""
     defaults = {
         "n_estimators": 300,
@@ -161,6 +176,9 @@ def _get_xgb_params(ctx: "ModelContext", X_train: Any, y_train: Any) -> dict:
 
     cached = _tuning_mod.load_cached_params(ctx.artifacts, "xgb")
     if cached is not None and not ctx.cfg.tune:
+        _tuning_mod.check_fingerprint(
+            ctx.artifacts, "xgb", ctx.cfg, train_max_date, _log
+        )
         _log.info(
             "XGB: using cached hyperparameters (tuned %s, RMSE=%.4f) from hp/xgb_best_params.json",
             cached["tuned_at"],
@@ -187,6 +205,11 @@ def _get_xgb_params(ctx: "ModelContext", X_train: Any, y_train: Any) -> dict:
         n_trials=ctx.cfg.n_trials,
         tuned_at=tuned_at,
     )
+    _tuning_mod.save_fingerprint(
+        ctx.artifacts,
+        "xgb",
+        _tuning_mod.compute_fingerprint(ctx.cfg, train_max_date),
+    )
     _log.info(
         "XGB: tuning complete — best RMSE=%.4f, params saved to hp/xgb_best_params.json",
         rmse,
@@ -206,6 +229,7 @@ class XGBModel:
             lag_temp=ctx.cfg.lag_temp,
             lag_rainfall=ctx.cfg.lag_rainfall,
             lag_humidity=ctx.cfg.lag_humidity,
+            lag_cases=ctx.cfg.lag_cases,
             years_to_exclude=ctx.cfg.years_to_exclude,
             years_to_include=ctx.cfg.years_to_include,
             predict_upto_date=ctx.pred_upto,

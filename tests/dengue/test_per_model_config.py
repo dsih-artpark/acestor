@@ -11,7 +11,6 @@ def _base_cfg() -> TrainPredictConfig:
             "ensemble": "mean",
             "output": "ensemble",
             "lag": {"lag_temp": [12], "lag_rainfall": [4], "lag_humidity": [4]},
-            "list_alpha": [2.0, 3.0],
             "data_features": [
                 "case",
                 "recordDate",
@@ -34,7 +33,6 @@ def test_no_overrides_returns_base_cfg():
     assert result.lag_temp == base.lag_temp
     assert result.lag_rainfall == base.lag_rainfall
     assert result.lag_humidity == base.lag_humidity
-    assert result.list_alpha == base.list_alpha
 
 
 def test_lag_temp_override():
@@ -55,12 +53,6 @@ def test_lag_rainfall_override():
     assert result.lag_rainfall == [2, 4]
     assert result.lag_temp == [12]  # unchanged
     assert result.lag_humidity == [4]  # unchanged
-
-
-def test_list_alpha_override():
-    base = _base_cfg()
-    result = resolve_model_config(base, {"list_alpha": [1.5, 2.0, 3.0]})
-    assert result.list_alpha == [1.5, 2.0, 3.0]
 
 
 def test_data_features_override():

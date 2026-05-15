@@ -22,7 +22,6 @@ def _base_raw():
         "spatial_res": "district",
         "models": ["rf"],
         "lag": {"lag_temp": [12], "lag_rainfall": [4], "lag_humidity": [4]},
-        "list_alpha": [2.0, 3.0],
     }
 
 
@@ -125,7 +124,6 @@ def _make_ctx(tune: bool = False, n_trials: int = 3, artifacts=None):
             "years_to_include": [],
             "tune": tune,
             "n_trials": n_trials,
-            "list_alpha": [2.0, 3.0],
         }
     )
     dates = pd.date_range("2022-01-07", periods=80, freq="7D")
@@ -195,7 +193,8 @@ def test_rf_runs_tuning_when_no_cache():
     ) as mock_tune:
         model.predict(ctx)
     mock_tune.assert_called_once()
-    storage.write_text.assert_called_once()
+    # write_text called twice: once for params JSON, once for fingerprint JSON
+    assert storage.write_text.call_count == 2
 
 
 def test_rf_force_retune_ignores_cache():

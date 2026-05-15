@@ -41,7 +41,7 @@ class CombinePredictionsStep(
 
         end_str = pd.Timestamp.today().date().strftime("%Y%m%d")
         month_str = inputs.train_and_predict.month_string
-        dest = context.artifact_path(f"results/Predictions_{month_str}_{end_str}.csv")
+        dest = context.artifact_path(f"outputs/Predictions_{month_str}_{end_str}.csv")
         context.artifacts.write_text(combined.to_csv(index=False), dest)
         context.log.info("combine_predictions: %d rows", len(combined))
 

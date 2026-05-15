@@ -29,7 +29,13 @@ PIPELINES = [
         "name": "ap-dengue",
         "cron": "0 3 * * 0",  # At 03:00, only on Sunday (1 hour after prep)
         "pipeline": "pipelines.dengue.pipeline:build_pipeline",
-        "config": "configs/ap_district.yaml",
+        "config": "configs/ap_district_v3.yaml",
+    },
+    {
+        "name": "ap-dengue-mandal",
+        "cron": "0 4 * * 0",  # At 04:00, only on Sunday (1 hour after ap-dengue)
+        "pipeline": "pipelines.dengue_downscale.pipeline:build_pipeline",
+        "config": "configs/ap_district_to_mandal.yaml",
     },
 ]
 # ──────────────────────────────────────────────────────────────────────────────
