@@ -22,7 +22,6 @@ def _base_raw():
         "spatial_res": "district",
         "models": ["rf"],
         "lag": {"lag_temp": [12], "lag_rainfall": [4], "lag_humidity": [4]},
-        "list_alpha": [2.0, 3.0],
     }
 
 
@@ -125,7 +124,6 @@ def _make_ctx(tune: bool = False, n_trials: int = 3, artifacts=None):
             "years_to_include": [],
             "tune": tune,
             "n_trials": n_trials,
-            "list_alpha": [2.0, 3.0],
         }
     )
     dates = pd.date_range("2022-01-07", periods=80, freq="7D")

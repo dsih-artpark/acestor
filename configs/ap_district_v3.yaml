@@ -50,6 +50,7 @@ cutoff:
 
 thresholds:
   region_type: "district"
+  list_alpha: [1.0, 2.0]             # risk zone bands: T = Mean + alpha*StdDev
   methods: [historical, prev_nweeks, weighted_baseline]   # remove a method to disable it entirely
   classification_method: who          # who (default) | icmr — controls which method drives predictionZone
   method_configs:
@@ -65,7 +66,6 @@ model:
   models: [nbr, rf, xgb]      # models to run; predictions are combined via ensemble
   ensemble: mean               # mean | none
   output: both                 # ensemble | per_model | both
-  list_alpha: [1.0, 2.0]
 
 # Per-model config. Each model owns its own lag, year filters, and tuning settings.
 model_configs:

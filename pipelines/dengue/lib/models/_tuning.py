@@ -168,7 +168,7 @@ def tune_rf(
         return float(np.mean(fold_rmses)) if fold_rmses else float("inf")
 
     study = optuna.create_study(direction="minimize")
-    study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
+    study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
     return study.best_params, study.best_value
 
 
@@ -208,5 +208,5 @@ def tune_xgb(
         return float(np.mean(fold_rmses)) if fold_rmses else float("inf")
 
     study = optuna.create_study(direction="minimize")
-    study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
+    study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
     return study.best_params, study.best_value

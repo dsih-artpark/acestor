@@ -142,7 +142,7 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
                 case_df,
                 pred,
                 spatial_col=cfg.spatial_res,
-                list_alpha=cfg.list_alpha,
+                list_alpha=thresh_cfg.list_alpha,
                 to_date=model.threshold_to_date(ctx),
                 precomputed_thresholds=precomputed_thresholds,
             )

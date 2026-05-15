@@ -261,7 +261,6 @@ def _make_ctx(
         lag_cases=[],
         years_to_exclude=[],
         years_to_include=[],
-        list_alpha=[1.0, 2.0],
         models=["nbr", "tse"],
         ensemble="mean",
         output="ensemble",
@@ -298,12 +297,12 @@ def test_get_model_raises_for_unknown():
 
 
 def test_train_predict_config_default_models():
-    cfg = TrainPredictConfig.from_raw({"list_alpha": [2.0, 3.0]})
+    cfg = TrainPredictConfig.from_raw({})
     assert cfg.models == ["nbr", "tse"]
 
 
 def test_train_predict_config_custom_models():
-    cfg = TrainPredictConfig.from_raw({"models": ["nbr"], "list_alpha": [2.0, 3.0]})
+    cfg = TrainPredictConfig.from_raw({"models": ["nbr"]})
     assert cfg.models == ["nbr"]
 
 
@@ -395,29 +394,25 @@ def test_tse_model_predict_uses_case_df_not_merged():
 
 
 def test_train_predict_config_default_ensemble_and_output():
-    cfg = TrainPredictConfig.from_raw({"list_alpha": [2.0, 3.0]})
+    cfg = TrainPredictConfig.from_raw({})
     assert cfg.ensemble == "mean"
     assert cfg.output == "ensemble"
 
 
 def test_train_predict_config_custom_ensemble_and_output():
-    cfg = TrainPredictConfig.from_raw(
-        {"ensemble": "none", "output": "per_model", "list_alpha": [2.0, 3.0]}
-    )
+    cfg = TrainPredictConfig.from_raw({"ensemble": "none", "output": "per_model"})
     assert cfg.ensemble == "none"
     assert cfg.output == "per_model"
 
 
 def test_train_predict_config_invalid_output_value():
     with pytest.raises(ValueError, match="output"):
-        TrainPredictConfig.from_raw({"output": "bogus", "list_alpha": [2.0, 3.0]})
+        TrainPredictConfig.from_raw({"output": "bogus"})
 
 
 def test_train_predict_config_ensemble_none_with_output_ensemble_raises():
     with pytest.raises(ValueError, match="ensemble.*none.*output.*ensemble"):
-        TrainPredictConfig.from_raw(
-            {"ensemble": "none", "output": "ensemble", "list_alpha": [2.0, 3.0]}
-        )
+        TrainPredictConfig.from_raw({"ensemble": "none", "output": "ensemble"})
 
 
 # ---------------------------------------------------------------------------
@@ -438,10 +433,7 @@ def test_report_config_custom_primary():
 def test_lag_rainfall_and_humidity_are_independent():
     """lag_rainfall and lag_humidity can differ — they control separate feature columns."""
     cfg = TrainPredictConfig.from_raw(
-        {
-            "lag": {"lag_temp": [12], "lag_rainfall": [4], "lag_humidity": [2]},
-            "list_alpha": [1.0, 2.0],
-        }
+        {"lag": {"lag_temp": [12], "lag_rainfall": [4], "lag_humidity": [2]}}
     )
     assert cfg.lag_rainfall == [4]
     assert cfg.lag_humidity == [2]

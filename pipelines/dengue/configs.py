@@ -389,6 +389,7 @@ class ThresholdsConfig:
     historical_n_years: int | None
     excluded_years: list[int]
     included_years: list[int]  # empty = no restriction; non-empty = only these years
+    list_alpha: list[float] = field(default_factory=lambda: [1.0, 2.0])
     methods: list[str] = field(default_factory=lambda: ["historical", "prev_nweeks"])
     classification_method: str = "who"  # "who" | "icmr"
     # weighted_baseline knobs
@@ -406,6 +407,7 @@ class ThresholdsConfig:
             historical_n_years=int(ny) if ny is not None else 4,
             excluded_years=[int(y) for y in raw.get("excluded_years", [2020, 2021])],
             included_years=[int(y) for y in raw.get("included_years", [])],
+            list_alpha=[float(a) for a in raw.get("list_alpha", [1.0, 2.0])],
             methods=list(raw.get("methods", ["historical", "prev_nweeks"])),
             classification_method=str(raw.get("classification_method", "who"))
             .strip()
@@ -468,7 +470,6 @@ class TrainPredictConfig:
     lag_cases: list[int]
     years_to_exclude: list[int]
     years_to_include: list[int]  # empty = no restriction; non-empty = only these years
-    list_alpha: list[float]
     models: list[str]
     ensemble: str  # registered ensemble strategy name, or "none"
     output: str  # "ensemble" | "per_model" | "both"
@@ -503,7 +504,6 @@ class TrainPredictConfig:
                 int(y) for y in raw.get("years_to_exclude", [2020, 2021])
             ],
             years_to_include=[int(y) for y in raw.get("years_to_include", [])],
-            list_alpha=[float(a) for a in raw["list_alpha"]],
             models=list(raw.get("models", ["nbr", "tse"])),
             ensemble=ensemble,
             output=output,
@@ -539,7 +539,6 @@ def resolve_model_config(
         "ensemble": base.ensemble,
         "output": base.output,
         "lag": merged_lag,
-        "list_alpha": list(base.list_alpha),
         "data_features": list(base.data_features),
         "years_to_exclude": list(base.years_to_exclude),
         "years_to_include": list(base.years_to_include),
@@ -548,7 +547,6 @@ def resolve_model_config(
     }
 
     for key in (
-        "list_alpha",
         "data_features",
         "years_to_exclude",
         "years_to_include",
