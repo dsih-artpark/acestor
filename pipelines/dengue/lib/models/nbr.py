@@ -17,18 +17,29 @@ from pipelines.dengue.lib.models._shared import _lag, _one_hot
 log = logging.getLogger(__name__)
 
 
+def _lag_cols(
+    lag_temp: list[int], lag_rainfall: list[int], lag_humidity: list[int]
+) -> list[str]:
+    return (
+        [f"temp_lag_{lg}" for lg in lag_temp]
+        + [f"rainfall_lag_{lg}" for lg in lag_rainfall]
+        + [f"relative_humidity_lag_{lg}" for lg in lag_humidity]
+    )
+
+
 def _filter_features(
     df: pd.DataFrame,
     feature_cols: list[str],
     spatial_col: str,
     years_to_exclude: list[int],
     years_to_include: list[int],
+    lag_temp: list[int],
+    lag_rainfall: list[int],
+    lag_humidity: list[int],
 ) -> pd.DataFrame:
     keep = [c for c in feature_cols if c in df.columns]
     keep += [
-        c
-        for c in ["rainfall_lag_4", "relative_humidity_lag_4", "temp_lag_12"]
-        if c in df.columns
+        c for c in _lag_cols(lag_temp, lag_rainfall, lag_humidity) if c in df.columns
     ]
     keep.append(spatial_col)
     keep = list(dict.fromkeys(keep))
@@ -41,12 +52,14 @@ def _filter_features(
 
 
 def _rescale(
-    df: pd.DataFrame, scaler: MinMaxScaler | None = None
+    df: pd.DataFrame,
+    lag_temp: list[int],
+    lag_rainfall: list[int],
+    lag_humidity: list[int],
+    scaler: MinMaxScaler | None = None,
 ) -> tuple[pd.DataFrame, MinMaxScaler]:
     feat_cols = [
-        c
-        for c in ["rainfall_lag_4", "relative_humidity_lag_4", "temp_lag_12"]
-        if c in df.columns
+        c for c in _lag_cols(lag_temp, lag_rainfall, lag_humidity) if c in df.columns
     ]
     feats = df[feat_cols].dropna(axis=1, how="all")
     if scaler is None:
@@ -86,10 +99,17 @@ def negative_binomial_regression(
 
     train_data = df0[~df0["recordDate"].isin(last_4)].copy()
     filtered = _filter_features(
-        train_data, feature_cols, spatial_col, years_to_exclude, years_to_include
+        train_data,
+        feature_cols,
+        spatial_col,
+        years_to_exclude,
+        years_to_include,
+        lag_temp,
+        lag_rainfall,
+        lag_humidity,
     )
     encoded = _one_hot(filtered)
-    scaled, scaler = _rescale(filtered)
+    scaled, scaler = _rescale(filtered, lag_temp, lag_rainfall, lag_humidity)
     X_train = sm.add_constant(pd.concat([scaled, encoded], axis=1))
     y_train = filtered["case"]
 
@@ -100,7 +120,7 @@ def negative_binomial_regression(
 
     lag_feat_cols = [
         c
-        for c in ["rainfall_lag_4", "relative_humidity_lag_4", "temp_lag_12"]
+        for c in _lag_cols(lag_temp, lag_rainfall, lag_humidity)
         if c in test_data.columns
     ]
     # Drop regions where any lag feature is NaN for all prediction dates —
@@ -123,7 +143,7 @@ def negative_binomial_regression(
         return pd.DataFrame()
 
     test_encoded = _one_hot(test_data)
-    test_scaled, _ = _rescale(test_data, scaler)
+    test_scaled, _ = _rescale(test_data, lag_temp, lag_rainfall, lag_humidity, scaler)
     X_test = sm.add_constant(pd.concat([test_scaled, test_encoded], axis=1))
 
     for col in set(X_train.columns) - set(X_test.columns):

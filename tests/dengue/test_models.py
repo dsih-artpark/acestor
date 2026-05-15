@@ -87,7 +87,9 @@ def test_filter_features_drops_rows_with_nan():
         "tp_sum",
         "d2m_mean",
     ]
-    result = _filter_features(df, feature_cols, "location.admin2.ID", [], [])
+    result = _filter_features(
+        df, feature_cols, "location.admin2.ID", [], [], [12], [4], [4]
+    )
     assert result.isna().sum().sum() == 0
 
 
@@ -103,6 +105,9 @@ def test_filter_features_excludes_years():
         "location.admin2.ID",
         years_to_exclude=[2022],
         years_to_include=[],
+        lag_temp=[12],
+        lag_rainfall=[4],
+        lag_humidity=[4],
     )
     assert 2022 not in result["recordYear"].values
 
@@ -119,6 +124,9 @@ def test_filter_features_includes_years():
         "location.admin2.ID",
         years_to_exclude=[],
         years_to_include=[2022],
+        lag_temp=[12],
+        lag_rainfall=[4],
+        lag_humidity=[4],
     )
     assert set(result["recordYear"].unique()).issubset({2022})
 
@@ -140,7 +148,7 @@ def test_rescale_returns_values_in_0_1():
             "temp_lag_12": [20.0, 25.0, 30.0],
         }
     )
-    scaled, _ = _rescale(df)
+    scaled, _ = _rescale(df, lag_temp=[12], lag_rainfall=[4], lag_humidity=[4])
     assert scaled.min().min() >= 0.0
     assert scaled.max().max() <= 1.0
 
@@ -153,8 +161,10 @@ def test_rescale_with_existing_scaler():
             "temp_lag_12": [20.0, 25.0, 30.0],
         }
     )
-    scaled1, scaler = _rescale(df)
-    scaled2, _ = _rescale(df, scaler=scaler)
+    scaled1, scaler = _rescale(df, lag_temp=[12], lag_rainfall=[4], lag_humidity=[4])
+    scaled2, _ = _rescale(
+        df, lag_temp=[12], lag_rainfall=[4], lag_humidity=[4], scaler=scaler
+    )
     assert scaled2.shape == df.shape
     # Re-applying the fitted scaler must produce identical values (not a re-fit)
     np.testing.assert_array_almost_equal(scaled2.values, scaled1.values)
