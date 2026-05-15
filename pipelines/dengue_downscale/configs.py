@@ -8,7 +8,11 @@ from typing import Any, Mapping
 
 @dataclass(frozen=True)
 class DownscaleRunConfig:
-    source_run_id: str
+    source_run_id: str  # a run ID string, or the sentinel "latest"
+
+    @property
+    def is_latest(self) -> bool:
+        return self.source_run_id == "latest"
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any]) -> DownscaleRunConfig:

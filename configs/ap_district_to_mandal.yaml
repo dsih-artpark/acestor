@@ -4,8 +4,8 @@ pipeline:
 
 run:
   # Run ID of the dengue pipeline run whose predictions to disaggregate.
-  # Must be an existing run under artifacts/ap/.
-  source_run_id: "march-10-run"
+  # Use "latest" to automatically pick the most recent run under artifacts/ap/.
+  source_run_id: "latest"
 
 downscale:
   parent_level: district    # singular — matches region_type convention
