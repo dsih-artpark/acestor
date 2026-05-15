@@ -45,7 +45,7 @@ class DownscalePredictionsStep(BaseStep[DownscalePredictionsInputs, DownscaleRes
             as_of_date.date(),
         )
 
-        geojson_dir = Path(cfg.geojson_base_path) / cfg.child_level
+        geojson_dir = Path(cfg.geojson_base_path) / cfg.child_level_plural
         if not geojson_dir.exists():
             raise FileNotFoundError(
                 f"Geojson directory not found: {geojson_dir}. "

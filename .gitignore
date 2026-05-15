@@ -31,7 +31,11 @@ build/
 !docs/*.md
 configs-example/
 *prepared_data/
-diagnostic_report/
+diagnostic_report/**
+!diagnostic_report/downscale_viz/
+!diagnostic_report/downscale_viz/generate_viz.py
+!diagnostic_report/downscale_viz/template.html
+!diagnostic_report/downscale_viz/README.md
 
 
 runs/

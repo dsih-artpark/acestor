@@ -20,11 +20,19 @@ class DownscaleRunConfig:
 
 @dataclass(frozen=True)
 class DownscaleConfig:
-    parent_level: str
-    child_level: str
+    parent_level: str  # singular, e.g. "district"
+    child_level: str  # singular, e.g. "mandal"
     window_weeks: int
     cases_csv: str
     geojson_base_path: str
+
+    @property
+    def parent_level_plural(self) -> str:
+        return self.parent_level + "s"
+
+    @property
+    def child_level_plural(self) -> str:
+        return self.child_level + "s"
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any]) -> DownscaleConfig:

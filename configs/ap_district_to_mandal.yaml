@@ -5,11 +5,11 @@ pipeline:
 run:
   # Run ID of the dengue pipeline run whose predictions to disaggregate.
   # Must be an existing run under artifacts/ap/.
-  source_run_id: "march-01-run"
+  source_run_id: "march-10-run"
 
 downscale:
-  parent_level: districts   # folder name under geojson_base_path
-  child_level: mandals      # folder name under geojson_base_path
+  parent_level: district    # singular — matches region_type convention
+  child_level: mandal       # singular — matches region_type convention
   window_weeks: 4           # how many recent weeks of cases to use for share computation
   cases_csv: "prepared_data/mandal/cases_daily.csv"  # child-level daily case counts
   geojson_base_path: "ap_datasets/geojsons/geojsons_AP"

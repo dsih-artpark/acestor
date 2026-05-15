@@ -296,17 +296,17 @@ def test_downscale_run_config_reads_source_run_id():
 
 def test_downscale_config_requires_parent_level():
     with pytest.raises(ValueError, match="parent_level"):
-        DownscaleConfig.from_raw({"child_level": "mandals"})
+        DownscaleConfig.from_raw({"child_level": "mandal"})
 
 
 def test_downscale_config_requires_child_level():
     with pytest.raises(ValueError, match="child_level"):
-        DownscaleConfig.from_raw({"parent_level": "districts"})
+        DownscaleConfig.from_raw({"parent_level": "district"})
 
 
 def test_downscale_config_defaults():
     cfg = DownscaleConfig.from_raw(
-        {"parent_level": "districts", "child_level": "mandals"}
+        {"parent_level": "district", "child_level": "mandal"}
     )
     assert cfg.window_weeks == 4
     assert cfg.geojson_base_path == "ap_datasets/geojsons/geojsons_AP"
@@ -315,8 +315,8 @@ def test_downscale_config_defaults():
 def test_downscale_config_custom_values():
     cfg = DownscaleConfig.from_raw(
         {
-            "parent_level": "districts",
-            "child_level": "mandals",
+            "parent_level": "district",
+            "child_level": "mandal",
             "window_weeks": 8,
             "cases_csv": "prepared_data/mandal/cases_daily.csv",
             "geojson_base_path": "custom/path",
@@ -330,19 +330,19 @@ def test_downscale_config_custom_values():
 def test_downscale_config_rejects_zero_window_weeks():
     with pytest.raises(ValueError, match="window_weeks"):
         DownscaleConfig.from_raw(
-            {"parent_level": "districts", "child_level": "mandals", "window_weeks": 0}
+            {"parent_level": "district", "child_level": "mandal", "window_weeks": 0}
         )
 
 
 def test_downscale_config_rejects_negative_window_weeks():
     with pytest.raises(ValueError, match="window_weeks"):
         DownscaleConfig.from_raw(
-            {"parent_level": "districts", "child_level": "mandals", "window_weeks": -1}
+            {"parent_level": "district", "child_level": "mandal", "window_weeks": -1}
         )
 
 
 def test_downscale_config_rejects_same_parent_and_child_level():
     with pytest.raises(ValueError, match="differ"):
         DownscaleConfig.from_raw(
-            {"parent_level": "districts", "child_level": "districts"}
+            {"parent_level": "district", "child_level": "district"}
         )
