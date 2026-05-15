@@ -65,20 +65,15 @@ model:
   models: [nbr, rf, xgb]      # models to run; predictions are combined via ensemble
   ensemble: mean               # mean | none
   output: both                 # ensemble | per_model | both
-  data_features:
-    - "case"
-    - "recordDate"
-    - "recordYear"
-    - "recordMonth"
-    - "ISOWeek"
-    - "t2m_mean"
-    - "tp_sum"
-    - "d2m_mean"
   list_alpha: [1.0, 2.0]
 
 # Per-model config. Each model owns its own lag, year filters, and tuning settings.
 model_configs:
   nbr:
+    data_features:
+      - "case"       # y_train
+      - "recordYear" # year filtering
+      - "ISOWeek"    # one-hot encoded into X_train
     lag:
       lag_temp: [12]
       lag_rainfall: [4]

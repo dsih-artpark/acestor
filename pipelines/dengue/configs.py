@@ -493,21 +493,7 @@ class TrainPredictConfig:
 
         return cls(
             spatial_res=raw.get("spatial_res", "zone"),
-            data_features=list(
-                raw.get(
-                    "data_features",
-                    [
-                        "case",
-                        "recordDate",
-                        "recordYear",
-                        "recordMonth",
-                        "ISOWeek",
-                        "2mTemperature",
-                        "totalPrecipitation",
-                        "2mDewpointTemperature",
-                    ],
-                )
-            ),
+            data_features=list(raw.get("data_features", [])),
             lag_temp=list(lag.get("lag_temp", [12])),
             lag_rainfall=list(lag.get("lag_rainfall", [4])),
             lag_humidity=list(lag.get("lag_humidity", [4])),
