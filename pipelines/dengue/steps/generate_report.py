@@ -46,7 +46,7 @@ class GenerateReportStep(BaseStep[GenerateReportInputs, ReportResult]):
         )
         df = pd.read_csv(io.StringIO(pred_text))
 
-        primary_model = "ensembleModel" if cfg.primary == "ensemble" else cfg.primary
+        primary_model = maps_lib.MODEL_FULL_NAME.get(cfg.primary, cfg.primary)
         thresh_method = cfg.threshold_method_for_report
 
         report_df = df[

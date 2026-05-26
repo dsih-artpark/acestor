@@ -34,6 +34,15 @@ MODEL_LABEL = {
     "negativeBinomialRegression": "Negative Binomial Regression",
     "ensembleModel": "Ensemble Model",
 }
+# Maps the short user-facing model name (used in configs as `report.primary`)
+# to the full string that appears in the predictions CSV's `model` column.
+MODEL_FULL_NAME = {
+    "nbr": "negativeBinomialRegression",
+    "xgb": "xgboostRegression",
+    "rf": "randomForestRegression",
+    "tse": "timeSeriesExtrapolation",
+    "ensemble": "ensembleModel",
+}
 THRESHOLD_LABEL = {
     "historical": "Historical Thresholds",
     "previousNweeks": "Previous N-Weeks Thresholds",
