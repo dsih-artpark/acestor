@@ -47,12 +47,22 @@ def test_build_brief_context_returns_required_keys():
         "hero_chart_relpath",
         "weekly_blocks",
         "action_matrix",
-        "risk_progression",
         "run_date",
         "footer_meta",
     }
     missing = required - set(ctx)
     assert not missing, f"missing keys: {missing}"
+
+
+def test_build_brief_context_no_risk_progression_key():
+    ctx = build_brief_context(
+        predictions=_sample_predictions(),
+        run_date="2026-05-21",
+        charts_relpath="charts",
+        is_downscale=False,
+        document_title="Test brief",
+    )
+    assert "risk_progression" not in ctx
 
 
 def test_weekly_blocks_filters_medium_plus_zones():
@@ -91,30 +101,26 @@ def test_weekly_blocks_filters_medium_plus_zones():
     assert region_ids == {"r_high", "r_mid"}  # only zone >= 2
 
 
-def test_risk_progression_zones_aligned_to_weeks():
+def test_weekly_blocks_rows_have_band_fields():
+    """Rows should have band_text and band_class, not prediction float."""
     df = pd.DataFrame(
         {
-            "dateOfComputingPrediction": ["2026-05-21"] * 4,
-            "startDatePredictedWeek": [
-                "2026-06-01",
-                "2026-06-08",
-                "2026-06-01",
-                "2026-06-08",
-            ],
-            "regionID": ["r1", "r1", "r2", "r2"],
-            "prediction": [3.0, 2.0, 0.5, 1.0],
-            "predictionZone": [3, 2, 1, 1],
-            "thresholdMethod": ["historical"] * 4,
-            "model": ["ensembleModel"] * 4,
-            "Mean": [1.0] * 4,
-            "StdDev": [1.0] * 4,
-            "Zero": [0.0] * 4,
-            "Inf": [float("inf")] * 4,
-            "T0.00": [1.0] * 4,
-            "T1.00": [2.0] * 4,
-            "T2.00": [3.0] * 4,
-            "recordDate": ["2026-05-25"] * 4,
-            "ISOWeek": [22, 23, 22, 23],
+            "dateOfComputingPrediction": ["2026-05-21"] * 2,
+            "startDatePredictedWeek": ["2026-06-01"] * 2,
+            "regionID": ["r_high", "r_mid"],
+            "prediction": [10.0, 5.0],
+            "predictionZone": [3, 2],
+            "thresholdMethod": ["historical"] * 2,
+            "model": ["ensembleModel"] * 2,
+            "Mean": [1.0] * 2,
+            "StdDev": [1.0] * 2,
+            "Zero": [0.0] * 2,
+            "Inf": [float("inf")] * 2,
+            "T0.00": [1.0] * 2,
+            "T1.00": [2.0] * 2,
+            "T2.00": [3.0] * 2,
+            "recordDate": ["2026-05-25"] * 2,
+            "ISOWeek": [22] * 2,
         }
     )
     ctx = build_brief_context(
@@ -124,6 +130,27 @@ def test_risk_progression_zones_aligned_to_weeks():
         is_downscale=False,
         document_title="t",
     )
-    prog = {r["regionID"]: r["zones"] for r in ctx["risk_progression"]}
-    assert prog["r1"] == [3, 2]
-    assert prog["r2"] == [1, 1]
+    rows = ctx["weekly_blocks"][0]["rows"]
+    by_region = {r["regionID"]: r for r in rows}
+    assert by_region["r_high"]["band_text"] == "High"
+    assert by_region["r_high"]["band_class"] == "high"
+    assert by_region["r_mid"]["band_text"] == "Medium"
+    assert by_region["r_mid"]["band_class"] == "med"
+    # prediction float must NOT be present
+    assert "prediction" not in by_region["r_high"]
+
+
+def test_weekly_blocks_have_pretty_label():
+    """week_label_pretty should be formatted as 'DD Mon – DD Mon YYYY'."""
+    ctx = build_brief_context(
+        predictions=_sample_predictions(),
+        run_date="2026-05-21",
+        charts_relpath="charts",
+        is_downscale=False,
+        document_title="t",
+    )
+    label = ctx["weekly_blocks"][0]["week_label_pretty"]
+    # 2026-06-01 is Monday 01 Jun; end is 07 Jun 2026
+    assert "Jun" in label
+    assert "2026" in label
+    assert "–" in label

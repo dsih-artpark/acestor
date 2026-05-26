@@ -1,26 +1,30 @@
-{# One block per predicted week: map + table of Medium+ (zone >= 2) regions. #}
+{# Reference layout: one block per predicted week, map left + Medium+ districts table right. #}
 <section class="block weekly-blocks">
-  <h2>Weekly risk maps</h2>
+  <h2>4-week district risk progression</h2>
+  <div class="subhead">Map + district list for each forecast week. Districts at Medium or above are listed.</div>
   {% for blk in weekly_blocks %}
   <div class="weekly-block">
-    <div class="weekly-label">Week starting {{ blk.week_label }}</div>
-    <div class="map-frame"><img src="{{ blk.map_relpath }}" alt="risk map" /></div>
-    {% if blk.rows %}
-    <table class="medium-plus">
-      <thead><tr><th>Region</th><th>Predicted cases</th><th>Zone</th></tr></thead>
-      <tbody>
-        {% for row in blk.rows %}
-        <tr>
-          <td class="area">{{ row.regionID }}</td>
-          <td>{{ "%.2f"|format(row.prediction) }}</td>
-          <td><span class="band-chip {% if row.predictionZone == 4 %}vhigh{% elif row.predictionZone == 3 %}high{% elif row.predictionZone == 2 %}med{% else %}low{% endif %}">Zone {{ row.predictionZone | int }}</span></td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    {% else %}
-    <p class="muted">No Medium+ regions this week.</p>
-    {% endif %}
+    <h3 class="weekly-label">{{ blk.week_label_pretty }}</h3>
+    <div class="two-col">
+      <div class="map-frame"><img src="{{ blk.map_relpath }}" alt="risk map" /></div>
+      <div>
+        {% if blk.rows %}
+        <table class="risk-list">
+          <thead><tr><th>District</th><th>Band</th></tr></thead>
+          <tbody>
+            {% for row in blk.rows %}
+            <tr>
+              <td class="area">{{ row.regionID }}</td>
+              <td><span class="band-chip {{ row.band_class }}">{{ row.band_text }}</span></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <p class="muted">No Medium+ districts this week.</p>
+        {% endif %}
+      </div>
+    </div>
   </div>
   {% endfor %}
 </section>

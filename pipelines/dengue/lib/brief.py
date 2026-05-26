@@ -37,11 +37,25 @@ def build_brief_context(
         "hero_chart_relpath": f"{charts_relpath}/hero_forecast.png",
         "weekly_blocks": _weekly_blocks(predictions, charts_relpath),
         "action_matrix": _action_matrix(),
-        "risk_progression": _risk_progression(predictions),
         "run_date": run_date,
         "footer_meta": {"generated": run_date},
         "downscale_diagnostics": downscale_diagnostics or {},
     }
+
+
+_ZONE_BAND = {
+    1: ("Low", "low"),
+    2: ("Medium", "med"),
+    3: ("High", "high"),
+    4: ("Very High", "vhigh"),
+}
+
+
+def _pretty_week_label(start: str) -> str:
+    """Format a week-starting date as '18 May – 24 May 2026'."""
+    s = pd.Timestamp(start)
+    e = s + pd.Timedelta(days=6)
+    return f"{s.strftime('%d %b')} – {e.strftime('%d %b %Y')}"
 
 
 def _weekly_blocks(df: pd.DataFrame, charts_relpath: str) -> list[dict[str, Any]]:
@@ -49,14 +63,24 @@ def _weekly_blocks(df: pd.DataFrame, charts_relpath: str) -> list[dict[str, Any]
     weeks = sorted(df["startDatePredictedWeek"].unique())
     for i, wk in enumerate(weeks, start=1):
         sub = df[df["startDatePredictedWeek"] == wk]
-        medium_plus = sub[sub["predictionZone"] >= 2]
+        medium_plus = sub[sub["predictionZone"] >= 2].copy()
+        rows = []
+        for _, r in medium_plus.iterrows():
+            z = int(r["predictionZone"])
+            label, css = _ZONE_BAND.get(z, ("", "low"))
+            rows.append(
+                {
+                    "regionID": r["regionID"],
+                    "band_text": label,
+                    "band_class": css,
+                }
+            )
         blocks.append(
             {
                 "week_label": str(wk),
+                "week_label_pretty": _pretty_week_label(wk),
                 "map_relpath": f"{charts_relpath}/risk_map_w{i}.png",
-                "rows": medium_plus[
-                    ["regionID", "prediction", "predictionZone"]
-                ].to_dict("records"),
+                "rows": rows,
             }
         )
     return blocks
@@ -64,33 +88,23 @@ def _weekly_blocks(df: pd.DataFrame, charts_relpath: str) -> list[dict[str, Any]
 
 def _action_matrix() -> list[dict[str, str]]:
     return [
-        {"zone": "1", "label": "Low", "action": "Routine surveillance."},
+        {"label": "Low", "band_class": "low", "action": "Routine surveillance."},
         {
-            "zone": "2",
-            "label": "Moderate",
-            "action": "Targeted vector control; community alerts.",
+            "label": "Medium",
+            "band_class": "med",
+            "action": "Increased monitoring · larval surveys · community awareness.",
         },
         {
-            "zone": "3",
             "label": "High",
-            "action": "Activate response teams; expand testing.",
+            "band_class": "high",
+            "action": "Source reduction · intensified vector control · daily review.",
         },
-        {"zone": "4", "label": "Very High", "action": "Full outbreak response."},
+        {
+            "label": "Very High",
+            "band_class": "vhigh",
+            "action": "Fogging · hospital alert · resource pre-positioning.",
+        },
     ]
-
-
-def _risk_progression(df: pd.DataFrame) -> list[dict[str, Any]]:
-    weeks = sorted(df["startDatePredictedWeek"].unique())
-    rows = []
-    for region, sub in df.groupby("regionID"):
-        zones_by_week = dict(zip(sub["startDatePredictedWeek"], sub["predictionZone"]))
-        rows.append(
-            {
-                "regionID": region,
-                "zones": [int(zones_by_week.get(w, 0)) for w in weeks],
-            }
-        )
-    return rows
 
 
 def render_brief(context: dict[str, Any]) -> str:

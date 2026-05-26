@@ -52,7 +52,7 @@ def test_render_brief_shows_weekly_blocks():
         document_title="Test brief",
     )
     html = render_brief(ctx)
-    assert "Week starting" in html
+    assert "weekly-label" in html
     assert "risk_map_w1.png" in html
     assert "hero_forecast.png" in html
 
