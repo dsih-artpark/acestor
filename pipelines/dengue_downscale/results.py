@@ -17,3 +17,8 @@ class DownscaleResult:
     output_csv_path: str  # storage key: {run_id}/results/Predictions_downscaled_*.csv
     n_parent_rows: int
     n_child_rows: int
+    # Sanity/heterogeneity diagnostics (see downscale_diagnostics)
+    n_parents_uniform: int = 0  # parents split evenly (no-data uniform fallback)
+    n_weeks_children_below_parent: int = 0  # child max zone < parent zone
+    n_weeks_children_above_parent: int = 0  # child max zone > parent zone
+    conservation_max_abs_err: float = 0.0  # max |sum(child) - parent| across weeks

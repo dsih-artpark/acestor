@@ -9,12 +9,45 @@ from typing import ClassVar
 import pandas as pd
 
 from acestor import BaseStep, PipelineContext
+from pipelines.dengue.configs import (
+    ThresholdsConfig,
+    _section,
+    resolve_threshold_config,
+)
+from pipelines.dengue.lib.thresholds import ThresholdContext
 from pipelines.dengue_downscale.configs import DownscaleConfig
 from pipelines.dengue_downscale.lib.downscale import (
     build_parent_child_mapping,
+    downscale_diagnostics,
     downscale_predictions,
 )
 from pipelines.dengue_downscale.results import DownscaleResult, LoadPredictionsResult
+
+
+def _build_threshold_contexts(
+    raw_thresholds: dict,
+) -> tuple[list[float], str, dict[str, ThresholdContext]]:
+    """Parse the downscale config's `thresholds:` block into the same shape the
+    dengue pipeline uses, so child zones are derived with matching settings.
+
+    Returns (list_alpha, classification_method, {method: ThresholdContext}).
+    """
+    cfg = ThresholdsConfig.from_raw(raw_thresholds)
+    raw_method_configs = dict(raw_thresholds.get("method_configs") or {})
+    ctx_by_method: dict[str, ThresholdContext] = {}
+    for method in cfg.methods:
+        mc = resolve_threshold_config(cfg, raw_method_configs.get(method, {}))
+        ctx_by_method[method] = ThresholdContext(
+            n_weeks=mc.n_weeks,
+            historical_n_years=mc.historical_n_years,
+            excluded_years=mc.excluded_years,
+            included_years=mc.included_years,
+            recent_weeks=mc.recent_weeks,
+            sd_window_weeks=mc.sd_window_weeks,
+            weight_recent=mc.weight_recent,
+            weight_seasonal=mc.weight_seasonal,
+        )
+    return cfg.list_alpha, cfg.classification_method, ctx_by_method
 
 
 @dataclass(frozen=True)
@@ -65,9 +98,46 @@ class DownscalePredictionsStep(BaseStep[DownscalePredictionsInputs, DownscaleRes
             cfg.window_weeks,
         )
 
-        child_preds = downscale_predictions(
-            parent_preds, child_mapping, cases_df, as_of_date, cfg.window_weeks
+        list_alpha, classification_method, ctx_by_method = _build_threshold_contexts(
+            _section(context.config, "thresholds")
         )
+        context.log.info(
+            "downscale_predictions: zone re-derivation — classification=%s, list_alpha=%s, "
+            "methods=%s",
+            classification_method,
+            list_alpha,
+            sorted(ctx_by_method),
+        )
+
+        child_preds = downscale_predictions(
+            parent_preds,
+            child_mapping,
+            cases_df,
+            as_of_date,
+            cfg.window_weeks,
+            list_alpha=list_alpha,
+            classification_method=classification_method,
+            ctx_by_method=ctx_by_method,
+        )
+
+        diag = downscale_diagnostics(parent_preds, child_preds, child_mapping)
+        context.log.info(
+            "downscale_predictions: sanity — conservation_max_abs_err=%.3g, "
+            "%d/%d parent-weeks uniform-split (no-data fallback), risk vs parent: "
+            "%d below / %d above / %d match",
+            diag["conservation_max_abs_err"],
+            diag["n_parents_uniform"],
+            diag["n_parent_weeks"],
+            diag["n_weeks_children_below_parent"],
+            diag["n_weeks_children_above_parent"],
+            diag["n_weeks_zone_match"],
+        )
+        if diag["n_parents_uniform"]:
+            context.log.warning(
+                "downscale_predictions: %d parent(s) had no case data in the window and "
+                "were split uniformly — their child disaggregation is not data-driven",
+                diag["n_parents_uniform"],
+            )
 
         run_date_str = inputs.load_predictions.run_date.replace("-", "")
         dest = context.artifact_path(
@@ -85,4 +155,8 @@ class DownscalePredictionsStep(BaseStep[DownscalePredictionsInputs, DownscaleRes
             output_csv_path=dest,
             n_parent_rows=len(parent_preds),
             n_child_rows=len(child_preds),
+            n_parents_uniform=diag["n_parents_uniform"],
+            n_weeks_children_below_parent=diag["n_weeks_children_below_parent"],
+            n_weeks_children_above_parent=diag["n_weeks_children_above_parent"],
+            conservation_max_abs_err=diag["conservation_max_abs_err"],
         )
