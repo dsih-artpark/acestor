@@ -118,7 +118,21 @@ class DownscalePredictionsStep(BaseStep[DownscalePredictionsInputs, DownscaleRes
             list_alpha=list_alpha,
             classification_method=classification_method,
             ctx_by_method=ctx_by_method,
+            on_missing_parents=cfg.on_missing_parents,
         )
+
+        # Parents present in the predictions but with no children in the mapping.
+        # In "error" mode downscale_predictions raises before here; in "warn" mode
+        # they're dropped, so surface them on the result for traceability.
+        dropped = sorted(
+            set(parent_preds["regionID"]) - set(child_mapping.values())
+        )
+        if dropped:
+            context.log.warning(
+                "downscale_predictions: %d parent(s) dropped (no children mapped): %s",
+                len(dropped),
+                dropped,
+            )
 
         diag = downscale_diagnostics(parent_preds, child_preds, child_mapping)
         context.log.info(
@@ -159,4 +173,6 @@ class DownscalePredictionsStep(BaseStep[DownscalePredictionsInputs, DownscaleRes
             n_weeks_children_below_parent=diag["n_weeks_children_below_parent"],
             n_weeks_children_above_parent=diag["n_weeks_children_above_parent"],
             conservation_max_abs_err=diag["conservation_max_abs_err"],
+            n_dropped_parents=len(dropped),
+            dropped_parent_ids=tuple(dropped),
         )

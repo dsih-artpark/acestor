@@ -29,6 +29,7 @@ class DownscaleConfig:
     window_weeks: int
     cases_csv: str
     geojson_base_path: str
+    on_missing_parents: str = "error"  # "error" | "warn" — parents with no children
 
     @property
     def parent_level_plural(self) -> str:
@@ -63,4 +64,14 @@ class DownscaleConfig:
             geojson_base_path=str(
                 raw.get("geojson_base_path", "ap_datasets/geojsons/geojsons_AP")
             ).strip(),
+            on_missing_parents=_validated_on_missing(raw.get("on_missing_parents", "error")),
         )
+
+
+def _validated_on_missing(value: Any) -> str:
+    v = str(value).strip().lower() or "error"
+    if v not in ("error", "warn"):
+        raise ValueError(
+            f"downscale.on_missing_parents must be 'error' or 'warn', got {value!r}"
+        )
+    return v

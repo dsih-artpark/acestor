@@ -305,3 +305,99 @@ def test_downscale_handles_duplicate_thresholdmethod_rows():
     for meth in ("historical", "previousNweeks"):
         s = out.loc[out["thresholdMethod"] == meth, "prediction"].sum()
         assert s == pytest.approx(100.0, abs=1e-9), meth
+
+
+def test_three_thresholdmethods_conserve_per_method():
+    # Full AP shape: 3 thresholdMethod rows per (regionID, week).
+    mapping = {"m1": "d1", "m2": "d1"}
+    cases = _flat_history(["m1", "m2"], 5)
+    preds = pd.DataFrame(
+        [
+            _parent_row("d1", 90.0, 2, method="historical"),
+            _parent_row("d1", 90.0, 3, method="previousNweeks"),
+            _parent_row("d1", 90.0, 2, method="weightedBaseline"),
+        ]
+    )
+    out = downscale_predictions(
+        preds, mapping, cases, pd.Timestamp("2026-03-01"), 4, **_zone_kwargs()
+    )
+    assert set(out["thresholdMethod"]) == {"historical", "previousNweeks", "weightedBaseline"}
+    for meth in ("historical", "previousNweeks", "weightedBaseline"):
+        s = out.loc[out["thresholdMethod"] == meth, "prediction"].sum()
+        assert s == pytest.approx(90.0, abs=1e-9), meth
+
+
+def test_check_numeric_sanity_raises_on_nonunique_parent_key():
+    # Two identical (regionID, week, thresholdMethod) rows → can't key conservation.
+    parent = pd.DataFrame(
+        [
+            _parent_row("d1", 100.0, 2, method="historical"),
+            _parent_row("d1", 100.0, 2, method="historical"),
+        ]
+    )
+    child = pd.DataFrame([_child_row("m1", 50.0), _child_row("m2", 50.0)])
+    with pytest.raises(ValueError, match="not unique"):
+        check_numeric_sanity(parent, child, {"m1": "d1", "m2": "d1"})
+
+
+def test_downscale_ap_shaped_frame_with_extra_columns_runs():
+    # Mirror the real combined CSV: 3 methods x 2 weeks x 2 districts, plus the
+    # whoZone/icmrZone/Mean/StdDev/T columns the pipeline writes. Extra cols ignored.
+    mapping = {"m1": "d1", "m2": "d1", "m3": "d2"}
+    cases = _flat_history(["m1", "m2", "m3"], 5)
+    rows = []
+    for d in ("d1", "d2"):
+        for wk in ("2026-03-08", "2026-03-15"):
+            for meth, zone in (("historical", 2), ("previousNweeks", 3), ("weightedBaseline", 1)):
+                rows.append({
+                    "dateOfComputingPrediction": "2026-03-01",
+                    "startDatePredictedWeek": wk, "regionID": d, "prediction": 80.0,
+                    "thresholdMethod": meth, "predictionZone": float(zone),
+                    "model": "ensembleModel", "whoZone": float(zone), "icmrZone": 2.0,
+                    "Mean": 10.0, "StdDev": 5.0, "T0.00": 10.0, "T1.00": 15.0, "T2.00": 20.0,
+                })
+    preds = pd.DataFrame(rows)
+    out = downscale_predictions(
+        preds, mapping, cases, pd.Timestamp("2026-03-01"), 4, **_zone_kwargs()
+    )
+    # extra cols (whoZone/icmrZone/Mean/...) dropped to the prediction contract
+    assert set(out.columns) == {
+        "dateOfComputingPrediction", "startDatePredictedWeek", "regionID",
+        "prediction", "thresholdMethod", "predictionZone", "model",
+    }
+    # 2 districts x 2 weeks x 3 methods x (children of that district) all present
+    assert set(out["regionID"]) == {"m1", "m2", "m3"}
+    assert set(out["thresholdMethod"]) == {"historical", "previousNweeks", "weightedBaseline"}
+
+
+def test_downscale_raises_on_unknown_thresholdmethod():
+    # Parent CSV carries a thresholdMethod the zone logic doesn't know -> clear failure.
+    mapping = {"m1": "d1", "m2": "d1"}
+    cases = _flat_history(["m1", "m2"], 5)
+    preds = pd.DataFrame([_parent_row("d1", 100.0, 2, method="bogusMethod")])
+    with pytest.raises(ValueError, match="thresholdMethod"):
+        downscale_predictions(
+            preds, mapping, cases, pd.Timestamp("2026-03-01"), 4, **_zone_kwargs()
+        )
+
+
+def test_downscale_mixed_method_counts_across_parents():
+    # d1 has two methods, d2 has one — each (parent, week, method) conserves.
+    mapping = {"m1": "d1", "m2": "d1", "m3": "d2"}
+    cases = _flat_history(["m1", "m2", "m3"], 5)
+    preds = pd.DataFrame(
+        [
+            _parent_row("d1", 100.0, 2, method="historical"),
+            _parent_row("d1", 100.0, 3, method="previousNweeks"),
+            _parent_row("d2", 50.0, 1, method="historical"),
+        ]
+    )
+    out = downscale_predictions(
+        preds, mapping, cases, pd.Timestamp("2026-03-01"), 4, **_zone_kwargs()
+    )
+    d1 = out[out["regionID"].isin(["m1", "m2"])]
+    assert d1.loc[d1.thresholdMethod == "historical", "prediction"].sum() == pytest.approx(100.0)
+    assert d1.loc[d1.thresholdMethod == "previousNweeks", "prediction"].sum() == pytest.approx(100.0)
+    d2 = out[out["regionID"] == "m3"]
+    assert set(d2["thresholdMethod"]) == {"historical"}
+    assert d2["prediction"].sum() == pytest.approx(50.0)
