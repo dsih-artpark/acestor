@@ -1,0 +1,116 @@
+{# pipelines/dengue/templates/partials/_d3_map_script.html.j2 #}
+{% if interactive_map_data %}
+<script>
+window.__BRIEF_DATA = {{ interactive_map_data | tojson }};
+</script>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script>
+(function() {
+  const data = window.__BRIEF_DATA || {};
+  const geo = data.geojson;
+  const parents = data.parent_lookup || {};
+  const weekly = data.weekly_zones || {};
+
+  if (!geo || !geo.features) return;
+
+  // Populate parent picker
+  const picker = document.getElementById("parent-picker");
+  if (picker) {
+    const sortedParents = Object.entries(parents).sort((a, b) =>
+      a[1].name.localeCompare(b[1].name)
+    );
+    for (const [pid, p] of sortedParents) {
+      const opt = document.createElement("option");
+      opt.value = pid;
+      opt.textContent = p.name;
+      picker.appendChild(opt);
+    }
+  }
+
+  // Zone -> color (match band-chip CSS)
+  const ZONE_COLOR = { 0: "#E5DED4", 1: "#C5DCA0", 2: "#F2D27A", 3: "#E69770", 4: "#C25A4A" };
+
+  // Render each SVG, fitted to the full feature collection initially
+  const svgs = document.querySelectorAll("svg.risk-map");
+  const projection = d3.geoMercator();
+  const path = d3.geoPath().projection(projection);
+
+  function renderWeek(svg, weekIdx) {
+    const zones = weekly[weekIdx] || {};
+    const rect = svg.getBoundingClientRect();
+    const w = rect.width || 360, h = rect.height || 360;
+    svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+    projection.fitSize([w, h], geo);
+    const sel = d3.select(svg);
+    sel.selectAll("path").remove();
+    sel.selectAll("path")
+      .data(geo.features)
+      .enter().append("path")
+      .attr("d", path)
+      .attr("fill", d => ZONE_COLOR[zones[d.properties.region_id] ?? 0])
+      .attr("stroke", "#666")
+      .attr("stroke-width", 0.3)
+      .append("title")
+      .text(d => `${d.properties.name} — zone ${zones[d.properties.region_id] ?? 0}`);
+  }
+
+  function zoomTo(parentId) {
+    if (parentId === "__all__") {
+      svgs.forEach(svg => renderWeek(svg, svg.dataset.weekIdx));
+    } else {
+      const p = parents[parentId];
+      if (!p) return;
+      const childSet = new Set(p.child_ids);
+      const subset = {
+        type: "FeatureCollection",
+        features: geo.features.filter(f => childSet.has(f.properties.region_id)),
+      };
+      svgs.forEach(svg => {
+        const rect = svg.getBoundingClientRect();
+        const w = rect.width || 360, h = rect.height || 360;
+        svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+        projection.fitSize([w, h], subset);
+        const sel = d3.select(svg);
+        const zones = weekly[svg.dataset.weekIdx] || {};
+        sel.selectAll("path").remove();
+        sel.selectAll("path")
+          .data(subset.features)
+          .enter().append("path")
+          .attr("d", path)
+          .attr("fill", d => ZONE_COLOR[zones[d.properties.region_id] ?? 0])
+          .attr("stroke", "#666")
+          .attr("stroke-width", 0.4)
+          .append("title")
+          .text(d => `${d.properties.name} — zone ${zones[d.properties.region_id] ?? 0}`);
+      });
+    }
+  }
+
+  function filterRegionLists(parentId) {
+    const lis = document.querySelectorAll("ul.region-list > li");
+    lis.forEach(li => {
+      const match = parentId === "__all__" || li.dataset.parent === parentId;
+      li.style.display = match ? "" : "none";
+    });
+    // Hide whole zone-groups that have no visible items
+    document.querySelectorAll(".zone-group").forEach(g => {
+      const anyVisible = Array.from(g.querySelectorAll("li"))
+        .some(li => li.style.display !== "none");
+      g.style.display = anyVisible ? "" : "none";
+    });
+  }
+
+  // Initial render
+  svgs.forEach(svg => renderWeek(svg, svg.dataset.weekIdx));
+
+  // Dropdown wiring
+  if (picker) {
+    picker.addEventListener("change", e => {
+      const pid = e.target.value;
+      zoomTo(pid);
+      filterRegionLists(pid);
+    });
+  }
+})();
+</script>
+{% endif %}

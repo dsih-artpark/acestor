@@ -40,6 +40,76 @@ def load_region_names(geojson_dir: Path) -> dict[str, str]:
     return names
 
 
+def load_child_geojson_combined(
+    geojson_dir: Path,
+    *,
+    simplify_tolerance: float = 0.005,
+) -> dict:
+    """Combine per-region geojsons into a single FeatureCollection, simplified.
+
+    Keeps only essential properties: region_id, name, parent, parent_name.
+    Simplifies polygon geometry to keep inlined JSON manageable.
+    """
+    from shapely.geometry import mapping, shape
+
+    features = []
+    for p in sorted(Path(geojson_dir).glob("*.geojson")):
+        try:
+            d = json.loads(p.read_text())
+            f = d.get("features", [{}])[0]
+            props = f.get("properties", {})
+            keep = {
+                k: props.get(k) for k in ("region_id", "name", "parent", "parent_name")
+            }
+            geom = shape(f["geometry"])
+            if simplify_tolerance > 0:
+                geom = geom.simplify(simplify_tolerance, preserve_topology=True)
+            features.append(
+                {
+                    "type": "Feature",
+                    "properties": keep,
+                    "geometry": mapping(geom),
+                }
+            )
+        except Exception:
+            continue
+    return {"type": "FeatureCollection", "features": features}
+
+
+def compute_parent_lookup(feature_collection: dict) -> dict:
+    """Return {parent_id: {"name": str, "bbox": [minLon, minLat, maxLon, maxLat], "child_ids": [str]}}."""
+    from shapely.geometry import shape
+
+    by_parent: dict = {}
+    for f in feature_collection.get("features", []):
+        props = f["properties"]
+        pid = props.get("parent")
+        if not pid:
+            continue
+        entry = by_parent.setdefault(
+            pid,
+            {"name": props.get("parent_name") or pid, "bboxes": [], "child_ids": []},
+        )
+        entry["child_ids"].append(props.get("region_id"))
+        b = shape(f["geometry"]).bounds  # (minx, miny, maxx, maxy)
+        entry["bboxes"].append(b)
+    # Reduce bboxes to combined bbox per parent
+    out: dict = {}
+    for pid, e in by_parent.items():
+        if not e["bboxes"]:
+            continue
+        xs0 = min(b[0] for b in e["bboxes"])
+        ys0 = min(b[1] for b in e["bboxes"])
+        xs1 = max(b[2] for b in e["bboxes"])
+        ys1 = max(b[3] for b in e["bboxes"])
+        out[pid] = {
+            "name": str(e["name"]).title(),
+            "bbox": [xs0, ys0, xs1, ys1],
+            "child_ids": e["child_ids"],
+        }
+    return out
+
+
 def build_brief_context(
     *,
     predictions: pd.DataFrame,
@@ -51,13 +121,26 @@ def build_brief_context(
     parent_region_type: str = "district",
     downscale_diagnostics: dict[str, Any] | None = None,
     region_names: dict[str, str] | None = None,
+    interactive_map_data: dict | None = None,
 ) -> dict[str, Any]:
     region_label = region_type.replace("_", " ")
+
+    # Build child→parent map from interactive_map_data if present.
+    child_to_parent: dict[str, str] | None = None
+    if interactive_map_data:
+        parent_lookup = interactive_map_data.get("parent_lookup", {})
+        child_to_parent = {}
+        for pid, pdata in parent_lookup.items():
+            for cid in pdata.get("child_ids", []):
+                child_to_parent[cid] = pid
+
     return {
         "document_title": document_title,
         "is_downscale": is_downscale,
         "hero_chart_relpath": f"{charts_relpath}/hero_forecast.png",
-        "weekly_blocks": _weekly_blocks(predictions, charts_relpath, region_names),
+        "weekly_blocks": _weekly_blocks(
+            predictions, charts_relpath, region_names, child_to_parent=child_to_parent
+        ),
         "action_matrix": _action_matrix(),
         "run_date": run_date,
         "footer_meta": {"generated": run_date},
@@ -65,6 +148,7 @@ def build_brief_context(
         "region_label": region_label,  # "district" / "mandal" / "block"
         "region_label_plural": f"{region_label}s",  # "districts" / "mandals" / "blocks"
         "parent_region_label": parent_region_type.replace("_", " "),
+        "interactive_map_data": interactive_map_data or None,
     }
 
 
@@ -87,14 +171,20 @@ def _weekly_blocks(
     df: pd.DataFrame,
     charts_relpath: str,
     region_names: dict[str, str] | None = None,
+    *,
+    child_to_parent: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """For each predicted week, group Medium+ regions by zone band (highest first).
 
-    Each block has ``zone_groups``: a list of {label, band_class, regions[]}
+    Each block has ``zone_groups``: a list of {label, band_class, regions[], region_entries[]}
     sorted Very High → High → Medium. Regions within a group are sorted by name.
+
+    ``region_entries`` is a list of {id, name, parent} dicts suitable for JS filtering.
+    ``regions`` is kept for backward compatibility (list of display names).
     """
     blocks: list[dict[str, Any]] = []
     rn = region_names or {}
+    c2p = child_to_parent or {}
     weeks = sorted(df["startDatePredictedWeek"].unique())
     for i, wk in enumerate(weeks, start=1):
         sub = df[df["startDatePredictedWeek"] == wk]
@@ -106,12 +196,29 @@ def _weekly_blocks(
             if in_zone.empty:
                 continue
             label, css = _ZONE_BAND[z]
-            regions = sorted(
-                rn.get(r["regionID"], r["regionID"]) for _, r in in_zone.iterrows()
+            entries = sorted(
+                (
+                    {
+                        "id": r["regionID"],
+                        "name": rn.get(r["regionID"], r["regionID"]),
+                        "parent": c2p.get(r["regionID"], ""),
+                    }
+                    for _, r in in_zone.iterrows()
+                ),
+                key=lambda e: e["name"],
             )
-            zone_groups.append({"label": label, "band_class": css, "regions": regions})
+            regions = [e["name"] for e in entries]
+            zone_groups.append(
+                {
+                    "label": label,
+                    "band_class": css,
+                    "regions": regions,
+                    "region_entries": entries,
+                }
+            )
         blocks.append(
             {
+                "week_idx": i,
                 "week_label": str(wk),
                 "week_label_pretty": _pretty_week_label(wk),
                 "map_relpath": f"{charts_relpath}/risk_map_w{i}.png",

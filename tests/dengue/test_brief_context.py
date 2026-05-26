@@ -1,8 +1,17 @@
 from __future__ import annotations
 
-import pandas as pd
+import json
+import tempfile
+from pathlib import Path
 
-from pipelines.dengue.lib.brief import build_brief_context
+import pandas as pd
+import pytest
+
+from pipelines.dengue.lib.brief import (
+    build_brief_context,
+    compute_parent_lookup,
+    load_child_geojson_combined,
+)
 
 
 def _sample_predictions() -> pd.DataFrame:
@@ -96,11 +105,18 @@ def test_weekly_blocks_filters_medium_plus_zones():
     )
     blocks = ctx["weekly_blocks"]
     assert len(blocks) == 1
-    # zone_groups: list of {label, band_class, regions[]} — only zone >= 2 grouped
+    # zone_groups: list of {label, band_class, regions[], region_entries[]} — only zone >= 2 grouped
     region_ids = set()
     for g in blocks[0]["zone_groups"]:
         region_ids.update(g["regions"])
     assert region_ids == {"r_high", "r_mid"}
+    # region_entries carries id, name, parent
+    entry_ids = set()
+    for g in blocks[0]["zone_groups"]:
+        for e in g["region_entries"]:
+            assert "id" in e and "name" in e and "parent" in e
+            entry_ids.add(e["id"])
+    assert entry_ids == {"r_high", "r_mid"}
 
 
 def test_weekly_blocks_grouped_by_band_high_first():
@@ -129,6 +145,10 @@ def test_weekly_blocks_grouped_by_band_high_first():
     assert groups[0]["regions"] == ["r_vhigh"]
     assert groups[1]["regions"] == ["r_high"]
     assert groups[2]["regions"] == ["r_mid"]
+    # region_entries mirrors regions
+    assert groups[0]["region_entries"][0]["id"] == "r_vhigh"
+    assert groups[1]["region_entries"][0]["id"] == "r_high"
+    assert groups[2]["region_entries"][0]["id"] == "r_mid"
 
 
 def test_region_names_lookup():
@@ -166,6 +186,9 @@ def test_region_names_lookup():
     all_regions = [r for g in groups for r in g["regions"]]
     assert "Kurnool" in all_regions
     assert "district_511" not in all_regions
+    # region_entries also shows resolved name
+    all_entry_names = [e["name"] for g in groups for e in g["region_entries"]]
+    assert "Kurnool" in all_entry_names
 
 
 def test_weekly_blocks_omit_predicted_and_range():
@@ -212,3 +235,130 @@ def test_weekly_blocks_have_pretty_label():
     assert "Jun" in label
     assert "2026" in label
     assert "–" in label
+
+
+def test_weekly_blocks_have_week_idx():
+    """Each weekly block should carry a 1-based week_idx for JS addressing."""
+    ctx = build_brief_context(
+        predictions=_sample_predictions(),
+        run_date="2026-05-21",
+        charts_relpath="charts",
+        is_downscale=False,
+        document_title="t",
+    )
+    for i, blk in enumerate(ctx["weekly_blocks"], start=1):
+        assert blk["week_idx"] == i
+
+
+def _mini_geojson(region_id: str, parent: str, parent_name: str, coords: list) -> dict:
+    return {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {
+                    "region_id": region_id,
+                    "name": region_id.upper(),
+                    "parent": parent,
+                    "parent_name": parent_name,
+                },
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [coords],
+                },
+            }
+        ],
+    }
+
+
+def test_load_child_geojson_combined_simplifies():
+    """load_child_geojson_combined reads geojsons, simplifies, and combines into FeatureCollection."""
+    coords_a = [[0.0, 0.0], [0.1, 0.0], [0.1, 0.1], [0.0, 0.1], [0.0, 0.0]]
+    coords_b = [[1.0, 1.0], [1.1, 1.0], [1.1, 1.1], [1.0, 1.1], [1.0, 1.0]]
+    with tempfile.TemporaryDirectory() as tmp:
+        tmpdir = Path(tmp)
+        (tmpdir / "region_a.geojson").write_text(
+            json.dumps(_mini_geojson("region_a", "parent_1", "Parent One", coords_a))
+        )
+        (tmpdir / "region_b.geojson").write_text(
+            json.dumps(_mini_geojson("region_b", "parent_1", "Parent One", coords_b))
+        )
+        fc = load_child_geojson_combined(tmpdir)
+    assert fc["type"] == "FeatureCollection"
+    assert len(fc["features"]) == 2
+    ids = {f["properties"]["region_id"] for f in fc["features"]}
+    assert ids == {"region_a", "region_b"}
+    for f in fc["features"]:
+        # Only the four kept properties should be present
+        assert set(f["properties"].keys()) == {
+            "region_id",
+            "name",
+            "parent",
+            "parent_name",
+        }
+
+
+def test_compute_parent_lookup_groups_by_parent():
+    """compute_parent_lookup aggregates child_ids and computes a bbox per parent."""
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {
+                    "region_id": "child_1",
+                    "name": "Child One",
+                    "parent": "parent_A",
+                    "parent_name": "PARENT ALPHA",
+                },
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [
+                        [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0], [0.0, 0.0]]
+                    ],
+                },
+            },
+            {
+                "type": "Feature",
+                "properties": {
+                    "region_id": "child_2",
+                    "name": "Child Two",
+                    "parent": "parent_A",
+                    "parent_name": "PARENT ALPHA",
+                },
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [
+                        [[2.0, 2.0], [3.0, 2.0], [3.0, 3.0], [2.0, 3.0], [2.0, 2.0]]
+                    ],
+                },
+            },
+            {
+                "type": "Feature",
+                "properties": {
+                    "region_id": "child_3",
+                    "name": "Child Three",
+                    "parent": "parent_B",
+                    "parent_name": "PARENT BETA",
+                },
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [
+                        [[5.0, 5.0], [6.0, 5.0], [6.0, 6.0], [5.0, 6.0], [5.0, 5.0]]
+                    ],
+                },
+            },
+        ],
+    }
+    lookup = compute_parent_lookup(fc)
+    assert set(lookup.keys()) == {"parent_A", "parent_B"}
+    pa = lookup["parent_A"]
+    assert set(pa["child_ids"]) == {"child_1", "child_2"}
+    assert pa["name"] == "Parent Alpha"
+    # bbox should span both children: minx=0, miny=0, maxx=3, maxy=3
+    assert pa["bbox"][0] == pytest.approx(0.0)
+    assert pa["bbox"][1] == pytest.approx(0.0)
+    assert pa["bbox"][2] == pytest.approx(3.0)
+    assert pa["bbox"][3] == pytest.approx(3.0)
+    pb = lookup["parent_B"]
+    assert pb["child_ids"] == ["child_3"]

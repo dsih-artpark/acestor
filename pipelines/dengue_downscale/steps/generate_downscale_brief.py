@@ -12,6 +12,8 @@ from pipelines.dengue.configs import ReportConfig, _section
 from pipelines.dengue.lib import maps as maps_lib
 from pipelines.dengue.lib.brief import (
     build_brief_context,
+    compute_parent_lookup,
+    load_child_geojson_combined,
     load_region_names,
     render_brief,
 )
@@ -93,45 +95,12 @@ class GenerateDownscaleBriefStep(
                 out_path=str(hero_path),
             )
 
-        # Render one choropleth per predicted week at the child level (e.g. mandal),
-        # using the same gen_plot the dengue pipeline uses for districts. Output
-        # goes straight into outputs/charts/risk_map_wN.png — same shape the
-        # template expects.
+        # Build interactive D3 map data (replaces per-week static PNGs for downscale).
         weeks = (
             sorted(report_df["startDatePredictedWeek"].unique())
             if not report_df.empty
             else []
         )
-        if weeks:
-            geojson_base = ds_cfg_early.geojson_base_path
-            for i, wk in enumerate(weeks, start=1):
-                thisdate = pd.Timestamp(wk).date().isoformat()
-                color_df = report_df[report_df["startDatePredictedWeek"] == wk][
-                    ["regionID", "predictionZone"]
-                ].copy()
-                try:
-                    out_png = maps_lib.gen_plot(
-                        color_df,
-                        region=ds_cfg_early.child_level,
-                        model=primary_model,
-                        threshold=thresh_method,
-                        thisdate=thisdate,
-                        geojson_base=geojson_base,
-                        output_dir=str(charts_dir_fs),
-                        figure_title=f"{ds_cfg_early.child_level.title()} Dengue Risk Map",
-                        run_date=str(run_date_ts.date()),
-                    )
-                    # Rename gen_plot's verbose filename → predictable risk_map_wN.png.
-                    target = charts_dir_fs / f"risk_map_w{i}.png"
-                    if out_png and Path(out_png).exists():
-                        Path(out_png).rename(target)
-                except Exception as exc:
-                    context.log.warning(
-                        "generate_downscale_brief: weekly map render failed for week %s (%s): %s",
-                        i,
-                        thisdate,
-                        exc,
-                    )
 
         diag = {
             "conservation_max_abs_err": inputs.downscale_predictions.conservation_max_abs_err,
@@ -157,6 +126,36 @@ class GenerateDownscaleBriefStep(
                 child_geojson_dir,
             )
 
+        # Build interactive map data: combined + simplified GeoJSON + parent lookup + weekly zones.
+        interactive_map_data: dict | None = None
+        if child_geojson_dir.exists():
+            try:
+                geojson_fc = load_child_geojson_combined(child_geojson_dir)
+                parent_lookup = compute_parent_lookup(geojson_fc)
+                # weekly_zones: {week_idx (str, 1-based): {region_id: zone_int}}
+                weekly_zones: dict[str, dict[str, int]] = {}
+                for i, wk in enumerate(weeks, start=1):
+                    sub = report_df[report_df["startDatePredictedWeek"] == wk]
+                    weekly_zones[str(i)] = {
+                        str(r["regionID"]): int(r["predictionZone"])
+                        for _, r in sub.iterrows()
+                    }
+                interactive_map_data = {
+                    "geojson": geojson_fc,
+                    "parent_lookup": parent_lookup,
+                    "weekly_zones": weekly_zones,
+                }
+                context.log.info(
+                    "generate_downscale_brief: interactive map built — %d features, %d parents",
+                    len(geojson_fc["features"]),
+                    len(parent_lookup),
+                )
+            except Exception as exc:
+                context.log.warning(
+                    "generate_downscale_brief: interactive map build failed (%s) — falling back to no map",
+                    exc,
+                )
+
         ctx = build_brief_context(
             predictions=report_df,
             run_date=str(pd.Timestamp.now().date()),
@@ -167,6 +166,7 @@ class GenerateDownscaleBriefStep(
             parent_region_type=ds_cfg.parent_level,
             region_names=region_names or None,
             downscale_diagnostics=diag,
+            interactive_map_data=interactive_map_data,
         )
         html = render_brief(ctx)
 
