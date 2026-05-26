@@ -22,7 +22,7 @@ downscale:
 thresholds:
   region_type: mandal
   list_alpha: [1.0, 2.0]             # risk zone bands: T = Mean + alpha*StdDev
-  classification_method: who          # who (default) | icmr
+  classification_method: icmr          # who (default) | icmr
   methods: [historical, prev_nweeks, weighted_baseline]
   method_configs:
     prev_nweeks:

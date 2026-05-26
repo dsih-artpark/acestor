@@ -1,26 +1,24 @@
-{# Reference layout: one block per predicted week, map left + Medium+ regions table right. #}
+{# One block per predicted week: map on the left, regions grouped by zone band on the right. #}
 <section class="block weekly-blocks">
   <h2>4-week {{ region_label }} risk progression</h2>
-  <div class="subhead">Map + {{ region_label }} list for each forecast week. {{ region_label_plural | title }} at Medium or above are listed.</div>
+  <div class="subhead">Map + {{ region_label }} list for each forecast week. {{ region_label_plural | title }} at Medium or above are grouped by risk band.</div>
   {% for blk in weekly_blocks %}
   <div class="weekly-block">
     <h3 class="weekly-label">{{ blk.week_label_pretty }}</h3>
     <div class="two-col">
       <div class="map-frame"><img src="{{ blk.map_relpath }}" alt="risk map" /></div>
-      <div>
-        {% if blk.rows %}
-        <table class="risk-list">
-          <thead><tr><th>{{ region_label | title }}</th><th>Band</th><th>Predicted</th></tr></thead>
-          <tbody>
-            {% for row in blk.rows %}
-            <tr>
-              <td class="area">{{ row.regionName }}</td>
-              <td><span class="band-chip {{ row.band_class }}">{{ row.band_text }}</span></td>
-              <td>{{ row.prediction_int }}</td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
+      <div class="zone-groups">
+        {% if blk.zone_groups %}
+          {% for group in blk.zone_groups %}
+          <div class="zone-group">
+            <div class="zone-group-label band-chip {{ group.band_class }}">{{ group.label | upper }}</div>
+            <ul class="region-list">
+              {% for region in group.regions %}
+              <li>{{ region }}</li>
+              {% endfor %}
+            </ul>
+          </div>
+          {% endfor %}
         {% else %}
         <p class="muted">No Medium+ {{ region_label_plural }} this week.</p>
         {% endif %}

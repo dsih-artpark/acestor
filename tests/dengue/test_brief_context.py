@@ -96,31 +96,24 @@ def test_weekly_blocks_filters_medium_plus_zones():
     )
     blocks = ctx["weekly_blocks"]
     assert len(blocks) == 1
-    rows = blocks[0]["rows"]
-    region_ids = {r["regionID"] for r in rows}
-    assert region_ids == {"r_high", "r_mid"}  # only zone >= 2
+    # zone_groups: list of {label, band_class, regions[]} — only zone >= 2 grouped
+    region_ids = set()
+    for g in blocks[0]["zone_groups"]:
+        region_ids.update(g["regions"])
+    assert region_ids == {"r_high", "r_mid"}
 
 
-def test_weekly_blocks_rows_have_band_fields():
-    """Rows should have band_text and band_class, not prediction float."""
+def test_weekly_blocks_grouped_by_band_high_first():
+    """zone_groups ordered Very High → High → Medium; each group has label + band_class + regions."""
     df = pd.DataFrame(
         {
-            "dateOfComputingPrediction": ["2026-05-21"] * 2,
-            "startDatePredictedWeek": ["2026-06-01"] * 2,
-            "regionID": ["r_high", "r_mid"],
-            "prediction": [10.0, 5.0],
-            "predictionZone": [3, 2],
-            "thresholdMethod": ["historical"] * 2,
-            "model": ["ensembleModel"] * 2,
-            "Mean": [1.0] * 2,
-            "StdDev": [1.0] * 2,
-            "Zero": [0.0] * 2,
-            "Inf": [float("inf")] * 2,
-            "T0.00": [1.0] * 2,
-            "T1.00": [2.0] * 2,
-            "T2.00": [3.0] * 2,
-            "recordDate": ["2026-05-25"] * 2,
-            "ISOWeek": [22] * 2,
+            "dateOfComputingPrediction": ["2026-05-21"] * 3,
+            "startDatePredictedWeek": ["2026-06-01"] * 3,
+            "regionID": ["r_vhigh", "r_high", "r_mid"],
+            "prediction": [12.0, 10.0, 5.0],
+            "predictionZone": [4, 3, 2],
+            "thresholdMethod": ["historical"] * 3,
+            "model": ["ensembleModel"] * 3,
         }
     )
     ctx = build_brief_context(
@@ -130,14 +123,12 @@ def test_weekly_blocks_rows_have_band_fields():
         is_downscale=False,
         document_title="t",
     )
-    rows = ctx["weekly_blocks"][0]["rows"]
-    by_region = {r["regionID"]: r for r in rows}
-    assert by_region["r_high"]["band_text"] == "High"
-    assert by_region["r_high"]["band_class"] == "high"
-    assert by_region["r_mid"]["band_text"] == "Medium"
-    assert by_region["r_mid"]["band_class"] == "med"
-    # prediction float must NOT be present
-    assert "prediction" not in by_region["r_high"]
+    groups = ctx["weekly_blocks"][0]["zone_groups"]
+    assert [g["label"] for g in groups] == ["Very High", "High", "Medium"]
+    assert [g["band_class"] for g in groups] == ["vhigh", "high", "med"]
+    assert groups[0]["regions"] == ["r_vhigh"]
+    assert groups[1]["regions"] == ["r_high"]
+    assert groups[2]["regions"] == ["r_mid"]
 
 
 def test_region_names_lookup():
@@ -170,12 +161,15 @@ def test_region_names_lookup():
         document_title="t",
         region_names={"district_511": "Kurnool"},
     )
-    rows = ctx["weekly_blocks"][0]["rows"]
-    assert rows[0]["regionName"] == "Kurnool"
+    groups = ctx["weekly_blocks"][0]["zone_groups"]
+    # The single Medium-zone region appears under its zone group, looked up to display name.
+    all_regions = [r for g in groups for r in g["regions"]]
+    assert "Kurnool" in all_regions
+    assert "district_511" not in all_regions
 
 
-def test_weekly_blocks_rows_have_prediction_int_field():
-    """Rows include prediction_int (rounded). Range columns dropped — see PR feedback."""
+def test_weekly_blocks_omit_predicted_and_range():
+    """Predicted and Range columns intentionally removed — blocks only carry zone_groups now."""
     df = pd.DataFrame(
         {
             "dateOfComputingPrediction": ["2026-05-21"] * 2,
@@ -194,13 +188,14 @@ def test_weekly_blocks_rows_have_prediction_int_field():
         is_downscale=False,
         document_title="t",
     )
-    rows = ctx["weekly_blocks"][0]["rows"]
-    by_region = {r["regionID"]: r for r in rows}
-    assert by_region["r_high"]["prediction_int"] == 10
-    assert by_region["r_mid"]["prediction_int"] == 6  # 5.6 → 6
-    # Range columns intentionally removed; should not be present.
-    assert "range_low" not in by_region["r_high"]
-    assert "range_high" not in by_region["r_high"]
+    blk = ctx["weekly_blocks"][0]
+    assert "rows" not in blk  # legacy field gone
+    assert "zone_groups" in blk
+    # Per-group dicts shouldn't carry prediction or range either.
+    for g in blk["zone_groups"]:
+        assert "prediction_int" not in g
+        assert "range_low" not in g
+        assert "range_high" not in g
 
 
 def test_weekly_blocks_have_pretty_label():

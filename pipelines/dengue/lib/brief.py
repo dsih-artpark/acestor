@@ -88,32 +88,34 @@ def _weekly_blocks(
     charts_relpath: str,
     region_names: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
+    """For each predicted week, group Medium+ regions by zone band (highest first).
+
+    Each block has ``zone_groups``: a list of {label, band_class, regions[]}
+    sorted Very High → High → Medium. Regions within a group are sorted by name.
+    """
     blocks: list[dict[str, Any]] = []
     rn = region_names or {}
     weeks = sorted(df["startDatePredictedWeek"].unique())
     for i, wk in enumerate(weeks, start=1):
         sub = df[df["startDatePredictedWeek"] == wk]
         medium_plus = sub[sub["predictionZone"] >= 2].copy()
-        rows = []
-        for _, r in medium_plus.iterrows():
-            z = int(r["predictionZone"])
-            label, css = _ZONE_BAND.get(z, ("", "low"))
-            rid = r["regionID"]
-            rows.append(
-                {
-                    "regionID": rid,
-                    "regionName": rn.get(rid, rid),
-                    "band_text": label,
-                    "band_class": css,
-                    "prediction_int": int(round(float(r["prediction"]))),
-                }
+        zone_groups: list[dict[str, Any]] = []
+        # Iterate zones high → low so Very High shows first.
+        for z in sorted(_ZONE_BAND, reverse=True):
+            in_zone = medium_plus[medium_plus["predictionZone"] == z]
+            if in_zone.empty:
+                continue
+            label, css = _ZONE_BAND[z]
+            regions = sorted(
+                rn.get(r["regionID"], r["regionID"]) for _, r in in_zone.iterrows()
             )
+            zone_groups.append({"label": label, "band_class": css, "regions": regions})
         blocks.append(
             {
                 "week_label": str(wk),
                 "week_label_pretty": _pretty_week_label(wk),
                 "map_relpath": f"{charts_relpath}/risk_map_w{i}.png",
-                "rows": rows,
+                "zone_groups": zone_groups,
             }
         )
     return blocks

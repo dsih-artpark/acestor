@@ -134,8 +134,8 @@ def test_render_without_downscale_diagnostics_omits_section():
     assert "Downscale diagnostics" not in html
 
 
-def test_render_brief_table_has_predicted_column_no_range():
-    """Table headers include Predicted; Range column removed (PR feedback)."""
+def test_render_brief_groups_regions_no_table():
+    """Per-zone groups render with band-chip headers and a region list; no <table> per week."""
     ctx = build_brief_context(
         predictions=_sample(),
         run_date="2026-05-21",
@@ -144,5 +144,7 @@ def test_render_brief_table_has_predicted_column_no_range():
         document_title="Test brief",
     )
     html = render_brief(ctx)
-    assert "<th>Predicted</th>" in html
+    assert "<th>Predicted</th>" not in html
     assert "<th>Range</th>" not in html
+    assert 'class="zone-group-label' in html  # at least one zone group rendered
+    assert 'class="region-list"' in html
