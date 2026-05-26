@@ -55,3 +55,80 @@ def test_render_brief_shows_weekly_blocks():
     assert "Week starting" in html
     assert "risk_map_w1.png" in html
     assert "hero_forecast.png" in html
+
+
+def test_render_with_downscale_diagnostics():
+    df = pd.DataFrame(
+        {
+            "dateOfComputingPrediction": ["2026-05-21"] * 2,
+            "startDatePredictedWeek": ["2026-06-01"] * 2,
+            "regionID": ["mandal_05001", "mandal_05002"],
+            "prediction": [0.0, 0.5],
+            "predictionZone": [0, 1],
+            "thresholdMethod": ["historical"] * 2,
+            "model": ["ensembleModel"] * 2,
+            "Mean": [1.0] * 2,
+            "StdDev": [0.5] * 2,
+            "Zero": [0.0] * 2,
+            "Inf": [float("inf")] * 2,
+            "T0.00": [1.0] * 2,
+            "T1.00": [1.5] * 2,
+            "T2.00": [2.0] * 2,
+            "recordDate": ["2026-05-25"] * 2,
+            "ISOWeek": [22] * 2,
+        }
+    )
+    diag = {
+        "conservation_max_abs_err": 2.2e-16,
+        "n_parents_uniform": 2,
+        "n_weeks_children_above_parent": 1,
+        "n_weeks_children_below_parent": 174,
+        "n_zone_zero": 2,
+        "n_total": 4,
+    }
+    ctx = build_brief_context(
+        predictions=df,
+        run_date="2026-05-21",
+        charts_relpath="charts",
+        is_downscale=True,
+        document_title="Mandal brief",
+        downscale_diagnostics=diag,
+    )
+    html = render_brief(ctx)
+    assert "Downscale diagnostics" in html
+    assert "Parents split uniformly" in html
+    # 2 should appear (n_parents_uniform) and "174" too
+    assert "174" in html
+
+
+def test_render_without_downscale_diagnostics_omits_section():
+    """The downscale section must NOT render when is_downscale=False."""
+    df = pd.DataFrame(
+        {
+            "dateOfComputingPrediction": ["2026-05-21"] * 2,
+            "startDatePredictedWeek": ["2026-06-01"] * 2,
+            "regionID": ["r1", "r2"],
+            "prediction": [1.0, 2.0],
+            "predictionZone": [1, 2],
+            "thresholdMethod": ["historical"] * 2,
+            "model": ["ensembleModel"] * 2,
+            "Mean": [1.0] * 2,
+            "StdDev": [1.0] * 2,
+            "Zero": [0.0] * 2,
+            "Inf": [float("inf")] * 2,
+            "T0.00": [1.0] * 2,
+            "T1.00": [2.0] * 2,
+            "T2.00": [3.0] * 2,
+            "recordDate": ["2026-05-25"] * 2,
+            "ISOWeek": [22] * 2,
+        }
+    )
+    ctx = build_brief_context(
+        predictions=df,
+        run_date="2026-05-21",
+        charts_relpath="charts",
+        is_downscale=False,
+        document_title="District brief",
+    )
+    html = render_brief(ctx)
+    assert "Downscale diagnostics" not in html
