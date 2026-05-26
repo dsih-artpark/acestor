@@ -10,14 +10,14 @@ from acestor import BaseStep, PipelineContext
 from pipelines.dengue.configs import AssessConfig, _section
 from pipelines.dengue.lib import thresholds
 from pipelines.dengue.results import (
-    CombinedPredictionsResult,
+    PredictionResult,
     ThresholdAssessmentResult,
 )
 
 
 @dataclass(frozen=True)
 class AssessThresholdsInputs:
-    combine_predictions: CombinedPredictionsResult
+    train_and_predict: PredictionResult
 
 
 class AssessThresholdsStep(BaseStep[AssessThresholdsInputs, ThresholdAssessmentResult]):
@@ -29,7 +29,7 @@ class AssessThresholdsStep(BaseStep[AssessThresholdsInputs, ThresholdAssessmentR
         cfg = AssessConfig.from_raw(_section(context.config, "assess"))
 
         pred_csv = context.artifacts.read_text(
-            inputs.combine_predictions.combined_csv_path
+            inputs.train_and_predict.predictions_csv_path
         )
         df = pd.read_csv(io.StringIO(pred_csv))
 
