@@ -1,1 +1,26 @@
-{# placeholder #}
+{# One block per predicted week: map + table of Medium+ (zone >= 2) regions. #}
+<section class="block weekly-blocks">
+  <h2>Weekly risk maps</h2>
+  {% for blk in weekly_blocks %}
+  <div class="weekly-block">
+    <div class="weekly-label">Week starting {{ blk.week_label }}</div>
+    <div class="map-frame"><img src="{{ blk.map_relpath }}" alt="risk map" /></div>
+    {% if blk.rows %}
+    <table class="medium-plus">
+      <thead><tr><th>Region</th><th>Predicted cases</th><th>Zone</th></tr></thead>
+      <tbody>
+        {% for row in blk.rows %}
+        <tr>
+          <td class="area">{{ row.regionID }}</td>
+          <td>{{ "%.2f"|format(row.prediction) }}</td>
+          <td><span class="band-chip {% if row.predictionZone == 4 %}vhigh{% elif row.predictionZone == 3 %}high{% elif row.predictionZone == 2 %}med{% else %}low{% endif %}">Zone {{ row.predictionZone | int }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="muted">No Medium+ regions this week.</p>
+    {% endif %}
+  </div>
+  {% endfor %}
+</section>
