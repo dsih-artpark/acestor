@@ -78,9 +78,14 @@ def validate_cases_df(cases_df: pd.DataFrame) -> None:
             f"validate_cases_df: child cases frame missing columns {missing}; "
             f"required: {list(_REQUIRED_CASE_COLS)}"
         )
-    if pd.to_datetime(cases_df["date"], errors="coerce").notna().sum() == 0:
+    parsed_dates = pd.to_datetime(cases_df["date"], errors="coerce")
+    if parsed_dates.notna().sum() == 0:
         raise ValueError(
             "validate_cases_df: no parseable values in 'date' column (all NaT)"
+        )
+    if parsed_dates.isna().any():
+        raise ValueError(
+            "validate_cases_df: found unparseable value(s) in 'date' column"
         )
 
 

@@ -122,9 +122,9 @@ class DownscalePredictionsStep(BaseStep[DownscalePredictionsInputs, DownscaleRes
 
         diag = downscale_diagnostics(parent_preds, child_preds, child_mapping)
         context.log.info(
-            "downscale_predictions: sanity — conservation_max_abs_err=%.3g, "
-            "%d/%d parent-weeks uniform-split (no-data fallback), risk vs parent: "
-            "%d below / %d above / %d match",
+            "downscale_predictions: sanity — conservation_max_abs_err=%.3g; "
+            "%d parent(s) uniform-split (no-data fallback); "
+            "risk vs parent over %d parent-week(s): %d below / %d above / %d match",
             diag["conservation_max_abs_err"],
             diag["n_parents_uniform"],
             diag["n_parent_weeks"],

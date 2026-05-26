@@ -169,6 +169,18 @@ def test_validate_cases_df_raises_on_all_nat_dates():
         validate_cases_df(df)
 
 
+def test_validate_cases_df_raises_on_some_unparseable_dates():
+    df = pd.DataFrame(
+        {
+            "region_id": ["m1", "m2"],
+            "date": ["2026-02-15", "not-a-date"],
+            "case_count": [3, 4],
+        }
+    )
+    with pytest.raises(ValueError, match="unparseable"):
+        validate_cases_df(df)
+
+
 def test_compute_shares_raises_on_nan_counts_in_window():
     cases = pd.DataFrame(
         [
