@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 from xgboost import XGBRegressor
 
-from pipelines.dengue.lib.models._shared import _lag
+from pipelines.dengue.lib.models._shared import _lag, recursive_forecast
 from pipelines.dengue.lib.models import _tuning as _tuning_mod
 
 log = logging.getLogger(__name__)
@@ -43,7 +43,11 @@ def xgboost_regression(
     random_state: int = 42,
     ctx: "ModelContext | None" = None,
 ) -> pd.DataFrame:
-    """Train XGBoost on history and predict the last 4 weeks of weather data."""
+    """Train XGBoost on history, then recursively forecast the next 4 weeks.
+
+    Weather/iso lags for the forecast weeks are known ahead of time; case lags are
+    filled from earlier weeks' own predictions (see _shared.recursive_forecast).
+    """
     from pipelines.dengue.lib.zones import ret_na_filled_df
 
     df0 = ret_na_filled_df(
@@ -86,25 +90,6 @@ def xgboost_regression(
     X_train = train_data[lag_cols].reset_index(drop=True)
     y_train = train_data["case"].values
 
-    test_data = df0[df0["recordDate"].isin(last_4)].copy().reset_index(drop=True)
-    valid_mask = test_data[lag_cols].notna().all(axis=1)
-    skipped = sorted(test_data.loc[~valid_mask, spatial_col].unique())
-    if skipped:
-        log.warning(
-            "XGB: skipping %d region(s) with NaN lag features — no weather coverage: %s",
-            len(skipped),
-            skipped,
-        )
-        test_data = test_data[valid_mask].copy().reset_index(drop=True)
-
-    if test_data.empty:
-        log.warning(
-            "XGB: no regions with valid lag features — returning empty predictions"
-        )
-        return pd.DataFrame()
-
-    X_test = test_data[lag_cols].reset_index(drop=True)
-
     train_max_date = str(train_data["recordDate"].max().date())
     hp = (
         _get_xgb_params(ctx, X_train.values, y_train, train_max_date)
@@ -129,29 +114,41 @@ def xgboost_regression(
     )
     xgb_model.fit(X_train.values, y_train)
 
-    test_data["prediction"] = np.maximum(0.0, xgb_model.predict(X_test.values))
-    test_data["recordDate"] = pd.to_datetime(test_data["recordDate"])
-    test_data["model"] = "xgboostRegression"
-
-    if (
+    debug_on = bool(
         ctx is not None
         and getattr(ctx.cfg, "debug", False)
         and ctx.artifacts is not None
-    ):
+    )
+    preds, debug_rows = recursive_forecast(
+        xgb_model,
+        df0,
+        spatial_col=spatial_col,
+        feature_cols=lag_cols,
+        lag_cases=lag_cases,
+        future_dates=sorted(pd.to_datetime(d) for d in last_4),
+        clip_multiplier=getattr(ctx.cfg, "clip_multiplier", None)
+        if ctx is not None
+        else None,
+        train_max=float(np.nanmax(y_train)) if len(y_train) else None,
+        debug=debug_on,
+    )
+
+    if preds.empty:
+        log.warning(
+            "XGB: no regions with valid lag features — returning empty predictions"
+        )
+        return pd.DataFrame()
+
+    preds["model"] = "xgboostRegression"
+    if debug_on:
         from pipelines.dengue.lib.models.rf import _save_debug
 
         _save_debug(
-            ctx,
-            "xgb",
-            X_train,
-            y_train,
-            X_test,
-            test_data,
-            xgb_model.feature_importances_,
-            lag_cols,
+            ctx, "xgb", X_train, y_train, preds, debug_rows,
+            xgb_model.feature_importances_, lag_cols,
         )
 
-    return test_data.reset_index(drop=True)
+    return preds.reset_index(drop=True)
 
 
 def _get_xgb_params(

@@ -149,6 +149,34 @@ def test_rf_skips_regions_with_nan_lag_features():
     assert set(result[SPATIAL_COL].unique()) >= {"r1", "r2"}
 
 
+def test_rf_with_case_lags_predicts_all_4_weeks():
+    # With case lags, the OLD code dropped weeks 2-4 (future case lags NaN) and
+    # emitted only lead 1. Recursive rollout must now produce all 4 weeks.
+    df = _make_merged_df(n_weeks=30, n_regions=2)
+    pred_upto = df["recordDate"].max()
+    result = random_forest_regression(
+        df,
+        spatial_col=SPATIAL_COL,
+        lag_temp=[4],
+        lag_rainfall=[4],
+        lag_humidity=[4],
+        lag_cases=[1, 2, 3],
+        years_to_exclude=[],
+        years_to_include=[],
+        predict_upto_date=pred_upto,
+    )
+    expected_dates = {
+        pd.Timestamp(d).date() for d in sorted(df["recordDate"].unique())[-4:]
+    }
+    for region in ["r0", "r1"]:
+        got = set(
+            pd.to_datetime(
+                result.loc[result[SPATIAL_COL] == region, "recordDate"]
+            ).dt.date
+        )
+        assert got == expected_dates, f"{region}: {got}"
+
+
 def test_rf_skips_regions_with_nan_lag_features_in_test_window():
     # NaN out ALL weather for r2 — ensures lag features for its test window are NaN.
     df = _make_merged_df()
