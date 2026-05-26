@@ -174,26 +174,17 @@ def test_region_names_lookup():
     assert rows[0]["regionName"] == "Kurnool"
 
 
-def test_weekly_blocks_rows_have_prediction_and_range_fields():
-    """Rows must include prediction_int, range_low, range_high."""
+def test_weekly_blocks_rows_have_prediction_int_field():
+    """Rows include prediction_int (rounded). Range columns dropped — see PR feedback."""
     df = pd.DataFrame(
         {
             "dateOfComputingPrediction": ["2026-05-21"] * 2,
             "startDatePredictedWeek": ["2026-06-01"] * 2,
             "regionID": ["r_high", "r_mid"],
-            "prediction": [10.0, 5.0],
+            "prediction": [10.4, 5.6],
             "predictionZone": [3, 2],
             "thresholdMethod": ["historical"] * 2,
             "model": ["ensembleModel"] * 2,
-            "Mean": [1.0] * 2,
-            "StdDev": [2.0] * 2,
-            "Zero": [0.0] * 2,
-            "Inf": [float("inf")] * 2,
-            "T0.00": [1.0] * 2,
-            "T1.00": [2.0] * 2,
-            "T2.00": [3.0] * 2,
-            "recordDate": ["2026-05-25"] * 2,
-            "ISOWeek": [22] * 2,
         }
     )
     ctx = build_brief_context(
@@ -205,13 +196,11 @@ def test_weekly_blocks_rows_have_prediction_and_range_fields():
     )
     rows = ctx["weekly_blocks"][0]["rows"]
     by_region = {r["regionID"]: r for r in rows}
-    assert "prediction_int" in by_region["r_high"]
-    assert "range_low" in by_region["r_high"]
-    assert "range_high" in by_region["r_high"]
-    # prediction=10, StdDev=2 → int=10, low=8, high=12
     assert by_region["r_high"]["prediction_int"] == 10
-    assert by_region["r_high"]["range_low"] == 8
-    assert by_region["r_high"]["range_high"] == 12
+    assert by_region["r_mid"]["prediction_int"] == 6  # 5.6 → 6
+    # Range columns intentionally removed; should not be present.
+    assert "range_low" not in by_region["r_high"]
+    assert "range_high" not in by_region["r_high"]
 
 
 def test_weekly_blocks_have_pretty_label():

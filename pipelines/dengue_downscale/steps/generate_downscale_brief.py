@@ -93,10 +93,45 @@ class GenerateDownscaleBriefStep(
                 out_path=str(hero_path),
             )
 
-        # Weekly map slots are intentionally left empty for now — mandal-level
-        # maps aren't rendered by this pipeline yet (follow-up). The template
-        # tolerates missing image src by showing a broken-image icon; that's
-        # acceptable signal until mandal maps land.
+        # Render one choropleth per predicted week at the child level (e.g. mandal),
+        # using the same gen_plot the dengue pipeline uses for districts. Output
+        # goes straight into outputs/charts/risk_map_wN.png — same shape the
+        # template expects.
+        weeks = (
+            sorted(report_df["startDatePredictedWeek"].unique())
+            if not report_df.empty
+            else []
+        )
+        if weeks:
+            geojson_base = ds_cfg_early.geojson_base_path
+            for i, wk in enumerate(weeks, start=1):
+                thisdate = pd.Timestamp(wk).date().isoformat()
+                color_df = report_df[report_df["startDatePredictedWeek"] == wk][
+                    ["regionID", "predictionZone"]
+                ].copy()
+                try:
+                    out_png = maps_lib.gen_plot(
+                        color_df,
+                        region=ds_cfg_early.child_level,
+                        model=primary_model,
+                        threshold=thresh_method,
+                        thisdate=thisdate,
+                        geojson_base=geojson_base,
+                        output_dir=str(charts_dir_fs),
+                        figure_title=f"{ds_cfg_early.child_level.title()} Dengue Risk Map",
+                        run_date=str(run_date_ts.date()),
+                    )
+                    # Rename gen_plot's verbose filename → predictable risk_map_wN.png.
+                    target = charts_dir_fs / f"risk_map_w{i}.png"
+                    if out_png and Path(out_png).exists():
+                        Path(out_png).rename(target)
+                except Exception as exc:
+                    context.log.warning(
+                        "generate_downscale_brief: weekly map render failed for week %s (%s): %s",
+                        i,
+                        thisdate,
+                        exc,
+                    )
 
         diag = {
             "conservation_max_abs_err": inputs.downscale_predictions.conservation_max_abs_err,

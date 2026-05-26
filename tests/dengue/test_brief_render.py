@@ -134,8 +134,8 @@ def test_render_without_downscale_diagnostics_omits_section():
     assert "Downscale diagnostics" not in html
 
 
-def test_render_brief_table_has_predicted_and_range_columns():
-    """Table headers must include Predicted and Range."""
+def test_render_brief_table_has_predicted_column_no_range():
+    """Table headers include Predicted; Range column removed (PR feedback)."""
     ctx = build_brief_context(
         predictions=_sample(),
         run_date="2026-05-21",
@@ -145,4 +145,4 @@ def test_render_brief_table_has_predicted_and_range_columns():
     )
     html = render_brief(ctx)
     assert "<th>Predicted</th>" in html
-    assert "<th>Range</th>" in html
+    assert "<th>Range</th>" not in html

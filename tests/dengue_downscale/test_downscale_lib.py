@@ -206,7 +206,11 @@ def test_downscale_output_schema():
         cases = _make_cases_df(["m1", "m2"])
         preds = _make_parent_preds(["d1"])
         result = downscale_predictions(
-            preds, mapping, cases, pd.Timestamp("2026-03-01"), window_weeks=4,
+            preds,
+            mapping,
+            cases,
+            pd.Timestamp("2026-03-01"),
+            window_weeks=4,
             **_zone_kwargs(),
         )
     assert list(result.columns) == _PREDICTION_COLS
@@ -220,7 +224,11 @@ def test_downscale_child_predictions_sum_to_parent():
         cases = _make_cases_df(["m1", "m2"])
         preds = _make_parent_preds(["d1"], n_weeks=1)
         result = downscale_predictions(
-            preds, mapping, cases, pd.Timestamp("2026-03-01"), window_weeks=4,
+            preds,
+            mapping,
+            cases,
+            pd.Timestamp("2026-03-01"),
+            window_weeks=4,
             **_zone_kwargs(),
         )
     # child predictions for one parent week must sum to parent prediction (100.0)
@@ -235,7 +243,11 @@ def test_downscale_regionids_are_child_ids():
         cases = _make_cases_df(["m1", "m2"])
         preds = _make_parent_preds(["d1"])
         result = downscale_predictions(
-            preds, mapping, cases, pd.Timestamp("2026-03-01"), window_weeks=4,
+            preds,
+            mapping,
+            cases,
+            pd.Timestamp("2026-03-01"),
+            window_weeks=4,
             **_zone_kwargs(),
         )
     assert set(result["regionID"].unique()) == {"m1", "m2"}
@@ -251,8 +263,13 @@ def test_downscale_unknown_parent_rows_dropped_in_warn_mode():
         # Default is now to raise (see test_downscale_guardrails); warn mode drops.
         preds = _make_parent_preds(["d1", "d2"], n_weeks=1)
         result = downscale_predictions(
-            preds, mapping, cases, pd.Timestamp("2026-03-01"), window_weeks=4,
-            on_missing_parents="warn", **_zone_kwargs(),
+            preds,
+            mapping,
+            cases,
+            pd.Timestamp("2026-03-01"),
+            window_weeks=4,
+            on_missing_parents="warn",
+            **_zone_kwargs(),
         )
     # Only d1's children appear; d2 rows are dropped
     assert "d2" not in result["regionID"].values
@@ -267,7 +284,11 @@ def test_downscale_preserves_metadata_columns():
         cases = _make_cases_df(["m1"])
         preds = _make_parent_preds(["d1"], n_weeks=1)
         result = downscale_predictions(
-            preds, mapping, cases, pd.Timestamp("2026-03-01"), window_weeks=4,
+            preds,
+            mapping,
+            cases,
+            pd.Timestamp("2026-03-01"),
+            window_weeks=4,
             **_zone_kwargs(),
         )
     assert result["thresholdMethod"].iloc[0] == "historical"
@@ -293,7 +314,11 @@ def test_downscale_empty_parent_preds_returns_empty_df():
             ]
         )
         result = downscale_predictions(
-            empty_preds, mapping, cases, pd.Timestamp("2026-03-01"), window_weeks=4,
+            empty_preds,
+            mapping,
+            cases,
+            pd.Timestamp("2026-03-01"),
+            window_weeks=4,
             **_zone_kwargs(),
         )
     assert list(result.columns) == _PREDICTION_COLS
@@ -330,7 +355,7 @@ def _make_run_dir(base: Path, run_id: str, with_predictions: bool = True) -> Pat
     results = base / run_id / "outputs"
     results.mkdir(parents=True)
     if with_predictions:
-        (results / f"Predictions_{run_id}.csv").write_text(
+        (results / "predictions.csv").write_text(
             "dateOfComputingPrediction\n2026-01-01\n"
         )
     return base / run_id
@@ -351,8 +376,8 @@ def test_resolve_latest_run_skips_dirs_without_predictions(tmp_path):
     assert _resolve_latest_run(tmp_path) == "run-with-preds"
 
 
-def test_resolve_latest_run_skips_downscaled_csvs(tmp_path):
-    # A dir that only has a downscaled CSV should not be picked as a parent run
+def test_resolve_latest_run_skips_downscaled_only_dirs(tmp_path):
+    # A dir that only has a downscaled CSV (no predictions.csv) should not be picked.
     results = tmp_path / "downscale-run" / "outputs"
     results.mkdir(parents=True)
     (results / "Predictions_downscaled_district_to_mandal_20260101.csv").write_text("x")
