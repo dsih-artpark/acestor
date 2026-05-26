@@ -305,14 +305,27 @@ def check_numeric_sanity(
     if child_preds is None or child_preds.empty:
         return
 
+    # AP parent CSVs carry one row per thresholdMethod, so (regionID, week) is NOT
+    # unique — conservation must be keyed by thresholdMethod too. Children are
+    # emitted once per parent row, so each (parent, week, method) group conserves to
+    # that row's prediction.
+    key = ["regionID", "startDatePredictedWeek", "thresholdMethod"]
+    if parent_preds.duplicated(key).any():
+        dup = parent_preds.loc[parent_preds.duplicated(key, keep=False), key]
+        raise ValueError(
+            f"check_numeric_sanity: parent predictions not unique on {key} — "
+            f"can't key conservation (add 'model' if multiple models share the CSV). "
+            f"Example dups: {dup.head(3).to_dict('records')}"
+        )
+
     child = child_preds.copy()
     child["_parent"] = child["regionID"].map(child_mapping)
-    csum = child.groupby(["_parent", "startDatePredictedWeek"])["prediction"].sum()
-    parent_lookup = parent_preds.set_index(["regionID", "startDatePredictedWeek"])[
-        "prediction"
-    ]
-    for (parent_id, week), got in csum.items():
-        expected = parent_lookup.get((parent_id, week))
+    csum = child.groupby(
+        ["_parent", "startDatePredictedWeek", "thresholdMethod"]
+    )["prediction"].sum()
+    parent_lookup = parent_preds.set_index(key)["prediction"]
+    for (parent_id, week, method), got in csum.items():
+        expected = parent_lookup.get((parent_id, week, method))
         if expected is None or pd.isna(expected):
             continue
         expected = float(expected)
@@ -320,7 +333,8 @@ def check_numeric_sanity(
         if abs(got - expected) > tol:
             raise ValueError(
                 f"check_numeric_sanity: conservation violated for parent {parent_id} "
-                f"week {week} — child sum {got:.6g} != parent {expected:.6g}"
+                f"week {week} method {method} — child sum {got:.6g} != "
+                f"parent {expected:.6g}"
             )
 
 
@@ -346,9 +360,12 @@ def downscale_diagnostics(
             "conservation_max_abs_err": 0.0,
         }
 
+    # Keyed by thresholdMethod (AP parent rows repeat per method; zones differ by method).
+    gkey = ["_parent", "startDatePredictedWeek", "thresholdMethod"]
+    pkey = ["regionID", "startDatePredictedWeek", "thresholdMethod"]
     child = child_preds.copy()
     child["_parent"] = child["regionID"].map(child_mapping)
-    grouped = child.groupby(["_parent", "startDatePredictedWeek"])
+    grouped = child.groupby(gkey)
 
     spread = grouped["prediction"].agg(lambda s: float(np.std(s.to_numpy(), ddof=0)))
     n_parents_uniform = int(
@@ -356,18 +373,14 @@ def downscale_diagnostics(
     )
 
     max_child_zone = grouped["predictionZone"].max()
-    parent_zone = parent_preds.set_index(["regionID", "startDatePredictedWeek"])[
-        "predictionZone"
-    ]
-    parent_pred = parent_preds.set_index(["regionID", "startDatePredictedWeek"])[
-        "prediction"
-    ]
+    parent_zone = parent_preds.set_index(pkey)["predictionZone"]
+    parent_pred = parent_preds.set_index(pkey)["prediction"]
     child_sum = grouped["prediction"].sum()
 
     below = above = match = 0
     max_cons_err = 0.0
-    for (parent_id, week), mcz in max_child_zone.items():
-        pz = parent_zone.get((parent_id, week))
+    for (parent_id, week, method), mcz in max_child_zone.items():
+        pz = parent_zone.get((parent_id, week, method))
         if pz is not None and not pd.isna(pz) and not pd.isna(mcz):
             if mcz < pz:
                 below += 1
@@ -375,10 +388,11 @@ def downscale_diagnostics(
                 above += 1
             else:
                 match += 1
-        pp = parent_pred.get((parent_id, week))
+        pp = parent_pred.get((parent_id, week, method))
         if pp is not None and not pd.isna(pp):
             max_cons_err = max(
-                max_cons_err, abs(float(child_sum[(parent_id, week)]) - float(pp))
+                max_cons_err,
+                abs(float(child_sum[(parent_id, week, method)]) - float(pp)),
             )
 
     return {

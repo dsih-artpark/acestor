@@ -281,3 +281,27 @@ def test_diagnostics_reports_parent_vs_child_risk():
     diag = downscale_diagnostics(parent, child, {"m1": "d1", "m2": "d1"})
     assert diag["n_weeks_children_below_parent"] == 1
     assert diag["n_weeks_children_above_parent"] == 0
+
+
+# ---------------------------------------------------------------------------
+# AP schema: parent CSV has one row per thresholdMethod, so (regionID,
+# startDatePredictedWeek) is NOT unique (PR #43 review blocker).
+# ---------------------------------------------------------------------------
+
+
+def test_downscale_handles_duplicate_thresholdmethod_rows():
+    mapping = {"m1": "d1", "m2": "d1"}
+    cases = _flat_history(["m1", "m2"], 5)  # equal -> 50/50 split
+    preds = pd.DataFrame(
+        [
+            _parent_row("d1", 100.0, 2, method="historical"),
+            _parent_row("d1", 100.0, 3, method="previousNweeks"),
+        ]
+    )  # same (regionID, week), two thresholdMethods
+    out = downscale_predictions(
+        preds, mapping, cases, pd.Timestamp("2026-03-01"), 4, **_zone_kwargs()
+    )
+    # children are emitted per method; each method's children conserve to the parent
+    for meth in ("historical", "previousNweeks"):
+        s = out.loc[out["thresholdMethod"] == meth, "prediction"].sum()
+        assert s == pytest.approx(100.0, abs=1e-9), meth
