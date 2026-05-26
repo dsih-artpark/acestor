@@ -1,1 +1,19 @@
-{# placeholder #}
+<section class="block risk-progression">
+  <h2>Risk progression by region</h2>
+  <table class="risk-list">
+    <thead>
+      <tr>
+        <th>Region</th>
+        {% for blk in weekly_blocks %}<th>{{ blk.week_label }}</th>{% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in risk_progression %}
+      <tr>
+        <td class="area">{{ r.regionID }}</td>
+        {% for z in r.zones %}<td class="zone-{{ z }}">{{ z }}</td>{% endfor %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
