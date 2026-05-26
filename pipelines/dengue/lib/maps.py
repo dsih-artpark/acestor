@@ -184,3 +184,29 @@ def gen_plot(
     fig.savefig(out_path, bbox_inches="tight")
     plt.close(fig)
     return out_path
+
+
+def render_hero_forecast(df: pd.DataFrame, *, out_path: str) -> str:
+    """Aggregate predictions across all regions per week, render a line chart per model.
+
+    Used as the report's hero image: one PNG, x-axis = startDatePredictedWeek,
+    y-axis = total predicted cases summed across regions, one line per model.
+    """
+    weekly = (
+        df.groupby(["model", "startDatePredictedWeek"])["prediction"]
+        .sum()
+        .reset_index()
+        .sort_values("startDatePredictedWeek")
+    )
+    fig, ax = plt.subplots(figsize=(8, 4), dpi=140)
+    for model, sub in weekly.groupby("model"):
+        ax.plot(
+            sub["startDatePredictedWeek"], sub["prediction"], marker="o", label=model
+        )
+    ax.set_xlabel("Week starting")
+    ax.set_ylabel("Total predicted cases")
+    ax.legend()
+    fig.autofmt_xdate()
+    fig.savefig(out_path, bbox_inches="tight")
+    plt.close(fig)
+    return out_path
