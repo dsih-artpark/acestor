@@ -1,0 +1,42 @@
+pipeline:
+  name: dengue_prep
+  title: "Dengue Data Prep — Odisha (block, cases only)"
+
+run:
+  run_date: ""
+
+data:
+  region_type: "block"
+
+  date_range:
+    start: "2016-01-01"
+
+  geojson:
+    base_path: "od_datasets/geojsons/geojsons_OD"
+
+  case_download:
+    enabled: true
+    source_path: "od_datasets/raw_case"
+
+  case_parse:
+    region_types:
+      - "block"
+    date_column: "Sample Collected Date"
+    # No lgd_code_column → acestor falls back to lat/lon spatial join
+    lat_column: "Latitude"
+    lon_column: "Longitude"
+    filters:
+      - column: "Confirmed Diagnosis"
+        values: ["Dengue"]
+
+  weather_download:
+    enabled: false   # no block-level weather; downscale uses parent (district) weather
+
+logging:
+  level: DEBUG
+
+storages:
+  artifacts:
+    kind: filesystem
+    filesystem:
+      base_path: "./artifacts/od_block_prep"

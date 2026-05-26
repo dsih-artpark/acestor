@@ -1,0 +1,22 @@
+pipeline:
+  name: dengue_downscale
+  title: "Dengue Downscale — Odisha District → Block"
+
+run:
+  source_run_id: "latest"
+
+downscale:
+  parent_level: district
+  child_level: block
+  window_weeks: 4
+  cases_csv: "prepared_data/block/cases_daily.csv"
+  geojson_base_path: "od_datasets/geojsons/geojsons_OD"
+
+storages:
+  artifacts:
+    kind: filesystem
+    filesystem:
+      base_path: "artifacts/od"
+
+logging:
+  level: INFO

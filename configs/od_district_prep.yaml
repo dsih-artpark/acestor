@@ -1,0 +1,45 @@
+pipeline:
+  name: dengue_prep
+  title: "Dengue Data Prep — Odisha (district)"
+
+run:
+  run_date: ""
+
+data:
+  region_type: "district"
+
+  date_range:
+    start: "2016-01-01"
+
+  geojson:
+    base_path: "od_datasets/geojsons/geojsons_OD"
+
+  case_download:
+    enabled: true
+    source_path: "od_datasets/raw_case"
+
+  case_parse:
+    region_types:
+      - "district"
+    date_column: "Sample Collected Date"
+    lgd_code_column: "District Code"
+    filters:
+      - column: "Confirmed Diagnosis"
+        values: ["Dengue"]
+
+  weather_download:
+    enabled: true
+    source_mode: "openmeteo"
+    source_path: "od_datasets/weather"
+    parsed_output_path: "od_datasets/weather"
+    temperature_unit: "kelvin"
+    precipitation_unit: "m"
+
+logging:
+  level: DEBUG
+
+storages:
+  artifacts:
+    kind: filesystem
+    filesystem:
+      base_path: "./artifacts/od_prep"
