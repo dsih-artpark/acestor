@@ -140,6 +140,80 @@ def test_weekly_blocks_rows_have_band_fields():
     assert "prediction" not in by_region["r_high"]
 
 
+def test_region_names_lookup():
+    """Passing region_names should populate regionName with title-cased name."""
+    df = pd.DataFrame(
+        {
+            "dateOfComputingPrediction": ["2026-05-21"],
+            "startDatePredictedWeek": ["2026-06-01"],
+            "regionID": ["district_511"],
+            "prediction": [5.0],
+            "predictionZone": [2],
+            "thresholdMethod": ["historical"],
+            "model": ["ensembleModel"],
+            "Mean": [2.5],
+            "StdDev": [1.1],
+            "Zero": [0.0],
+            "Inf": [float("inf")],
+            "T0.00": [2.5],
+            "T1.00": [3.6],
+            "T2.00": [4.7],
+            "recordDate": ["2026-05-25"],
+            "ISOWeek": [22],
+        }
+    )
+    ctx = build_brief_context(
+        predictions=df,
+        run_date="2026-05-21",
+        charts_relpath="charts",
+        is_downscale=False,
+        document_title="t",
+        region_names={"district_511": "Kurnool"},
+    )
+    rows = ctx["weekly_blocks"][0]["rows"]
+    assert rows[0]["regionName"] == "Kurnool"
+
+
+def test_weekly_blocks_rows_have_prediction_and_range_fields():
+    """Rows must include prediction_int, range_low, range_high."""
+    df = pd.DataFrame(
+        {
+            "dateOfComputingPrediction": ["2026-05-21"] * 2,
+            "startDatePredictedWeek": ["2026-06-01"] * 2,
+            "regionID": ["r_high", "r_mid"],
+            "prediction": [10.0, 5.0],
+            "predictionZone": [3, 2],
+            "thresholdMethod": ["historical"] * 2,
+            "model": ["ensembleModel"] * 2,
+            "Mean": [1.0] * 2,
+            "StdDev": [2.0] * 2,
+            "Zero": [0.0] * 2,
+            "Inf": [float("inf")] * 2,
+            "T0.00": [1.0] * 2,
+            "T1.00": [2.0] * 2,
+            "T2.00": [3.0] * 2,
+            "recordDate": ["2026-05-25"] * 2,
+            "ISOWeek": [22] * 2,
+        }
+    )
+    ctx = build_brief_context(
+        predictions=df,
+        run_date="2026-05-21",
+        charts_relpath="charts",
+        is_downscale=False,
+        document_title="t",
+    )
+    rows = ctx["weekly_blocks"][0]["rows"]
+    by_region = {r["regionID"]: r for r in rows}
+    assert "prediction_int" in by_region["r_high"]
+    assert "range_low" in by_region["r_high"]
+    assert "range_high" in by_region["r_high"]
+    # prediction=10, StdDev=2 → int=10, low=8, high=12
+    assert by_region["r_high"]["prediction_int"] == 10
+    assert by_region["r_high"]["range_low"] == 8
+    assert by_region["r_high"]["range_high"] == 12
+
+
 def test_weekly_blocks_have_pretty_label():
     """week_label_pretty should be formatted as 'DD Mon – DD Mon YYYY'."""
     ctx = build_brief_context(

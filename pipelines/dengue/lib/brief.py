@@ -6,6 +6,7 @@ HTML to disk. Replaces the LaTeX module pipelines/dengue/lib/report.py.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,23 @@ def _env() -> Environment:
     )
 
 
+def load_region_names(geojson_dir: Path) -> dict[str, str]:
+    """Return {region_id: name} from all geojsons under geojson_dir (or its subdirs)."""
+    names: dict[str, str] = {}
+    for p in Path(geojson_dir).rglob("*.geojson"):
+        try:
+            d = json.loads(p.read_text())
+            feat = d.get("features", [{}])[0]
+            props = feat.get("properties", {})
+            rid = props.get("region_id")
+            nm = props.get("name")
+            if rid and nm:
+                names[rid] = str(nm).title()  # KURNOOL → Kurnool
+        except Exception:
+            continue
+    return names
+
+
 def build_brief_context(
     *,
     predictions: pd.DataFrame,
@@ -30,12 +48,13 @@ def build_brief_context(
     is_downscale: bool,
     document_title: str,
     downscale_diagnostics: dict[str, Any] | None = None,
+    region_names: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     return {
         "document_title": document_title,
         "is_downscale": is_downscale,
         "hero_chart_relpath": f"{charts_relpath}/hero_forecast.png",
-        "weekly_blocks": _weekly_blocks(predictions, charts_relpath),
+        "weekly_blocks": _weekly_blocks(predictions, charts_relpath, region_names),
         "action_matrix": _action_matrix(),
         "run_date": run_date,
         "footer_meta": {"generated": run_date},
@@ -58,8 +77,13 @@ def _pretty_week_label(start: str) -> str:
     return f"{s.strftime('%d %b')} – {e.strftime('%d %b %Y')}"
 
 
-def _weekly_blocks(df: pd.DataFrame, charts_relpath: str) -> list[dict[str, Any]]:
+def _weekly_blocks(
+    df: pd.DataFrame,
+    charts_relpath: str,
+    region_names: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
     blocks: list[dict[str, Any]] = []
+    rn = region_names or {}
     weeks = sorted(df["startDatePredictedWeek"].unique())
     for i, wk in enumerate(weeks, start=1):
         sub = df[df["startDatePredictedWeek"] == wk]
@@ -68,11 +92,20 @@ def _weekly_blocks(df: pd.DataFrame, charts_relpath: str) -> list[dict[str, Any]
         for _, r in medium_plus.iterrows():
             z = int(r["predictionZone"])
             label, css = _ZONE_BAND.get(z, ("", "low"))
+            rid = r["regionID"]
             rows.append(
                 {
-                    "regionID": r["regionID"],
+                    "regionID": rid,
+                    "regionName": rn.get(rid, rid),
                     "band_text": label,
                     "band_class": css,
+                    "prediction_int": int(round(float(r["prediction"]))),
+                    "range_low": max(
+                        0, int(round(float(r["prediction"]) - float(r["StdDev"])))
+                    ),
+                    "range_high": int(
+                        round(float(r["prediction"]) + float(r["StdDev"]))
+                    ),
                 }
             )
         blocks.append(

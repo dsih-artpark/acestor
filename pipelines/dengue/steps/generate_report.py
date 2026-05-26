@@ -9,9 +9,14 @@ from typing import ClassVar
 import pandas as pd
 
 from acestor import BaseStep, PipelineContext
-from pipelines.dengue.configs import ReportConfig, _section
+from pipelines.dengue.configs import PreparedDataConfig, ReportConfig, _section
 from pipelines.dengue.lib import maps as maps_lib
-from pipelines.dengue.lib.brief import build_brief_context, render_brief
+from pipelines.dengue.lib.brief import (
+    build_brief_context,
+    load_region_names,
+    render_brief,
+)
+from pipelines.dengue.sources import filesystem as geojson_sources
 from pipelines.dengue.results import (
     CutoffDatesResult,
     MapsResult,
@@ -65,10 +70,50 @@ class GenerateReportStep(BaseStep[GenerateReportInputs, ReportResult]):
         charts_dir_fs = Path(context.artifact_fs_path("outputs/charts"))
         charts_dir_fs.mkdir(parents=True, exist_ok=True)
 
+        # Load observed cases CSV for hero chart enrichment.
+        observed_df: pd.DataFrame | None = None
+        try:
+            pd_cfg = PreparedDataConfig.from_raw(
+                _section(context.config, "data.prepared_data")
+            )
+            region_type = inputs.train_and_predict.region_type or pd_cfg.region_type
+            cases_csv_path = Path(pd_cfg.base_dir) / region_type / "cases_daily.csv"
+            # Try artifact-relative path first, then as absolute/cwd-relative.
+            cases_fs_path = Path(context.artifact_fs_path("..")) / cases_csv_path
+            if not cases_fs_path.exists():
+                cases_fs_path = Path(pd_cfg.base_dir) / region_type / "cases_daily.csv"
+            if cases_fs_path.exists():
+                observed_df = pd.read_csv(cases_fs_path, parse_dates=["date"])
+            else:
+                context.log.warning(
+                    "generate_report: cases_daily.csv not found at %s — hero chart will show forecast only",
+                    cases_fs_path,
+                )
+        except Exception as exc:
+            context.log.warning(
+                "generate_report: failed to load observed cases: %s", exc
+            )
+
+        # Load region names from geojsons.
+        region_names: dict[str, str] = {}
+        try:
+            geojson_base = geojson_sources.get_geojson_base_dir()
+            if geojson_base:
+                region_names = load_region_names(Path(geojson_base))
+        except Exception as exc:
+            context.log.warning("generate_report: failed to load region names: %s", exc)
+
+        run_date_ts = pd.Timestamp(inputs.identify_cutoff_dates.run_date)
+
         # Hero forecast chart (uses the full df, not just primary — line per model).
         hero_path = charts_dir_fs / "hero_forecast.png"
         if not df.empty:
-            maps_lib.render_hero_forecast(df, out_path=str(hero_path))
+            maps_lib.render_hero_forecast(
+                df,
+                observed_df=observed_df,
+                run_date=run_date_ts,
+                out_path=str(hero_path),
+            )
 
         # Copy one per-week map from outputs/maps/ → outputs/charts/risk_map_wN.png.
         plots_rel = _section(context.config, "maps").get("output_dir", "plots")
@@ -108,6 +153,7 @@ class GenerateReportStep(BaseStep[GenerateReportInputs, ReportResult]):
             charts_relpath="charts",
             is_downscale=False,
             document_title=cfg.document_title,
+            region_names=region_names or None,
         )
         html = render_brief(ctx)
 

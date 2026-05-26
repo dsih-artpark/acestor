@@ -195,27 +195,222 @@ def gen_plot(
     return out_path
 
 
-def render_hero_forecast(df: pd.DataFrame, *, out_path: str) -> str:
-    """Aggregate predictions across all regions per week, render a line chart per model.
+def render_hero_forecast(
+    predictions_df: pd.DataFrame,
+    *,
+    observed_df: "pd.DataFrame | None" = None,
+    run_date: "pd.Timestamp | None" = None,
+    out_path: str,
+    region_label: str = "Andhra Pradesh",
+) -> str:
+    """Rich hero forecast chart: observed + historical average + forecast with confidence band.
 
-    Used as the report's hero image: one PNG, x-axis = startDatePredictedWeek,
-    y-axis = total predicted cases summed across regions, one line per model.
+    Falls back gracefully if observed_df is None/empty (plots forecast only).
+    If predictions_df is empty, renders a placeholder figure.
     """
-    weekly = (
-        df.groupby(["model", "startDatePredictedWeek"])["prediction"]
-        .sum()
-        .reset_index()
-        .sort_values("startDatePredictedWeek")
-    )
-    fig, ax = plt.subplots(figsize=(8, 4), dpi=140)
-    for model, sub in weekly.groupby("model"):
-        ax.plot(
-            sub["startDatePredictedWeek"], sub["prediction"], marker="o", label=model
+    import numpy as np
+
+    fig, ax = plt.subplots(figsize=(10, 5), dpi=140)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.grid(axis="y", color="#e0e0e0", linewidth=0.8, zorder=0)
+
+    if predictions_df.empty:
+        ax.text(
+            0.5,
+            0.5,
+            "No forecast data available",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            fontsize=14,
+            color="#888",
         )
-    ax.set_xlabel("Week starting")
-    ax.set_ylabel("Total predicted cases")
-    ax.legend()
+        fig.savefig(out_path, bbox_inches="tight")
+        plt.close(fig)
+        return out_path
+
+    # ── determine run_date ────────────────────────────────────────────────────
+    if run_date is None:
+        run_date = pd.Timestamp.today()
+
+    # ── select ensemble model rows, single thresholdMethod ───────────────────
+    ens_col = "ensembleModel"
+    pred_col = "thresholdMethod"
+    has_ensemble = (
+        "model" in predictions_df.columns and predictions_df["model"].eq(ens_col).any()
+    )
+    fc_df = (
+        predictions_df[predictions_df["model"] == ens_col].copy()
+        if has_ensemble
+        else predictions_df.copy()
+    )
+
+    if pred_col in fc_df.columns:
+        if "historical" in fc_df[pred_col].values:
+            fc_df = fc_df[fc_df[pred_col] == "historical"]
+        else:
+            fc_df = fc_df[fc_df[pred_col] == fc_df[pred_col].iloc[0]]
+
+    fc_df["_week_start"] = pd.to_datetime(fc_df["startDatePredictedWeek"])
+    weekly_fc = (
+        fc_df.groupby("_week_start")
+        .agg(
+            prediction=("prediction", "sum"),
+            std_band=("StdDev", lambda x: float(np.sqrt((x**2).sum()))),
+        )
+        .reset_index()
+        .sort_values("_week_start")
+    )
+
+    first_pred_date = weekly_fc["_week_start"].iloc[0]
+    last_pred_date = weekly_fc["_week_start"].iloc[-1]
+
+    # ── observed weekly cases ─────────────────────────────────────────────────
+    has_observed = (
+        observed_df is not None
+        and not observed_df.empty
+        and "date" in observed_df.columns
+        and "case_count" in observed_df.columns
+    )
+    obs_legend_label = f"Observed ({run_date.year} YTD)"
+    hist_years: list[int] = []
+    ytd_total = 0
+
+    if has_observed:
+        obs = observed_df.copy()
+        obs["date"] = pd.to_datetime(obs["date"])
+        obs["_week_start"] = obs["date"] - pd.to_timedelta(
+            obs["date"].dt.dayofweek, unit="D"
+        )
+        state_weekly = obs.groupby(["_week_start"])["case_count"].sum().reset_index()
+        state_weekly["year"] = state_weekly["_week_start"].dt.year
+        state_weekly["iso_week"] = (
+            state_weekly["_week_start"].dt.isocalendar().week.astype(int)
+        )
+
+        current_year = run_date.year
+        obs_current = state_weekly[
+            (state_weekly["year"] == current_year)
+            & (state_weekly["_week_start"] <= run_date)
+        ].sort_values("_week_start")
+
+        ytd_total = int(obs_current["case_count"].sum())
+        obs_legend_label = f"Observed ({current_year} YTD)"
+
+        # historical average per ISO week (years < current_year)
+        hist_df = state_weekly[state_weekly["year"] < current_year]
+        hist_years = sorted(hist_df["year"].unique().tolist())
+        hist_avg = hist_df.groupby("iso_week")["case_count"].mean().reset_index()
+
+        if not obs_current.empty:
+            ax.plot(
+                obs_current["_week_start"],
+                obs_current["case_count"],
+                color="#1f77b4",
+                marker="o",
+                linewidth=2,
+                label=obs_legend_label,
+                zorder=3,
+            )
+            for _, row in obs_current.iterrows():
+                ax.annotate(
+                    str(int(row["case_count"])),
+                    xy=(row["_week_start"], row["case_count"]),
+                    xytext=(0, 6),
+                    textcoords="offset points",
+                    ha="center",
+                    fontsize=7,
+                    color="#1f77b4",
+                )
+
+        # plot historical average mapped onto current year's week-start dates
+        if not hist_avg.empty and not obs_current.empty:
+            # build a mapping: iso_week → mean
+            hist_map = dict(zip(hist_avg["iso_week"], hist_avg["case_count"]))
+            hist_plot = obs_current.copy()
+            hist_plot["hist_val"] = hist_plot["iso_week"].map(hist_map)
+            hist_plot = hist_plot.dropna(subset=["hist_val"])
+            if not hist_plot.empty:
+                hist_label_years = (
+                    f"{min(hist_years)}–{max(hist_years)}"
+                    if len(hist_years) > 1
+                    else str(hist_years[0])
+                )
+                ax.plot(
+                    hist_plot["_week_start"],
+                    hist_plot["hist_val"],
+                    color="#888888",
+                    linestyle=":",
+                    linewidth=1.8,
+                    label=f"Historical avg ({hist_label_years})",
+                    zorder=2,
+                )
+
+    # ── forecast line + confidence band ──────────────────────────────────────
+    ax.plot(
+        weekly_fc["_week_start"],
+        weekly_fc["prediction"],
+        color="#d62728",
+        marker="o",
+        linewidth=2,
+        label="Forecast",
+        zorder=3,
+    )
+    ax.fill_between(
+        weekly_fc["_week_start"],
+        (weekly_fc["prediction"] - weekly_fc["std_band"]).clip(lower=0),
+        weekly_fc["prediction"] + weekly_fc["std_band"],
+        color="#d62728",
+        alpha=0.15,
+        zorder=1,
+    )
+    for _, row in weekly_fc.iterrows():
+        ax.annotate(
+            str(int(round(row["prediction"]))),
+            xy=(row["_week_start"], row["prediction"]),
+            xytext=(0, 6),
+            textcoords="offset points",
+            ha="center",
+            fontsize=7,
+            color="#d62728",
+        )
+
+    # ── vertical separator at run_date ───────────────────────────────────────
+    ax.axvline(run_date, color="#999999", linestyle="--", linewidth=1.2, zorder=2)
+
+    # ── annotations ──────────────────────────────────────────────────────────
+    if has_observed and ytd_total:
+        ax.text(
+            0.01,
+            0.97,
+            f"{run_date.year} YTD total: {ytd_total:,} cases",
+            transform=ax.transAxes,
+            va="top",
+            ha="left",
+            fontsize=9,
+            color="#1f77b4",
+        )
+
+    # forecast horizon callout — placed near top of forecast region
+    fc_horizon_label = f"forecast horizon ({first_pred_date.strftime('%d %b')} – {last_pred_date.strftime('%d %b')})"
+    ax.text(
+        first_pred_date + (last_pred_date - first_pred_date) / 2,
+        ax.get_ylim()[1] * 0.97,
+        fc_horizon_label,
+        ha="center",
+        va="top",
+        fontsize=8,
+        color="#d62728",
+        style="italic",
+    )
+
+    # ── labels / legend / formatting ─────────────────────────────────────────
+    ax.set_xlabel("Week starting", fontsize=10)
+    ax.set_ylabel("Cases", fontsize=10)
+    ax.legend(fontsize=9, framealpha=0.9)
     fig.autofmt_xdate()
+    fig.tight_layout()
     fig.savefig(out_path, bbox_inches="tight")
     plt.close(fig)
     return out_path
