@@ -325,7 +325,9 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
         if cfg.output == "per_model":
             # Copy primary model's CSV to outputs/predictions.csv so there is always
             # one canonical file at the root for officials / the HTML brief.
-            primary_text = context.artifacts.read_text(written[primary_model])
+            primary_text = context.artifacts.read_text(
+                context.artifact_path(written[primary_model])
+            )
             canonical_dest = context.artifact_path(paths_map["_canonical_primary"])
             context.artifacts.write_text(primary_text, canonical_dest)
             written["_canonical_primary"] = paths_map["_canonical_primary"]
