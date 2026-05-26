@@ -10,14 +10,13 @@
       <div>
         {% if blk.rows %}
         <table class="risk-list">
-          <thead><tr><th>{{ region_label | title }}</th><th>Band</th><th>Predicted</th><th>Range</th></tr></thead>
+          <thead><tr><th>{{ region_label | title }}</th><th>Band</th><th>Predicted</th></tr></thead>
           <tbody>
             {% for row in blk.rows %}
             <tr>
               <td class="area">{{ row.regionName }}</td>
               <td><span class="band-chip {{ row.band_class }}">{{ row.band_text }}</span></td>
               <td>{{ row.prediction_int }}</td>
-              <td>{{ row.range_low }}–{{ row.range_high }}</td>
             </tr>
             {% endfor %}
           </tbody>

@@ -106,12 +106,6 @@ def _weekly_blocks(
                     "band_text": label,
                     "band_class": css,
                     "prediction_int": int(round(float(r["prediction"]))),
-                    "range_low": max(
-                        0, int(round(float(r["prediction"]) - float(r["StdDev"])))
-                    ),
-                    "range_high": int(
-                        round(float(r["prediction"]) + float(r["StdDev"]))
-                    ),
                 }
             )
         blocks.append(

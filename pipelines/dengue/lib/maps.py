@@ -253,15 +253,21 @@ def render_hero_forecast(
             fc_df = fc_df[fc_df[pred_col] == fc_df[pred_col].iloc[0]]
 
     fc_df["_week_start"] = pd.to_datetime(fc_df["startDatePredictedWeek"])
+    has_std = "StdDev" in fc_df.columns
+    agg_spec: dict = {"prediction": ("prediction", "sum")}
+    if has_std:
+        agg_spec["std_band"] = (
+            "StdDev",
+            lambda x: float(np.sqrt((x**2).sum())),
+        )
     weekly_fc = (
         fc_df.groupby("_week_start")
-        .agg(
-            prediction=("prediction", "sum"),
-            std_band=("StdDev", lambda x: float(np.sqrt((x**2).sum()))),
-        )
+        .agg(**agg_spec)
         .reset_index()
         .sort_values("_week_start")
     )
+    if not has_std:
+        weekly_fc["std_band"] = 0.0
 
     first_pred_date = weekly_fc["_week_start"].iloc[0]
     last_pred_date = weekly_fc["_week_start"].iloc[-1]
