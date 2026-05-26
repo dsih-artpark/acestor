@@ -8,6 +8,9 @@ run:
 data:
   region_type: "district"
 
+  prepared_data:
+    base_dir: "ap_datasets/prepared_data"
+
   date_range:
     start: "2021-09-01"
     # end: "2026-04-10"

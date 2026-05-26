@@ -7,7 +7,7 @@ run:
 
 data:
   prepared_data:
-    base_dir: "prepared_data"
+    base_dir: "od_datasets/prepared_data"
     region_type: "district"
 
   case_parse:

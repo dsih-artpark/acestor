@@ -7,7 +7,7 @@ run:
 
 data:
   prepared_data:          # defaults: base_dir="prepared_data", region_type="district"
-    base_dir: "prepared_data"
+    base_dir: "ap_datasets/prepared_data"
     region_type: "district"
 
   geojson:
