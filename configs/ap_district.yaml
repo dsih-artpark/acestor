@@ -7,7 +7,7 @@ run:
 
 data:
   prepared_data:
-    base_dir: "prepared_data"     # written by dengue_prep pipeline (or placed manually)
+    base_dir: "ap_datasets/prepared_data"     # written by dengue_prep pipeline (or placed manually)
     region_type: "district"
 
   case_parse:
