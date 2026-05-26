@@ -9,6 +9,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from pipelines.dengue.lib.thresholds import ThresholdContext
 from pipelines.dengue_downscale.configs import DownscaleConfig, DownscaleRunConfig
 from pipelines.dengue_downscale.steps.load_predictions import _resolve_latest_run
 from pipelines.dengue_downscale.lib.downscale import (
@@ -17,6 +18,18 @@ from pipelines.dengue_downscale.lib.downscale import (
     compute_shares,
     downscale_predictions,
 )
+
+
+def _zone_kwargs():
+    """Config-driven zone params (as the step supplies them from YAML)."""
+    return dict(
+        list_alpha=[1.0, 2.0],
+        classification_method="who",
+        ctx_by_method={
+            m: ThresholdContext()
+            for m in ("historical", "prev_nweeks", "weighted_baseline")
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -193,7 +206,8 @@ def test_downscale_output_schema():
         cases = _make_cases_df(["m1", "m2"])
         preds = _make_parent_preds(["d1"])
         result = downscale_predictions(
-            preds, mapping, cases, pd.Timestamp("2026-03-01"), window_weeks=4
+            preds, mapping, cases, pd.Timestamp("2026-03-01"), window_weeks=4,
+            **_zone_kwargs(),
         )
     assert list(result.columns) == _PREDICTION_COLS
 
@@ -206,7 +220,8 @@ def test_downscale_child_predictions_sum_to_parent():
         cases = _make_cases_df(["m1", "m2"])
         preds = _make_parent_preds(["d1"], n_weeks=1)
         result = downscale_predictions(
-            preds, mapping, cases, pd.Timestamp("2026-03-01"), window_weeks=4
+            preds, mapping, cases, pd.Timestamp("2026-03-01"), window_weeks=4,
+            **_zone_kwargs(),
         )
     # child predictions for one parent week must sum to parent prediction (100.0)
     assert pytest.approx(result["prediction"].sum(), abs=1e-8) == 100.0
@@ -220,21 +235,24 @@ def test_downscale_regionids_are_child_ids():
         cases = _make_cases_df(["m1", "m2"])
         preds = _make_parent_preds(["d1"])
         result = downscale_predictions(
-            preds, mapping, cases, pd.Timestamp("2026-03-01"), window_weeks=4
+            preds, mapping, cases, pd.Timestamp("2026-03-01"), window_weeks=4,
+            **_zone_kwargs(),
         )
     assert set(result["regionID"].unique()) == {"m1", "m2"}
 
 
-def test_downscale_unknown_parent_rows_dropped():
+def test_downscale_unknown_parent_rows_dropped_in_warn_mode():
     with tempfile.TemporaryDirectory() as tmp:
         geojson_dir = Path(tmp)
         _write_geojsons(geojson_dir, [("m1", "d1")])
         mapping = build_parent_child_mapping(geojson_dir)
         cases = _make_cases_df(["m1"])
-        # d2 is in predictions but has no children in geojson mapping
+        # d2 is in predictions but has no children in geojson mapping.
+        # Default is now to raise (see test_downscale_guardrails); warn mode drops.
         preds = _make_parent_preds(["d1", "d2"], n_weeks=1)
         result = downscale_predictions(
-            preds, mapping, cases, pd.Timestamp("2026-03-01"), window_weeks=4
+            preds, mapping, cases, pd.Timestamp("2026-03-01"), window_weeks=4,
+            on_missing_parents="warn", **_zone_kwargs(),
         )
     # Only d1's children appear; d2 rows are dropped
     assert "d2" not in result["regionID"].values
@@ -249,7 +267,8 @@ def test_downscale_preserves_metadata_columns():
         cases = _make_cases_df(["m1"])
         preds = _make_parent_preds(["d1"], n_weeks=1)
         result = downscale_predictions(
-            preds, mapping, cases, pd.Timestamp("2026-03-01"), window_weeks=4
+            preds, mapping, cases, pd.Timestamp("2026-03-01"), window_weeks=4,
+            **_zone_kwargs(),
         )
     assert result["thresholdMethod"].iloc[0] == "historical"
     assert result["model"].iloc[0] == "ensembleModel"
@@ -274,7 +293,8 @@ def test_downscale_empty_parent_preds_returns_empty_df():
             ]
         )
         result = downscale_predictions(
-            empty_preds, mapping, cases, pd.Timestamp("2026-03-01"), window_weeks=4
+            empty_preds, mapping, cases, pd.Timestamp("2026-03-01"), window_weeks=4,
+            **_zone_kwargs(),
         )
     assert list(result.columns) == _PREDICTION_COLS
     assert len(result) == 0
