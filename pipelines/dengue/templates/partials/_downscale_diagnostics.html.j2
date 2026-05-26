@@ -1,9 +1,9 @@
 <section class="block downscale-diagnostics">
   <h2>Downscale diagnostics</h2>
   <div class="subhead">
-    Sanity checks on how parent (district) predictions were disaggregated to
-    children. A high zone-0 count or many uniform-split parents means child
-    zone classification is largely not data-driven — see acestor issue #49.
+    Sanity checks on how parent ({{ parent_region_label }}) predictions were
+    disaggregated to children. A high zone-0 count or many uniform-split parents
+    means child zone classification is largely not data-driven — see acestor issue #49.
   </div>
   <ul>
     <li>Conservation max abs err: {{ "%.3g"|format(downscale_diagnostics.conservation_max_abs_err or 0.0) }}</li>

@@ -1,7 +1,7 @@
-{# Reference layout: one block per predicted week, map left + Medium+ districts table right. #}
+{# Reference layout: one block per predicted week, map left + Medium+ regions table right. #}
 <section class="block weekly-blocks">
-  <h2>4-week district risk progression</h2>
-  <div class="subhead">Map + district list for each forecast week. Districts at Medium or above are listed.</div>
+  <h2>4-week {{ region_label }} risk progression</h2>
+  <div class="subhead">Map + {{ region_label }} list for each forecast week. {{ region_label_plural | title }} at Medium or above are listed.</div>
   {% for blk in weekly_blocks %}
   <div class="weekly-block">
     <h3 class="weekly-label">{{ blk.week_label_pretty }}</h3>
@@ -10,7 +10,7 @@
       <div>
         {% if blk.rows %}
         <table class="risk-list">
-          <thead><tr><th>District</th><th>Band</th><th>Predicted</th><th>Range</th></tr></thead>
+          <thead><tr><th>{{ region_label | title }}</th><th>Band</th><th>Predicted</th><th>Range</th></tr></thead>
           <tbody>
             {% for row in blk.rows %}
             <tr>
@@ -23,7 +23,7 @@
           </tbody>
         </table>
         {% else %}
-        <p class="muted">No Medium+ districts this week.</p>
+        <p class="muted">No Medium+ {{ region_label_plural }} this week.</p>
         {% endif %}
       </div>
     </div>

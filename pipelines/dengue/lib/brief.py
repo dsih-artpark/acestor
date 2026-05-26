@@ -47,9 +47,12 @@ def build_brief_context(
     charts_relpath: str,
     is_downscale: bool,
     document_title: str,
+    region_type: str = "district",
+    parent_region_type: str = "district",
     downscale_diagnostics: dict[str, Any] | None = None,
     region_names: dict[str, str] | None = None,
 ) -> dict[str, Any]:
+    region_label = region_type.replace("_", " ")
     return {
         "document_title": document_title,
         "is_downscale": is_downscale,
@@ -59,6 +62,9 @@ def build_brief_context(
         "run_date": run_date,
         "footer_meta": {"generated": run_date},
         "downscale_diagnostics": downscale_diagnostics or {},
+        "region_label": region_label,  # "district" / "mandal" / "block"
+        "region_label_plural": f"{region_label}s",  # "districts" / "mandals" / "blocks"
+        "parent_region_label": parent_region_type.replace("_", " "),
     }
 
 

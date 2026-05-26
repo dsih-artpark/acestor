@@ -11,6 +11,7 @@ from acestor import BaseStep, PipelineContext
 from pipelines.dengue.configs import ReportConfig, _section
 from pipelines.dengue.lib import maps as maps_lib
 from pipelines.dengue.lib.brief import build_brief_context, render_brief
+from pipelines.dengue_downscale.configs import DownscaleConfig
 from pipelines.dengue_downscale.results import DownscaleBriefResult, DownscaleResult
 
 
@@ -82,12 +83,15 @@ class GenerateDownscaleBriefStep(
             "n_total": int(len(df)),
         }
 
+        ds_cfg = DownscaleConfig.from_raw(context.config.get("downscale") or {})
         ctx = build_brief_context(
             predictions=report_df,
             run_date=str(pd.Timestamp.now().date()),
             charts_relpath="charts",
             is_downscale=True,
             document_title=report_cfg.document_title,
+            region_type=ds_cfg.child_level,
+            parent_region_type=ds_cfg.parent_level,
             downscale_diagnostics=diag,
         )
         html = render_brief(ctx)

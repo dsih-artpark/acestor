@@ -153,6 +153,7 @@ class GenerateReportStep(BaseStep[GenerateReportInputs, ReportResult]):
             charts_relpath="charts",
             is_downscale=False,
             document_title=cfg.document_title,
+            region_type=inputs.train_and_predict.region_type,
             region_names=region_names or None,
         )
         html = render_brief(ctx)
