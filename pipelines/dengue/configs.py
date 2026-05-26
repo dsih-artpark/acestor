@@ -621,6 +621,7 @@ class ReportConfig:
     primary: (
         str  # which prediction CSV feeds maps + report; "ensemble" or any model key
     )
+    threshold_method_for_report: str = "historical"
 
     @classmethod
     def from_raw(
@@ -647,6 +648,7 @@ class ReportConfig:
 
         prefix = str(raw.get("bundle_prefix") or "").strip() or "Report"
         primary = str(raw.get("primary") or "").strip() or "ensemble"
+        tmr = str(raw.get("threshold_method_for_report") or "").strip() or "historical"
 
         return cls(
             output_dir=str(raw.get("output_dir", "reports")),
@@ -656,4 +658,5 @@ class ReportConfig:
             caption_secondary=secondary,
             bundle_prefix=prefix,
             primary=primary,
+            threshold_method_for_report=tmr,
         )

@@ -95,13 +95,16 @@ class MapsResult:
 
 @dataclass(frozen=True)
 class ReportResult:
-    """``report_path`` is the ``rep_dict`` JSON storage key.
+    """HTML brief at ``report_path`` (.html); ``charts_dir`` holds the embedded PNGs.
 
-    ``tex_path`` / ``latex_bundle_zip_path`` are set when those artifacts are emitted.
-    ``pdf_path`` / ``maps_zip_path`` are filesystem paths set when those files are produced.
+    Legacy fields (``pdf_path``, ``tex_path``, ``latex_bundle_zip_path``,
+    ``maps_zip_path``) remain as Optional defaults for backward compatibility
+    with consumers (``send_report``); they are set to None by the new step
+    and will be cleaned up in a follow-up task.
     """
 
     report_path: str
+    charts_dir: str | None = None
     pdf_path: str | None = None
     maps_zip_path: str | None = None
     tex_path: str | None = None

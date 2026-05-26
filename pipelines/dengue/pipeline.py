@@ -103,7 +103,7 @@ def build_pipeline(config: PipelineConfig) -> PipelineDAG:
     combine_predictions >> assess_thresholds
 
     [assess_thresholds, combine_predictions] >> generate_maps
-    [assess_thresholds, generate_maps, identify_cutoff_dates] >> generate_report
+    [train_and_predict, generate_maps, identify_cutoff_dates] >> generate_report
     generate_report >> send_report
 
     return PipelineDAG.from_steps(
