@@ -50,7 +50,6 @@ cutoff:
 
 thresholds:
   region_type: "district"
-  classification_method: icmr      # AP default: ICMR quartiles (cross-sectional, robust to sparse history)
   n_weeks: 4
   historical_n_years: 4
   excluded_years: []
