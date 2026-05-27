@@ -1,0 +1,13 @@
+<section class="block action-matrix-block">
+  <h2>What to do at each risk level</h2>
+  <table class="action-matrix">
+    <tbody>
+      {% for r in action_matrix %}
+      <tr>
+        <td class="zone-cell"><span class="band-chip {{ r.band_class }}">{{ r.label }}</span></td>
+        <td>{{ r.action }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>

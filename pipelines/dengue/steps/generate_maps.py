@@ -11,8 +11,8 @@ from pipelines.dengue.configs import MapsConfig, _section
 from pipelines.dengue.lib import maps
 from pipelines.dengue.sources import filesystem as geojson_sources
 from pipelines.dengue.results import (
-    CombinedPredictionsResult,
     MapsResult,
+    PredictionResult,
     ThresholdAssessmentResult,
 )
 
@@ -20,7 +20,7 @@ from pipelines.dengue.results import (
 @dataclass(frozen=True)
 class GenerateMapsInputs:
     assess_thresholds: ThresholdAssessmentResult
-    combine_predictions: CombinedPredictionsResult
+    train_and_predict: PredictionResult
 
 
 class GenerateMapsStep(BaseStep[GenerateMapsInputs, MapsResult]):
@@ -35,7 +35,7 @@ class GenerateMapsStep(BaseStep[GenerateMapsInputs, MapsResult]):
         ).strip()
 
         pred_csv = context.artifacts.read_text(
-            inputs.combine_predictions.combined_csv_path
+            inputs.train_and_predict.predictions_csv_path
         )
         df = pd.read_csv(io.StringIO(pred_csv))
 

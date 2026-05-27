@@ -79,11 +79,6 @@ class PredictionResult:
 
 
 @dataclass(frozen=True)
-class CombinedPredictionsResult:
-    combined_csv_path: str
-
-
-@dataclass(frozen=True)
 class ThresholdAssessmentResult:
     best_method_by_region: dict[str, str]  # {region_type: csv_path}
 
@@ -95,17 +90,10 @@ class MapsResult:
 
 @dataclass(frozen=True)
 class ReportResult:
-    """``report_path`` is the ``rep_dict`` JSON storage key.
-
-    ``tex_path`` / ``latex_bundle_zip_path`` are set when those artifacts are emitted.
-    ``pdf_path`` / ``maps_zip_path`` are filesystem paths set when those files are produced.
-    """
+    """HTML brief at ``report_path`` (.html); ``charts_dir`` holds the embedded PNGs."""
 
     report_path: str
-    pdf_path: str | None = None
-    maps_zip_path: str | None = None
-    tex_path: str | None = None
-    latex_bundle_zip_path: str | None = None
+    charts_dir: str | None = None
 
 
 @dataclass(frozen=True)

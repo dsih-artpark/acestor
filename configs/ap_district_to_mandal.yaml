@@ -11,7 +11,7 @@ downscale:
   parent_level: district    # singular — matches region_type convention
   child_level: mandal       # singular — matches region_type convention
   window_weeks: 4           # how many recent weeks of cases to use for share computation
-  cases_csv: "prepared_data/mandal/cases_daily.csv"  # child-level daily case counts
+  cases_csv: "ap_datasets/prepared_data/mandal/cases_daily.csv"  # child-level daily case counts
   geojson_base_path: "ap_datasets/geojsons/geojsons_AP"
 
 # Child (mandal) risk-zone re-derivation. Mirror the parent dengue run's thresholds
@@ -22,7 +22,7 @@ downscale:
 thresholds:
   region_type: mandal
   list_alpha: [1.0, 2.0]             # risk zone bands: T = Mean + alpha*StdDev
-  classification_method: who          # who (default) | icmr
+  classification_method: icmr          # who (default) | icmr
   methods: [historical, prev_nweeks, weighted_baseline]
   method_configs:
     prev_nweeks:

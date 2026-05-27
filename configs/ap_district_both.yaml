@@ -7,7 +7,7 @@ run:
 
 data:
   prepared_data:
-    base_dir: "prepared_data"
+    base_dir: "ap_datasets/prepared_data"
     region_type: "district"
 
   case_parse:
@@ -86,9 +86,6 @@ maps:
 
 report:
   output_dir: "outputs/report"
-  compile_pdf: true
-  caption_primary: "AP districts"
-  caption_secondary: ""
   primary: ensemble
 
 report_distribution:

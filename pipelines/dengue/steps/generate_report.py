@@ -1,31 +1,42 @@
 from __future__ import annotations
 
 import io
-import json
+import shutil
 from dataclasses import dataclass
+from pathlib import Path
 from typing import ClassVar
 
 import pandas as pd
 
 from acestor import BaseStep, PipelineContext
-from pipelines.dengue.configs import ReportConfig, _section
-from pipelines.dengue.lib import report as report_lib
+from pipelines.dengue.configs import PreparedDataConfig, ReportConfig, _section
+from pipelines.dengue.lib import maps as maps_lib
+from pipelines.dengue.lib.brief import (
+    build_brief_context,
+    compute_parent_lookup,
+    load_child_geojson_combined,
+    load_region_names,
+    render_brief,
+)
+from pipelines.dengue.sources import filesystem as geojson_sources
 from pipelines.dengue.results import (
     CutoffDatesResult,
     MapsResult,
+    PredictionResult,
     ReportResult,
-    ThresholdAssessmentResult,
 )
 
 
 @dataclass(frozen=True)
 class GenerateReportInputs:
-    assess_thresholds: ThresholdAssessmentResult
+    train_and_predict: PredictionResult
     generate_maps: MapsResult
     identify_cutoff_dates: CutoffDatesResult
 
 
 class GenerateReportStep(BaseStep[GenerateReportInputs, ReportResult]):
+    """Render the HTML brief replacing the LaTeX report."""
+
     input_type: ClassVar[type] = GenerateReportInputs
 
     def run(
@@ -35,204 +46,168 @@ class GenerateReportStep(BaseStep[GenerateReportInputs, ReportResult]):
             _section(context.config, "report"),
             pipeline=_section(context.config, "pipeline"),
         )
-        maps_raw = _section(context.config, "maps")
-        plots_rel = maps_raw.get("output_dir", "plots")
-        data_raw = _section(context.config, "data")
-        case_parse = data_raw.get("case_parse") or {}
-        epi_start = (
-            str(case_parse.get("date_start", "2021-11-09")).strip() or "2021-11-09"
+
+        # Read predictions CSV (path written by TrainAndPredictStep — schema agnostic to filename).
+        pred_text = context.artifacts.read_text(
+            inputs.train_and_predict.predictions_csv_path
         )
+        df = pd.read_csv(io.StringIO(pred_text))
 
-        # Map the first two detected region types to the primary/secondary report slots.
-        regions = list(inputs.assess_thresholds.best_method_by_region.keys())
-        primary_region = regions[0] if regions else None
-        secondary_region = regions[1] if len(regions) > 1 else None
+        primary_model = maps_lib.MODEL_FULL_NAME.get(cfg.primary, cfg.primary)
+        thresh_method = cfg.threshold_method_for_report
 
-        def _read_best(region: str | None) -> pd.DataFrame:
-            if region is None:
-                return pd.DataFrame()
-            csv_text = context.artifacts.read_text(
-                inputs.assess_thresholds.best_method_by_region[region]
-            )
-            return (
-                pd.read_csv(io.StringIO(csv_text))
-                if csv_text.strip()
-                else pd.DataFrame()
-            )
+        report_df = df[
+            (df["model"] == primary_model) & (df["thresholdMethod"] == thresh_method)
+        ].copy()
 
-        best_corp = _read_best(primary_region)
-        best_zone = _read_best(secondary_region)
-
-        co = inputs.identify_cutoff_dates
-        ref_date = pd.Timestamp(co.run_date).normalize()
-        context.log.info(
-            "generate_report: ref_date=%s (run_date=%s) — only predictions on or after "
-            "this date will appear in the report",
-            ref_date.date(),
-            co.run_date,
-        )
-        corp_details = report_lib.get_relevant_figures_details(best_corp, ref_date)
-        zone_details = report_lib.get_relevant_figures_details(best_zone, ref_date)
-
-        if corp_details is None and zone_details is None:
+        if report_df.empty:
             context.log.warning(
-                "generate_report: no predictions available on or after run_date=%s "
-                "(latest data cutoff is %s). Skipping report generation.",
-                co.run_date,
-                co.cutoff,
-            )
-            rep_json = context.artifact_path(
-                f"{cfg.output_dir}/rep_dict_{pd.Timestamp(co.run_date).date().strftime('%Y%m%d')}.json"
-            )
-            context.artifacts.write_text(
-                json.dumps(
-                    {
-                        "skipped": True,
-                        "reason": "no_predictions",
-                        "cutoff": co.cutoff,
-                        "run_date": co.run_date,
-                    },
-                    indent=2,
-                )
-                + "\n",
-                rep_json,
-            )
-            return ReportResult(report_path=rep_json)
-
-        pred_c = dates_c = fnames_c = caps_c = None
-        if corp_details:
-            pred_c, dates_c, fnames_c, caps_c = corp_details
-            caps_c = report_lib.postprocess_captions_for_rep(
-                caps_c,
-                kind=primary_region or "corp",
-                caption_corp_scope=cfg.caption_primary,
-                caption_zone_scope=cfg.caption_secondary,
+                "generate_report: no rows in predictions CSV match model=%r thresholdMethod=%r; "
+                "rendering an empty-state brief anyway",
+                primary_model,
+                thresh_method,
             )
 
-        pred_z = dates_z = fnames_z = caps_z = None
-        if zone_details:
-            pred_z, dates_z, fnames_z, caps_z = zone_details
-            caps_z = report_lib.postprocess_captions_for_rep(
-                caps_z,
-                kind=secondary_region or "zone",
-                caption_corp_scope=cfg.caption_primary,
-                caption_zone_scope=cfg.caption_secondary,
+        # Ensure outputs/charts/ exists.
+        charts_dir_fs = Path(context.artifact_fs_path("outputs/charts"))
+        charts_dir_fs.mkdir(parents=True, exist_ok=True)
+
+        # Load observed cases CSV for hero chart enrichment.
+        observed_df: pd.DataFrame | None = None
+        try:
+            pd_cfg = PreparedDataConfig.from_raw(
+                _section(context.config, "data.prepared_data")
             )
-        rep_dict = report_lib.build_rep_dict(
-            pred_c=pred_c,
-            dates_c=list(dates_c) if dates_c is not None else None,
-            fnames_c=list(fnames_c) if fnames_c is not None else None,
-            captions_c=list(caps_c) if caps_c is not None else None,
-            pred_z=pred_z,
-            dates_z=list(dates_z) if dates_z is not None else None,
-            fnames_z=list(fnames_z) if fnames_z is not None else None,
-            captions_z=list(caps_z) if caps_z is not None else None,
-            cutoff_case=co.cutoff_case,
-            cutoff_weather=co.cutoff_weather,
-            epi_data_start_date=epi_start,
-            run_date=co.run_date,
-        )
-
-        end_str = pd.Timestamp(co.run_date).date().strftime("%Y%m%d")
-        month_key = rep_dict["reportmonth"] or "report"
-        if not rep_dict["reportmonth"]:
-            context.log.warning(
-                "generate_report: reportmonth is empty (no prediction dates in rep_dict) → "
-                "output files will use 'report' as the month token instead of a real month string"
-            )
-        safe_month = month_key.replace(" ", "_").replace("/", "-")
-
-        pred_raw = rep_dict.get("prediction_date") or co.run_date
-        access_date = (
-            pd.Timestamp(str(pred_raw).replace("--", "-")).date().strftime("%d-%b-%Y")
-        )
-
-        rep_json = context.artifact_path(f"{cfg.output_dir}/rep_dict_{end_str}.json")
-        context.artifacts.write_text(
-            json.dumps(rep_dict, indent=2, default=str) + "\n",
-            rep_json,
-        )
-
-        plots_dir = context.artifact_fs_path(plots_rel)
-        all_maps_zip_path = context.artifact_fs_path(
-            f"outputs/AllMaps_{safe_month}_{end_str}.zip"
-        )
-        all_names = (list(fnames_c) if fnames_c else []) + (
-            list(fnames_z) if fnames_z else []
-        )
-        if all_names:
-            report_lib.zip_map_files(
-                plots_dir=plots_dir,
-                filenames=all_names,
-                destination_zip=all_maps_zip_path,
-            )
-        else:
-            context.log.warning(
-                "generate_report: no map filenames collected (all_names is empty) → "
-                "maps zip will not be created; corp_details=%s zone_details=%s",
-                corp_details is not None,
-                zone_details is not None,
-            )
-
-        tex_fs = context.artifact_fs_path(
-            f"{cfg.output_dir}/report_summary_{end_str}.tex"
-        )
-        report_lib.write_minimal_pdf_source(
-            rep_dict, tex_fs, document_title=cfg.document_title
-        )
-        tex_key = context.artifact_path(
-            f"{cfg.output_dir}/report_summary_{end_str}.tex"
-        )
-
-        bundle_token = report_lib.safe_bundle_filename_prefix(cfg.bundle_prefix)
-        bundle_fs = context.artifact_fs_path(
-            f"outputs/{bundle_token}_{safe_month}_{end_str}.zip"
-        )
-        report_lib.create_latex_bundle_zip(
-            rep_dict=rep_dict,
-            access_date=access_date,
-            plots_dir=plots_dir,
-            image_filenames=all_names,
-            destination_zip=bundle_fs,
-        )
-        latex_bundle_key = context.artifact_path(
-            f"outputs/{bundle_token}_{safe_month}_{end_str}.zip"
-        )
-
-        details_corp = corp_details
-        details_zone = zone_details
-        pdf_path: str | None = None
-        if cfg.compile_pdf:
-            dest_pdf = context.artifact_fs_path(
-                f"outputs/Report_{safe_month}_{end_str}.pdf"
-            )
-            pdf = report_lib.compile_latex_bundle_zip(
-                bundle_fs,
-                destination_pdf_path=dest_pdf,
-                latex_bin="pdflatex",
-            )
-            if pdf is not None:
-                pdf_path = str(pdf)
-                context.log.info("generate_report: pdf=%s", pdf_path)
+            region_type = inputs.train_and_predict.region_type or pd_cfg.region_type
+            cases_csv_path = Path(pd_cfg.base_dir) / region_type / "cases_daily.csv"
+            # Try artifact-relative path first, then as absolute/cwd-relative.
+            cases_fs_path = Path(context.artifact_fs_path("..")) / cases_csv_path
+            if not cases_fs_path.exists():
+                cases_fs_path = Path(pd_cfg.base_dir) / region_type / "cases_daily.csv"
+            if cases_fs_path.exists():
+                observed_df = pd.read_csv(cases_fs_path, parse_dates=["date"])
             else:
                 context.log.warning(
-                    "generate_report: compile_pdf=true but pdflatex failed (is LaTeX installed?)",
+                    "generate_report: cases_daily.csv not found at %s — hero chart will show forecast only",
+                    cases_fs_path,
+                )
+        except Exception as exc:
+            context.log.warning(
+                "generate_report: failed to load observed cases: %s", exc
+            )
+
+        # Load region names from geojsons.
+        region_names: dict[str, str] = {}
+        try:
+            geojson_base = geojson_sources.get_geojson_base_dir()
+            if geojson_base:
+                region_names = load_region_names(Path(geojson_base))
+        except Exception as exc:
+            context.log.warning("generate_report: failed to load region names: %s", exc)
+
+        run_date_ts = pd.Timestamp(inputs.identify_cutoff_dates.run_date)
+
+        # Hero forecast chart (uses the full df, not just primary — line per model).
+        hero_path = charts_dir_fs / "hero_forecast.png"
+        if not df.empty:
+            maps_lib.render_hero_forecast(
+                df,
+                observed_df=observed_df,
+                run_date=run_date_ts,
+                out_path=str(hero_path),
+            )
+
+        # Copy one per-week map from outputs/maps/ → outputs/charts/risk_map_wN.png.
+        plots_rel = _section(context.config, "maps").get("output_dir", "plots")
+        plots_fs = Path(context.artifact_fs_path(plots_rel))
+        weeks = (
+            sorted(report_df["startDatePredictedWeek"].unique())
+            if not report_df.empty
+            else []
+        )
+        end_str = (
+            pd.Timestamp(inputs.identify_cutoff_dates.run_date)
+            .date()
+            .strftime("%Y%m%d")
+        )
+        region_token = maps_lib.REGION_LABEL.get(
+            inputs.train_and_predict.region_type, inputs.train_and_predict.region_type
+        )
+        model_token = maps_lib.MODEL_LABEL.get(primary_model, primary_model)
+        thresh_token = maps_lib.THRESHOLD_LABEL.get(thresh_method, thresh_method)
+        for i, wk in enumerate(weeks, start=1):
+            thisdate = pd.Timestamp(wk).date().isoformat()
+            src = (
+                plots_fs
+                / f"{region_token}s_{thisdate}_{model_token}_{thresh_token}_{end_str}.png"
+            )
+            dst = charts_dir_fs / f"risk_map_w{i}.png"
+            if src.exists():
+                shutil.copy2(src, dst)
+            else:
+                context.log.warning(
+                    "generate_report: weekly map missing for w%d: %s", i, src.name
                 )
 
+        # Build interactive map data (D3) — same shape as the downscale brief.
+        interactive_map_data = None
+        try:
+            geojson_base = geojson_sources.get_geojson_base_dir()
+            region_type = inputs.train_and_predict.region_type
+            child_dir = Path(geojson_base) / f"{region_type}s"
+            if not child_dir.exists():
+                child_dir = Path(geojson_base) / region_type
+            if child_dir.exists():
+                fc = load_child_geojson_combined(child_dir)
+                parent_lookup = compute_parent_lookup(fc)
+                weekly_zones: dict[str, dict[str, int]] = {}
+                if not report_df.empty:
+                    weeks_sorted = sorted(report_df["startDatePredictedWeek"].unique())
+                    for i, wk in enumerate(weeks_sorted, start=1):
+                        sub = report_df[report_df["startDatePredictedWeek"] == wk]
+                        weekly_zones[str(i)] = {
+                            str(r["regionID"]): int(r["predictionZone"])
+                            for _, r in sub.iterrows()
+                        }
+                interactive_map_data = {
+                    "geojson": fc,
+                    "parent_lookup": parent_lookup,
+                    "weekly_zones": weekly_zones,
+                }
+        except Exception as exc:
+            context.log.warning(
+                "generate_report: failed to build interactive map data: %s", exc
+            )
+
+        # Parent region type for the dropdown label — first feature's `parent` prefix.
+        parent_region_type = "state"
+        if interactive_map_data and interactive_map_data["parent_lookup"]:
+            any_pid = next(iter(interactive_map_data["parent_lookup"]))
+            parent_region_type = any_pid.split("_")[0] or "state"
+
+        ctx = build_brief_context(
+            predictions=report_df,
+            run_date=str(inputs.identify_cutoff_dates.run_date),
+            charts_relpath="charts",
+            is_downscale=False,
+            document_title=cfg.document_title,
+            region_type=inputs.train_and_predict.region_type,
+            parent_region_type=parent_region_type,
+            region_names=region_names or None,
+            interactive_map_data=interactive_map_data,
+        )
+        html = render_brief(ctx)
+
+        dest_key = context.artifact_path("outputs/report.html")
+        context.artifacts.write_text(html, dest_key)
         context.log.info(
-            "generate_report: corp_details=%s zone_details=%s maps_zipped=%d rep_dict=%s tex=%s latex_zip=%s",
-            details_corp is not None,
-            details_zone is not None,
-            len(all_names),
-            rep_json,
-            tex_key,
-            latex_bundle_key,
+            "generate_report: html=%s charts=%s rows=%d",
+            dest_key,
+            charts_dir_fs,
+            len(report_df),
         )
 
         return ReportResult(
-            report_path=rep_json,
-            pdf_path=pdf_path,
-            maps_zip_path=str(all_maps_zip_path) if all_names else None,
-            tex_path=tex_key,
-            latex_bundle_zip_path=latex_bundle_key,
+            report_path=dest_key,
+            charts_dir=str(charts_dir_fs),
         )

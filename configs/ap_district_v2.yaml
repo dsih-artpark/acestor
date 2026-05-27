@@ -7,7 +7,7 @@ run:
 
 data:
   prepared_data:          # defaults: base_dir="prepared_data", region_type="district"
-    base_dir: "prepared_data"
+    base_dir: "ap_datasets/prepared_data"
     region_type: "district"
 
   geojson:
@@ -48,9 +48,6 @@ maps:
   figure_title: "Andhra Pradesh Dengue Risk Map"   # default is "Dengue risk map"
 
 report:
-  compile_pdf: true            # default is false
-  caption_primary: "AP districts"
-  caption_secondary: ""        # default is "zones" — override to empty
 
 report_distribution:
   system_name: "Dengue Early Warning System"

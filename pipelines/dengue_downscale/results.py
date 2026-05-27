@@ -22,5 +22,13 @@ class DownscaleResult:
     n_weeks_children_below_parent: int = 0  # child max zone < parent zone
     n_weeks_children_above_parent: int = 0  # child max zone > parent zone
     conservation_max_abs_err: float = 0.0  # max |sum(child) - parent| across weeks
-    n_dropped_parents: int = 0  # parents with no children (only when on_missing_parents="warn")
+    n_dropped_parents: int = (
+        0  # parents with no children (only when on_missing_parents="warn")
+    )
     dropped_parent_ids: tuple = ()  # their regionIDs, for traceability
+
+
+@dataclass(frozen=True)
+class DownscaleBriefResult:
+    report_path: str  # outputs/report.html
+    charts_dir: str  # outputs/charts/

@@ -1,0 +1,44 @@
+{# One block per predicted week: map on the left, regions grouped by zone band on the right. #}
+{% if interactive_map_data and (interactive_map_data.parent_lookup | length) > 1 %}
+<div class="parent-picker-wrap no-print">
+  <label for="parent-picker">Filter by {{ parent_region_label | title }}:</label>
+  <select id="parent-picker">
+    <option value="__all__" selected>All</option>
+    {# Options injected by JS from window.__BRIEF_DATA #}
+  </select>
+</div>
+{% endif %}
+<section class="block weekly-blocks">
+  <h2>4-week {{ region_label }} risk progression</h2>
+  <div class="subhead">Map + {{ region_label }} list for each forecast week. {{ region_label_plural | title }} at Medium or above are grouped by risk band.</div>
+  {% for blk in weekly_blocks %}
+  <div class="weekly-block" data-week-idx="{{ blk.week_idx }}">
+    <h3 class="weekly-label">{{ blk.week_label_pretty }}</h3>
+    <div class="two-col">
+      <div class="map-frame">
+      {% if interactive_map_data %}
+        <svg class="risk-map" data-week-idx="{{ blk.week_idx }}" preserveAspectRatio="xMidYMid meet"></svg>
+      {% else %}
+        <img src="{{ blk.map_relpath }}" alt="risk map" />
+      {% endif %}
+      </div>
+      <div class="zone-groups">
+        {% if blk.zone_groups %}
+          {% for group in blk.zone_groups %}
+          <div class="zone-group" data-band="{{ group.band_class }}">
+            <div class="zone-group-label band-chip {{ group.band_class }}">{{ group.label | upper }}</div>
+            <ul class="region-list">
+              {% for entry in group.region_entries %}
+              <li data-region-id="{{ entry.id }}" data-parent="{{ entry.parent }}">{{ entry.name }}</li>
+              {% endfor %}
+            </ul>
+          </div>
+          {% endfor %}
+        {% else %}
+        <p class="muted">No Medium+ {{ region_label_plural }} this week.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</section>

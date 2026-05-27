@@ -15,7 +15,7 @@ _MODEL_SUFFIXES = ("_nbr_", "_rf_", "_xgb_", "_tse_")
 
 
 def _resolve_latest_run(base_path: Path) -> str:
-    """Return the name of the most recently modified run dir that has combined predictions."""
+    """Return the name of the most recently modified run dir that has a canonical predictions.csv."""
     candidates = []
     for run_dir in base_path.iterdir():
         if not run_dir.is_dir():
@@ -23,13 +23,7 @@ def _resolve_latest_run(base_path: Path) -> str:
         results_dir = run_dir / "outputs"
         if not results_dir.exists():
             continue
-        has_combined = any(
-            True
-            for p in results_dir.glob("Predictions_*.csv")
-            if not any(s in p.name for s in _MODEL_SUFFIXES)
-            and "downscaled" not in p.name
-        )
-        if has_combined:
+        if (results_dir / "predictions.csv").exists():
             candidates.append((run_dir.stat().st_mtime, run_dir.name))
     if not candidates:
         raise FileNotFoundError(
@@ -66,24 +60,12 @@ class LoadPredictionsStep(BaseStep[NoInputs, LoadPredictionsResult]):
                 f"Run the dengue pipeline with run_id={source_run_id!r} first."
             )
 
-        all_csvs = sorted(results_dir.glob("Predictions_*.csv"))
-        combined = [
-            p for p in all_csvs if not any(s in p.name for s in _MODEL_SUFFIXES)
-        ]
-        if not combined:
+        pred_path = results_dir / "predictions.csv"
+        if not pred_path.exists():
             raise FileNotFoundError(
-                f"No combined Predictions_*.csv found in {results_dir}. "
-                f"Expected a file without model-name suffix (e.g. Predictions_Mar 2026_20260301.csv)."
+                f"No predictions.csv found in {results_dir}. "
+                f"Run the dengue pipeline with run_id={source_run_id!r} first."
             )
-
-        if len(combined) > 1:
-            context.log.warning(
-                "load_predictions: found %d combined Predictions CSVs in %s, using %s",
-                len(combined),
-                results_dir,
-                combined[0].name,
-            )
-        pred_path = combined[0]
 
         try:
             df = pd.read_csv(pred_path, usecols=["dateOfComputingPrediction"])

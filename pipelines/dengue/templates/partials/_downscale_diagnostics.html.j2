@@ -1,0 +1,14 @@
+<section class="block downscale-diagnostics">
+  <h2>Downscale diagnostics</h2>
+  <div class="subhead">
+    Sanity checks on how parent ({{ parent_region_label }}) predictions were
+    disaggregated to children. A high zone-0 count or many uniform-split parents
+    means child zone classification is largely not data-driven — see acestor issue #49.
+  </div>
+  <ul>
+    <li>Conservation max abs err: {{ "%.3g"|format(downscale_diagnostics.conservation_max_abs_err or 0.0) }}</li>
+    <li>Parents split uniformly (no-data fallback): {{ downscale_diagnostics.n_parents_uniform or 0 }}</li>
+    <li>Parent-vs-child zones — children above parent: {{ downscale_diagnostics.n_weeks_children_above_parent or 0 }}; below: {{ downscale_diagnostics.n_weeks_children_below_parent or 0 }}</li>
+    <li>Children carrying zone-0 sentinel: {{ downscale_diagnostics.n_zone_zero or 0 }} / {{ downscale_diagnostics.n_total or 0 }}</li>
+  </ul>
+</section>

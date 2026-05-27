@@ -20,7 +20,6 @@ from pipelines.dengue.steps.validate_case_data_sufficiency import (
 from pipelines.dengue.steps.identify_cutoff_dates import IdentifyCutoffDatesStep
 from pipelines.dengue.steps.generate_thresholds import GenerateThresholdsStep
 from pipelines.dengue.steps.train_and_predict import TrainAndPredictStep
-from pipelines.dengue.steps.combine_predictions import CombinePredictionsStep
 from pipelines.dengue.steps.assess_thresholds import AssessThresholdsStep
 from pipelines.dengue.steps.generate_maps import GenerateMapsStep
 from pipelines.dengue.steps.generate_report import GenerateReportStep
@@ -54,9 +53,6 @@ def build_pipeline(config: PipelineConfig) -> PipelineDAG:
     train_and_predict = PipelineStep(
         name="train_and_predict", impl=TrainAndPredictStep()
     )
-    combine_predictions = PipelineStep(
-        name="combine_predictions", impl=CombinePredictionsStep()
-    )
     assess_thresholds = PipelineStep(
         name="assess_thresholds", impl=AssessThresholdsStep()
     )
@@ -70,10 +66,9 @@ def build_pipeline(config: PipelineConfig) -> PipelineDAG:
     [validate_case_data_sufficiency, parse_weather_data] >> identify_cutoff_dates
     identify_cutoff_dates >> generate_thresholds
     [identify_cutoff_dates, generate_thresholds] >> train_and_predict
-    [train_and_predict, identify_cutoff_dates] >> combine_predictions
-    combine_predictions >> assess_thresholds
-    [assess_thresholds, combine_predictions] >> generate_maps
-    [assess_thresholds, generate_maps, identify_cutoff_dates] >> generate_report
+    train_and_predict >> assess_thresholds
+    [assess_thresholds, train_and_predict] >> generate_maps
+    [train_and_predict, generate_maps, identify_cutoff_dates] >> generate_report
     generate_report >> notify_run
 
     return PipelineDAG.from_steps(
@@ -87,7 +82,6 @@ def build_pipeline(config: PipelineConfig) -> PipelineDAG:
             identify_cutoff_dates,
             generate_thresholds,
             train_and_predict,
-            combine_predictions,
             assess_thresholds,
             generate_maps,
             generate_report,

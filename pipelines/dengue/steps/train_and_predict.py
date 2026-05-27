@@ -26,6 +26,46 @@ from pipelines.dengue.results import (
 )
 
 
+def _resolve_predictions_paths(
+    *,
+    output_mode: str,
+    model_names: list[str],
+    primary: str,
+) -> dict[str, str]:
+    """Return {key: artifact_path} for predictions writes.
+
+    Keys are usually model names; ``_canonical_primary`` is a special key
+    for the per_model mode's canonical copy at the outputs/ root.
+
+    Layout:
+      - ensemble mode → {"ensembleModel": "outputs/predictions.csv"}
+      - both mode → ensemble at outputs/predictions.csv, others at outputs/per_model/predictions_<m>.csv
+      - per_model mode → each at outputs/per_model/predictions_<m>.csv, plus a
+        canonical copy at outputs/predictions.csv keyed as "_canonical_primary"
+        (the step writes ``primary``'s rows to that path).
+    """
+    if output_mode not in ("ensemble", "both", "per_model"):
+        raise ValueError(
+            f"output_mode must be ensemble|both|per_model, got {output_mode!r}"
+        )
+
+    paths: dict[str, str] = {}
+    if output_mode in ("ensemble", "both"):
+        paths["ensembleModel"] = "outputs/predictions.csv"
+    if output_mode in ("both", "per_model"):
+        for m in model_names:
+            if m == "ensembleModel":
+                continue  # already at root
+            paths[m] = f"outputs/per_model/predictions_{m}.csv"
+    if output_mode == "per_model":
+        if primary not in paths:
+            raise ValueError(
+                f"report.primary={primary!r} not in resolved per-model paths {sorted(paths)}"
+            )
+        paths["_canonical_primary"] = "outputs/predictions.csv"
+    return paths
+
+
 @dataclass(frozen=True)
 class TrainAndPredictInputs:
     identify_cutoff_dates: CutoffDatesResult
@@ -181,8 +221,12 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
 
         run_date = pd.Timestamp(inputs.identify_cutoff_dates.run_date).normalize()
 
-        def _classify_and_write(df: pd.DataFrame, suffix: str) -> tuple[str, str]:
-            """Classify, write, return (csv_path, month_string)."""
+        def _classify_and_write(
+            df: pd.DataFrame, *, suffix: str, dest_key: str
+        ) -> tuple[pd.DataFrame, str]:
+            """Classify into zones and write the classified CSV to dest_key.
+            Returns (classified_df, month_string).
+            """
             classified = zones.classify_into_zones(df, spatial_col=cfg.spatial_res)
             # WHO zones are already in predictionZone from classify_into_zones — preserve as whoZone
             classified["whoZone"] = classified["predictionZone"]
@@ -235,46 +279,70 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
                 if future_dates
                 else ""
             )
-            end_str = run_date.date().strftime("%Y%m%d")
 
-            suffix_part = f"_{suffix}" if suffix else ""
-            dest = context.artifact_path(
-                f"outputs/Predictions_{local_month_string}_{cfg.spatial_res.capitalize()}{suffix_part}_{end_str}.csv"
-            )
+            if cfg.spatial_res in classified.columns and cfg.spatial_res != "regionID":
+                classified = classified.drop(columns=[cfg.spatial_res])
+            dest = context.artifact_path(dest_key)
             context.artifacts.write_text(classified.to_csv(index=False), dest)
             context.log.info(
-                "train_and_predict[%s]: %d predictions for %s",
+                "train_and_predict[%s]: %d predictions for %s → %s",
                 suffix or "ensemble",
                 len(classified),
                 cfg.spatial_res,
+                dest_key,
             )
-            return dest, local_month_string
+            return classified, local_month_string
 
-        written_paths: dict[str, str] = {}
+        # Map cfg.primary ("ensemble" in configs) → internal model name ("ensembleModel").
+        primary_model = (
+            "ensembleModel" if report_cfg.primary == "ensemble" else report_cfg.primary
+        )
+        model_names_for_resolver = list(per_model_dfs.keys())
+        if cfg.output in ("ensemble", "both"):
+            model_names_for_resolver = model_names_for_resolver + ["ensembleModel"]
+
+        paths_map = _resolve_predictions_paths(
+            output_mode=cfg.output,
+            model_names=model_names_for_resolver,
+            primary=primary_model,
+        )
+
+        written: dict[str, str] = {}
         month_string = ""
 
         if cfg.output in ("per_model", "both"):
             for model_name, df in per_model_dfs.items():
-                path, ms = _classify_and_write(df, suffix=model_name)
-                written_paths[model_name] = path
+                dest = paths_map[model_name]
+                _, ms = _classify_and_write(df, suffix=model_name, dest_key=dest)
+                written[model_name] = dest
                 month_string = month_string or ms
 
         if cfg.output in ("ensemble", "both"):
             assert ensembled is not None  # guaranteed by config validation
-            path, ms = _classify_and_write(ensembled, suffix="")
-            written_paths["ensemble"] = path
+            dest = paths_map["ensembleModel"]
+            _, ms = _classify_and_write(ensembled, suffix="", dest_key=dest)
+            written["ensembleModel"] = dest
             month_string = month_string or ms
 
-        # Pick the CSV that downstream maps + report consume.
-        if report_cfg.primary not in written_paths:
-            raise ValueError(
-                f"report.primary={report_cfg.primary!r} but no matching CSV was written. "
-                f"Available: {sorted(written_paths)}. Check report.primary against "
-                f"model.models and model.output."
+        if cfg.output == "per_model":
+            # Copy primary model's CSV to outputs/predictions.csv so there is always
+            # one canonical file at the root for officials / the HTML brief.
+            primary_text = context.artifacts.read_text(
+                context.artifact_path(written[primary_model])
             )
+            canonical_dest = context.artifact_path(paths_map["_canonical_primary"])
+            context.artifacts.write_text(primary_text, canonical_dest)
+            written["_canonical_primary"] = paths_map["_canonical_primary"]
+
+        # The canonical CSV is always outputs/predictions.csv in every mode.
+        canonical = (
+            paths_map.get("_canonical_primary")
+            or paths_map.get("ensembleModel")
+            or written[primary_model]
+        )
 
         return PredictionResult(
-            predictions_csv_path=written_paths[report_cfg.primary],
+            predictions_csv_path=context.artifact_path(canonical),
             region_type=cfg.spatial_res,
             month_string=month_string,
         )

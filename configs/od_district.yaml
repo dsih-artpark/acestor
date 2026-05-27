@@ -7,7 +7,7 @@ run:
 
 data:
   prepared_data:
-    base_dir: "prepared_data"
+    base_dir: "od_datasets/prepared_data"
     region_type: "district"
 
   case_parse:
@@ -83,9 +83,6 @@ maps:
 
 report:
   output_dir: "outputs/report"
-  compile_pdf: true
-  caption_primary: "Odisha districts"
-  caption_secondary: ""
 
 report_distribution:
   system_name: "Dengue Early Warning System"

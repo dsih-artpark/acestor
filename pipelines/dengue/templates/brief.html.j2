@@ -1,0 +1,22 @@
+{# pipelines/dengue/templates/brief.html.j2 #}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{{ document_title }}</title>
+  {% include "partials/_styles.html.j2" %}
+</head>
+<body>
+<div class="page">
+  {% include "partials/_header.html.j2" %}
+  {% include "partials/_hero.html.j2" %}
+  {% include "partials/_state_weekly_blocks.html.j2" %}
+  {% include "partials/_action_matrix.html.j2" %}
+  {% if is_downscale %}
+    {% include "partials/_downscale_diagnostics.html.j2" %}
+  {% endif %}
+  {% include "partials/_footer.html.j2" %}
+</div>
+{% include "partials/_d3_map_script.html.j2" %}
+</body>
+</html>

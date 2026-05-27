@@ -11,16 +11,6 @@ import pandas as pd
 
 log = logging.getLogger(__name__)
 
-COLS_OF_INTEREST = [
-    "dateOfComputingPrediction",
-    "startDatePredictedWeek",
-    "regionID",
-    "prediction",
-    "thresholdMethod",
-    "predictionZone",
-    "model",
-]
-
 
 def get_month_year_range(dates: list[pd.Timestamp]) -> str:
     """Generate a human-readable month range string from a list of dates."""
@@ -80,22 +70,3 @@ def ensemble_predictions(
 
     ensembled["model"] = "ensembleModel"
     return ensembled
-
-
-def combine_all_predictions(
-    prediction_dfs: list[pd.DataFrame],
-    prediction_dates: list[str],
-) -> pd.DataFrame:
-    """Concatenate all region-level prediction CSVs and filter to prediction dates."""
-    cols = (
-        [c for c in COLS_OF_INTEREST if c in prediction_dfs[0].columns]
-        if prediction_dfs
-        else COLS_OF_INTEREST
-    )
-    combined = pd.concat([df[cols] for df in prediction_dfs], ignore_index=True)
-    if prediction_dates:
-        combined = combined[
-            (combined["startDatePredictedWeek"] >= prediction_dates[0])
-            & (combined["startDatePredictedWeek"] <= prediction_dates[-1])
-        ].reset_index(drop=True)
-    return combined

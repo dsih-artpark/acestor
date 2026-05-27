@@ -9,7 +9,7 @@ downscale:
   parent_level: district
   child_level: block
   window_weeks: 4
-  cases_csv: "prepared_data/block/cases_daily.csv"
+  cases_csv: "od_datasets/prepared_data/block/cases_daily.csv"
   geojson_base_path: "od_datasets/geojsons/geojsons_OD"
 
 storages:

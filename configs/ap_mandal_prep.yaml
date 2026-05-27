@@ -8,6 +8,9 @@ run:
 data:
   region_type: "mandal"
 
+  prepared_data:
+    base_dir: "ap_datasets/prepared_data"
+
   date_range:
     start: "2022-01-01"
     end: "2026-03-28"   # ERA5 local data coverage — extend once OpenMeteo quota resets
