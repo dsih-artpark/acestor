@@ -1,5 +1,5 @@
 {# One block per predicted week: map on the left, regions grouped by zone band on the right. #}
-{% if interactive_map_data %}
+{% if interactive_map_data and (interactive_map_data.parent_lookup | length) > 1 %}
 <div class="parent-picker-wrap no-print">
   <label for="parent-picker">Filter by {{ parent_region_label | title }}:</label>
   <select id="parent-picker">
