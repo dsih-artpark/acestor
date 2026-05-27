@@ -26,6 +26,7 @@ data:
 
 thresholds:               # only region_type differs from default ("zone")
   region_type: "district"
+  classification_method: icmr      # AP default: ICMR quartiles (cross-sectional, robust to sparse history)
   excluded_years: []      # default is [2020, 2021] — override to include all years
 
 model:
