@@ -86,9 +86,6 @@ maps:
 
 report:
   output_dir: "outputs/report"
-  compile_pdf: true
-  caption_primary: "AP districts"
-  caption_secondary: ""
   primary: ensemble
 
 report_distribution:

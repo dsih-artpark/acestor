@@ -201,7 +201,6 @@ def render_hero_forecast(
     observed_df: "pd.DataFrame | None" = None,
     run_date: "pd.Timestamp | None" = None,
     out_path: str,
-    region_label: str = "Andhra Pradesh",
 ) -> str:
     """Rich hero forecast chart: observed + historical average + forecast with confidence band.
 

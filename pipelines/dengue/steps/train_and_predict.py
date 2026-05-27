@@ -280,6 +280,8 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
                 else ""
             )
 
+            if cfg.spatial_res in classified.columns and cfg.spatial_res != "regionID":
+                classified = classified.drop(columns=[cfg.spatial_res])
             dest = context.artifact_path(dest_key)
             context.artifacts.write_text(classified.to_csv(index=False), dest)
             context.log.info(

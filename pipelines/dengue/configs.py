@@ -610,14 +610,9 @@ class MapsConfig:
 
 @dataclass(frozen=True)
 class ReportConfig:
-    """Report step: JSON + summary ``.tex`` + LaTeX bundle zip always; PDF only if ``compile_pdf``."""
+    """Report step configuration for the HTML brief."""
 
-    output_dir: str
-    compile_pdf: bool
     document_title: str
-    caption_primary: str
-    caption_secondary: str
-    bundle_prefix: str
     primary: (
         str  # which prediction CSV feeds maps + report; "ensemble" or any model key
     )
@@ -641,22 +636,11 @@ class ReportConfig:
                 else "Dengue intelligence — summary report"
             )
 
-        primary_caption = (
-            str(raw.get("caption_primary") or "").strip() or "corporations"
-        )
-        secondary = str(raw.get("caption_secondary") or "").strip() or "zones"
-
-        prefix = str(raw.get("bundle_prefix") or "").strip() or "Report"
         primary = str(raw.get("primary") or "").strip() or "ensemble"
         tmr = str(raw.get("threshold_method_for_report") or "").strip() or "historical"
 
         return cls(
-            output_dir=str(raw.get("output_dir", "reports")),
-            compile_pdf=bool(raw.get("compile_pdf", False)),
             document_title=doc,
-            caption_primary=primary_caption,
-            caption_secondary=secondary,
-            bundle_prefix=prefix,
             primary=primary,
             threshold_method_for_report=tmr,
         )

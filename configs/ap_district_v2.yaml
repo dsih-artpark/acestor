@@ -48,9 +48,6 @@ maps:
   figure_title: "Andhra Pradesh Dengue Risk Map"   # default is "Dengue risk map"
 
 report:
-  compile_pdf: true            # default is false
-  caption_primary: "AP districts"
-  caption_secondary: ""        # default is "zones" — override to empty
 
 report_distribution:
   system_name: "Dengue Early Warning System"

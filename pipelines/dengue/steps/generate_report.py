@@ -210,9 +210,4 @@ class GenerateReportStep(BaseStep[GenerateReportInputs, ReportResult]):
         return ReportResult(
             report_path=dest_key,
             charts_dir=str(charts_dir_fs),
-            # Legacy fields stay None — cleanup follows in Task 19.
-            pdf_path=None,
-            maps_zip_path=None,
-            tex_path=None,
-            latex_bundle_zip_path=None,
         )

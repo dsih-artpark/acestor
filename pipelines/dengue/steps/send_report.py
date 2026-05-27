@@ -157,22 +157,11 @@ class SendReportStep(BaseStep[SendReportInputs, SendReportResult]):
             ),
         ]
 
-        maps_zip = inputs.generate_report.maps_zip_path
+        report_path = inputs.generate_report.report_path
         rows.append(
-            ("Map Generation", "Success", f"Maps zip: {Path(maps_zip).name}")
-            if maps_zip
-            else ("Map Generation", "Note", "No maps generated for this run")
-        )
-
-        pdf_path = inputs.generate_report.pdf_path
-        rows.append(
-            ("Report", "Success", f"PDF report compiled: {Path(pdf_path).name}")
-            if pdf_path
-            else (
-                "Report",
-                "Warning",
-                "LaTeX sources available — PDF compilation skipped or failed",
-            )
+            ("Report", "Success", "HTML report ready")
+            if report_path
+            else ("Report", "Warning", "No report generated for this run")
         )
 
         subject = f"{pipeline_name.title()} Pipeline | {reportmonth} | {run_date}"
@@ -185,10 +174,8 @@ class SendReportStep(BaseStep[SendReportInputs, SendReportResult]):
         )
 
         attachments = []
-        if pdf_path and Path(pdf_path).exists():
-            attachments.append(pdf_path)
-        if maps_zip and Path(maps_zip).exists():
-            attachments.append(maps_zip)
+        if report_path and Path(report_path).exists():
+            attachments.append(report_path)
 
         try:
             send_email(

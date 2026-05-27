@@ -90,20 +90,10 @@ class MapsResult:
 
 @dataclass(frozen=True)
 class ReportResult:
-    """HTML brief at ``report_path`` (.html); ``charts_dir`` holds the embedded PNGs.
-
-    Legacy fields (``pdf_path``, ``tex_path``, ``latex_bundle_zip_path``,
-    ``maps_zip_path``) remain as Optional defaults for backward compatibility
-    with consumers (``send_report``); they are set to None by the new step
-    and will be cleaned up in a follow-up task.
-    """
+    """HTML brief at ``report_path`` (.html); ``charts_dir`` holds the embedded PNGs."""
 
     report_path: str
     charts_dir: str | None = None
-    pdf_path: str | None = None
-    maps_zip_path: str | None = None
-    tex_path: str | None = None
-    latex_bundle_zip_path: str | None = None
 
 
 @dataclass(frozen=True)
