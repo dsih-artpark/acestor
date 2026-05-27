@@ -61,6 +61,11 @@
                       font-size: 9.5px; color: var(--subtle);
                       display: flex; justify-content: space-between; gap: 20px; }
   .muted { color: var(--subtle); font-style: italic; }
+  .print-btn { margin-top: 6px; padding: 4px 10px; font-family: "Helvetica Neue", "Arial", sans-serif;
+               font-size: 11px; cursor: pointer; background: var(--card); border: 1px solid var(--ink);
+               color: var(--ink); border-radius: 3px; }
+  .print-btn:hover { background: var(--ink); color: var(--card); }
+  @media print { .no-print { display: none !important; } }
   .parent-picker-wrap { margin: 0 0 12px; font-family: "Helvetica Neue", "Arial", sans-serif;
                         font-size: 12px; display: flex; align-items: center; gap: 8px; }
   .parent-picker-wrap select { padding: 4px 8px; font-size: 12px; }

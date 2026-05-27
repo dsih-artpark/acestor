@@ -13,6 +13,8 @@ from pipelines.dengue.configs import PreparedDataConfig, ReportConfig, _section
 from pipelines.dengue.lib import maps as maps_lib
 from pipelines.dengue.lib.brief import (
     build_brief_context,
+    compute_parent_lookup,
+    load_child_geojson_combined,
     load_region_names,
     render_brief,
 )
@@ -147,6 +149,42 @@ class GenerateReportStep(BaseStep[GenerateReportInputs, ReportResult]):
                     "generate_report: weekly map missing for w%d: %s", i, src.name
                 )
 
+        # Build interactive map data (D3) — same shape as the downscale brief.
+        interactive_map_data = None
+        try:
+            geojson_base = geojson_sources.get_geojson_base_dir()
+            region_type = inputs.train_and_predict.region_type
+            child_dir = Path(geojson_base) / f"{region_type}s"
+            if not child_dir.exists():
+                child_dir = Path(geojson_base) / region_type
+            if child_dir.exists():
+                fc = load_child_geojson_combined(child_dir)
+                parent_lookup = compute_parent_lookup(fc)
+                weekly_zones: dict[str, dict[str, int]] = {}
+                if not report_df.empty:
+                    weeks_sorted = sorted(report_df["startDatePredictedWeek"].unique())
+                    for i, wk in enumerate(weeks_sorted, start=1):
+                        sub = report_df[report_df["startDatePredictedWeek"] == wk]
+                        weekly_zones[str(i)] = {
+                            str(r["regionID"]): int(r["predictionZone"])
+                            for _, r in sub.iterrows()
+                        }
+                interactive_map_data = {
+                    "geojson": fc,
+                    "parent_lookup": parent_lookup,
+                    "weekly_zones": weekly_zones,
+                }
+        except Exception as exc:
+            context.log.warning(
+                "generate_report: failed to build interactive map data: %s", exc
+            )
+
+        # Parent region type for the dropdown label — first feature's `parent` prefix.
+        parent_region_type = "state"
+        if interactive_map_data and interactive_map_data["parent_lookup"]:
+            any_pid = next(iter(interactive_map_data["parent_lookup"]))
+            parent_region_type = any_pid.split("_")[0] or "state"
+
         ctx = build_brief_context(
             predictions=report_df,
             run_date=str(inputs.identify_cutoff_dates.run_date),
@@ -154,7 +192,9 @@ class GenerateReportStep(BaseStep[GenerateReportInputs, ReportResult]):
             is_downscale=False,
             document_title=cfg.document_title,
             region_type=inputs.train_and_predict.region_type,
+            parent_region_type=parent_region_type,
             region_names=region_names or None,
+            interactive_map_data=interactive_map_data,
         )
         html = render_brief(ctx)
 
