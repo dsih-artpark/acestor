@@ -2,10 +2,10 @@ import argparse
 import os
 import re
 from pathlib import Path
+from typing import Any
 
 import geopandas as gpd
 import pandas as pd
-from geopy.geocoders import GoogleV3
 
 
 def load_dotenv_fallback() -> None:
@@ -52,9 +52,7 @@ def parse_address_column(value: str) -> tuple[str, str | None]:
             "Address columns must be COLUMN or COLUMN=prefix."
         )
     if prefix == "":
-        raise argparse.ArgumentTypeError(
-            "Address column prefixes must not be empty."
-        )
+        raise argparse.ArgumentTypeError("Address column prefixes must not be empty.")
     return column, prefix
 
 
@@ -77,9 +75,7 @@ def address_configs_from_args(
     )
     if duplicate_prefixes:
         duplicates = ", ".join(duplicate_prefixes)
-        raise argparse.ArgumentTypeError(
-            f"Duplicate geocode prefix(es): {duplicates}."
-        )
+        raise argparse.ArgumentTypeError(f"Duplicate geocode prefix(es): {duplicates}.")
     return configs
 
 
@@ -156,10 +152,9 @@ def parse_args() -> argparse.Namespace:
     except argparse.ArgumentTypeError as exc:
         parser.error(str(exc))
 
-    if (
-        len(args.geojson_file) > 1
-        or len(args.address_column) > 1
-    ) and (args.output_id_col or args.output_name_col):
+    if (len(args.geojson_file) > 1 or len(args.address_column) > 1) and (
+        args.output_id_col or args.output_name_col
+    ):
         parser.error(
             "--output-id-col and --output-name-col can only be used with one "
             "address column and one GeoJSON file"
@@ -169,7 +164,7 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def geocode_address(address: object, geolocator: GoogleV3) -> pd.Series:
+def geocode_address(address: object, geolocator: Any) -> pd.Series:
     empty_result = pd.Series(
         {
             "formatted_address": None,
@@ -219,6 +214,14 @@ def geocode_column(
     if not api_key:
         raise ValueError("GOOGLE_API_KEY not found. Set it in .env or the environment.")
 
+    try:
+        from geopy.geocoders import GoogleV3
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "geopy is required for geocoding. Install project dependencies "
+            "before running this script."
+        ) from exc
+
     geolocator = GoogleV3(api_key=api_key)
     cache: dict[str, pd.Series] = {}
     df = df.copy()
@@ -254,7 +257,9 @@ def geocode_column(
 
 def load_region_layer(path: Path, id_col: str, name_col: str) -> gpd.GeoDataFrame:
     regions = gpd.read_file(path)
-    missing = [col for col in [id_col, name_col, "geometry"] if col not in regions.columns]
+    missing = [
+        col for col in [id_col, name_col, "geometry"] if col not in regions.columns
+    ]
     if missing:
         columns = ", ".join(regions.columns)
         raise ValueError(
@@ -269,11 +274,14 @@ def output_columns(
     prefix: str | None,
     output_id_col: str | None,
     output_name_col: str | None,
+    address_prefix: str | None = None,
 ) -> tuple[str, str]:
     if output_id_col or output_name_col:
         return output_id_col or "region_id", output_name_col or "region_name"
 
     layer_prefix = slugify(prefix or path.stem)
+    if address_prefix:
+        layer_prefix = f"{slugify(address_prefix)}_{layer_prefix}"
     return f"{layer_prefix}_id", f"{layer_prefix}_name"
 
 
@@ -331,43 +339,52 @@ def main() -> None:
     args = parse_args()
     args.output_file.parent.mkdir(parents=True, exist_ok=True)
 
-    geocode_prefix = slugify(args.geocode_prefix)
-    lat_col = f"{geocode_prefix}_latitude"
-    lon_col = f"{geocode_prefix}_longitude"
-
     df = pd.read_csv(args.input_file)
-    df = geocode_column(df, args.address_column, geocode_prefix)
 
     used_region_output_cols: set[str] = set()
-    for index, geojson_file in enumerate(args.geojson_file):
-        prefix = args.output_prefix[index] if index < len(args.output_prefix) else None
-        output_id_col, output_name_col = output_columns(
-            geojson_file,
-            prefix,
-            args.output_id_col,
-            args.output_name_col,
-        )
-        duplicate_cols = used_region_output_cols.intersection(
-            {output_id_col, output_name_col}
-        )
-        if duplicate_cols:
-            raise ValueError(
-                "Duplicate region output column(s): "
-                f"{', '.join(sorted(duplicate_cols))}. "
-                "Use --output-prefix to give each GeoJSON layer a unique prefix."
-            )
-        used_region_output_cols.update({output_id_col, output_name_col})
+    use_address_prefix_for_regions = len(args.address_column) > 1
+    for address_config in args.address_column:
+        geocode_prefix = address_config["prefix"]
+        lat_col = f"{geocode_prefix}_lat"
+        lon_col = f"{geocode_prefix}_long"
+        df = geocode_column(df, address_config["column"], geocode_prefix)
 
-        df = map_to_region(
-            df,
-            geojson_file,
-            lat_col,
-            lon_col,
-            args.region_id_col,
-            args.region_name_col,
-            output_id_col,
-            output_name_col,
+        region_address_prefix = (
+            geocode_prefix if use_address_prefix_for_regions else None
         )
+        for index, geojson_file in enumerate(args.geojson_file):
+            prefix = (
+                args.output_prefix[index] if index < len(args.output_prefix) else None
+            )
+            output_id_col, output_name_col = output_columns(
+                geojson_file,
+                prefix,
+                args.output_id_col,
+                args.output_name_col,
+                region_address_prefix,
+            )
+            duplicate_cols = used_region_output_cols.intersection(
+                {output_id_col, output_name_col}
+            )
+            if duplicate_cols:
+                raise ValueError(
+                    "Duplicate region output column(s): "
+                    f"{', '.join(sorted(duplicate_cols))}. "
+                    "Use --output-prefix or address column prefixes to make "
+                    "each output unique."
+                )
+            used_region_output_cols.update({output_id_col, output_name_col})
+
+            df = map_to_region(
+                df,
+                geojson_file,
+                lat_col,
+                lon_col,
+                args.region_id_col,
+                args.region_name_col,
+                output_id_col,
+                output_name_col,
+            )
 
     df.to_csv(args.output_file, index=False)
     print(f"\nSaved {len(df):,} rows to {args.output_file}")
