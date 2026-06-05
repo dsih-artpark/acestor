@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import textwrap
+from itertools import product
 from pathlib import Path
 
 import matplotlib
@@ -97,7 +98,7 @@ def _alert_level_names():
 
 def _grid(df, scheme, variants, leads, col):
     sub = df[df.scheme == scheme]
-    lut = {(v, L): val for v, L, val in zip(sub.variant, sub.lead, sub[col])}
+    lut = {(v, L): val for v, L, val in zip(sub.variant, sub.lead, sub[col], strict=True)}
     return np.array([[lut.get((v, L), np.nan) for L in leads] for v in variants])
 
 
@@ -233,9 +234,8 @@ def main() -> None:
     metrics = [(c, lbl) for c, lbl in METRICS if c in metric_cols]
     vlabels = [_variant_label(v) for v in variants]
 
-    present = set(zip(df.scheme, df.variant, df.lead))
-    absent = [t for t in ((s, v, L) for s in schemes for v in variants for L in leads)
-              if t not in present]
+    present = set(zip(df.scheme, df.variant, df.lead, strict=True))
+    absent = [t for t in product(schemes, variants, leads) if t not in present]
     if absent:
         shown = ", ".join(map(str, absent[:5])) + (" …" if len(absent) > 5 else "")
         print(f"note: {len(absent)} (scheme,variant,lead) cell(s) absent, shown as '—': {shown}")
