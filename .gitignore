@@ -53,6 +53,10 @@ validate_outputs.py
 
 scripts/downscale_viz/output/
 
+# Evaluation figures and writeups embed model performance numbers — keep local, never publish
+docs/eval_figures/
+docs/EVALUATION_*
+
 *.log
 logs/
 .DS_Store
