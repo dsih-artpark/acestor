@@ -17,7 +17,7 @@ def test_lookup_ap_district_has_known_code():
 
 def test_lookup_ap_mandal_has_known_code():
     lookup = lgd_code_lookup("ap", "mandal")
-    assert lookup["mandal_05206"] == "55105206"
+    assert lookup["mandal_05206"] == "5206"
 
 
 def test_lookup_missing_state_returns_empty():

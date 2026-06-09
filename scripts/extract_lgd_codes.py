@@ -1,68 +1,64 @@
-"""Extract {region_id, lgd_code, name} from per-state geojsons → committed CSVs.
+"""Extract {region_id, lgd_code, name} from <state>_datasets/lgd_normalized/
+into reference/lgd/<state>_<level>.csv — committed snapshots used by the
+predictions writers.
 
-Reads the per-state geojsons under <state-data-root>/geojsons/geojsons_<STATE>/
-and writes one CSV per spatial level into reference/lgd/.
-
-The geojson is the source of truth for region definitions; the CSVs are a
-committed, version-controlled snapshot so pipeline code can look up LGD codes
-without depending on the gitignored ap_datasets/ tree.
-
-LGD source field by spatial level
----------------------------------
-- district: the numeric suffix of region_id (e.g. 'district_515' → '515').
-            District-level geojsons don't carry an India LGD property explicitly;
-            the IHIP parser maps LGD codes directly into region_id, so the
-            suffix IS the LGD district code.
-- mandal:   'DMCodeInd' — full state+district+mandal LGD code (e.g. '55105206').
+The lgd_normalized/ CSVs are the canonical LGD-portal export (region_id,
+region_code, region_type, name, name_local, parent_id, …). This script just
+copies the three columns the pipeline needs and zero-pads region_ids to match
+the format the pipeline emits.
 
 Usage:
     uv run python scripts/extract_lgd_codes.py --state AP
-    uv run python scripts/extract_lgd_codes.py --state OD
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
-import json
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 OUT_DIR = REPO / "reference" / "lgd"
 
-LGD_PROPERTY_BY_LEVEL: dict[str, str] = {
-    "district": "__region_id_suffix__",
-    "mandal": "DMCodeInd",
+PIPELINE_REGION_ID_WIDTH: dict[str, int] = {
+    "district": 0,
+    "mandal": 5,
+    "block": 0,
+    "village": 0,
+}
+
+LEVEL_FILE: dict[str, str] = {
+    "district": "districts.csv",
+    "mandal": "mandals.csv",
+    "block": "blocks.csv",
+    "village": "villages.csv",
 }
 
 
-def _read_properties(path: Path) -> dict:
-    obj = json.loads(path.read_text())
-    if obj.get("type") == "FeatureCollection":
-        feats = obj.get("features") or []
-        if not feats:
-            return {}
-        return feats[0].get("properties") or {}
-    if obj.get("type") == "Feature":
-        return obj.get("properties") or {}
-    return obj.get("properties") or {}
+def _pipeline_region_id(level: str, region_code: str) -> str:
+    width = PIPELINE_REGION_ID_WIDTH[level]
+    code = region_code.zfill(width) if width else region_code
+    return f"{level}_{code}"
 
 
-def _extract(level_dir: Path, level: str) -> list[dict]:
+def _extract(source_csv: Path, level: str) -> list[dict]:
     rows = []
-    for path in sorted(level_dir.glob(f"{level}_*.geojson")):
-        props = _read_properties(path)
-        region_id = props.get("region_id") or path.stem
-        name = props.get("name") or props.get("Name") or ""
-        prop_name = LGD_PROPERTY_BY_LEVEL[level]
-        if prop_name == "__region_id_suffix__":
-            lgd_code = region_id.split("_", 1)[1] if "_" in region_id else region_id
-        else:
-            lgd_code = props.get(prop_name)
-        if lgd_code in (None, ""):
-            print(f"  warn: {path.name} has no {prop_name} — skipped")
-            continue
-        rows.append({"region_id": region_id, "lgd_code": str(lgd_code), "name": name})
+    with source_csv.open() as f:
+        for r in csv.DictReader(f):
+            code = r["region_code"]
+            name = r.get("name", "") or ""
+            if not code:
+                raise ValueError(
+                    f"{source_csv}: row has empty region_code: {r!r}. "
+                    f"Fix the lgd_normalized source before regenerating."
+                )
+            rows.append(
+                {
+                    "region_id": _pipeline_region_id(level, code),
+                    "lgd_code": code,
+                    "name": name,
+                }
+            )
     return rows
 
 
@@ -87,20 +83,19 @@ def main() -> None:
 
     state = args.state.upper()
     data_root = args.data_root or REPO / f"{state.lower()}_datasets"
-    geojson_root = data_root / "geojsons" / f"geojsons_{state}"
-    if not geojson_root.exists():
-        raise SystemExit(f"geojson root not found: {geojson_root}")
+    lgd_root = data_root / "lgd_normalized"
+    if not lgd_root.exists():
+        raise SystemExit(f"lgd_normalized root not found: {lgd_root}")
 
-    plural_by_level = {"district": "districts", "mandal": "mandals", "ward": "wards"}
-    for level, prop in LGD_PROPERTY_BY_LEVEL.items():
-        level_dir = geojson_root / plural_by_level[level]
-        if not level_dir.exists():
-            print(f"skip: {level_dir} (no {level} geojsons)")
+    for level, fname in LEVEL_FILE.items():
+        source = lgd_root / fname
+        if not source.exists():
+            print(f"skip: {source} (no {level} CSV)")
             continue
-        rows = _extract(level_dir, level)
+        rows = _extract(source, level)
         dest = OUT_DIR / f"{state.lower()}_{level}.csv"
         _write_csv(rows, dest)
-        print(f"wrote {dest} ({len(rows)} rows, lgd source: {prop})")
+        print(f"wrote {dest} ({len(rows)} rows)")
 
 
 if __name__ == "__main__":

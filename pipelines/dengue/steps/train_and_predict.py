@@ -289,6 +289,12 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
                 classified = add_lgd_column(
                     classified, state=state, spatial_res=cfg.spatial_res
                 )
+            else:
+                context.log.warning(
+                    "train_and_predict: could not infer state from geojson base path %r "
+                    "— lgdCode column not added",
+                    get_geojson_base_dir(),
+                )
             dest = context.artifact_path(dest_key)
             context.artifacts.write_text(classified.to_csv(index=False), dest)
             context.log.info(

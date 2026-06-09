@@ -10,10 +10,13 @@ before writing any predictions CSV; that's the single integration point.
 
 from __future__ import annotations
 
+import logging
 from functools import lru_cache
 from pathlib import Path
 
 import pandas as pd
+
+log = logging.getLogger(__name__)
 
 REPO = Path(__file__).resolve().parents[3]
 REFERENCE_DIR = REPO / "reference" / "lgd"
@@ -41,7 +44,7 @@ def add_lgd_column(
     spatial_res: str,
     region_col: str = "regionID",
 ) -> pd.DataFrame:
-    """Add an `lgd_code` column to `df`, looked up by `region_col`.
+    """Add an `lgdCode` column to `df`, looked up by `region_col`.
 
     No-op if the lookup table is empty or the region column is missing. Idempotent
     when the column already exists (overwrites — the lookup is the source of truth).
@@ -50,9 +53,27 @@ def add_lgd_column(
         return df
     lookup = lgd_code_lookup(state, spatial_res)
     if not lookup:
+        log.warning(
+            "add_lgd_column: no LGD lookup table for state=%r spatial_res=%r "
+            "(expected reference/lgd/%s_%s.csv) — lgdCode column not added",
+            state,
+            spatial_res,
+            state.lower(),
+            spatial_res.lower(),
+        )
         return df
     df = df.copy()
     df[LGD_COLUMN] = df[region_col].map(lookup)
+    unmapped = df.loc[df[LGD_COLUMN].isna(), region_col].unique()
+    if len(unmapped):
+        log.warning(
+            "add_lgd_column: %d region(s) have no LGD code in "
+            "reference/lgd/%s_%s.csv — lgdCode will be NaN: %s",
+            len(unmapped),
+            state.lower(),
+            spatial_res.lower(),
+            sorted(map(str, unmapped))[:20],
+        )
     return df
 
 

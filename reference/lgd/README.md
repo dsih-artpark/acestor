@@ -1,27 +1,25 @@
 # LGD code lookups
 
-Committed snapshot of `{region_id, lgd_code, name}` per spatial level, used by the predictions writers to add an `lgdCode` column to every output CSV.
+Committed snapshot of `{region_id, lgd_code, name}` per (state, spatial level), used by the predictions writers to add an `lgdCode` column to every output CSV.
 
 ## Files
 
 One CSV per (state, spatial level):
 
-```
-ap_district.csv    AP districts (28)
-ap_mandal.csv      AP mandals  (688)
+```text
+ap_district.csv    AP districts  (28)
+ap_mandal.csv      AP mandals    (688)
+ap_block.csv       AP blocks     (668)
+ap_village.csv     AP villages   (17,957)
 ```
 
 Schema: `region_id, lgd_code, name`. All values are strings.
 
 ## Source of truth
 
-The geojsons under `<state>_datasets/geojsons/geojsons_<STATE>/` are the source. The CSVs here are extracted from them, so they're reproducible — not magic frozen data.
+These are extracted from `<state>_datasets/lgd_normalized/` — the canonical LGD-portal export. The committed copies here decouple the pipeline from the gitignored `<state>_datasets/` tree.
 
-LGD field by spatial level (see `scripts/extract_lgd_codes.py`):
-
-- **district** — the numeric suffix of `region_id` (e.g. `district_515` → `515`). The IHIP parser maps LGD district codes directly into `region_id`, so the suffix IS the LGD district code. District geojsons don't carry an India LGD property explicitly.
-- **mandal** — `DMCodeInd` from the mandal geojson. Full state+district+mandal LGD subdistrict code (e.g. `55105206`).
-- **ward / village** — to be added with `VWCodeInd` (or equivalent) once those geojsons are wired in.
+`region_id` is zero-padded to match the format the pipeline emits (e.g. mandal LGD code `4731` → `mandal_04731` in predictions CSV). `lgd_code` is the canonical unpadded value from the LGD portal.
 
 ## Regenerating
 
@@ -30,7 +28,7 @@ uv run python scripts/extract_lgd_codes.py --state AP
 uv run python scripts/extract_lgd_codes.py --state OD
 ```
 
-Run this after updating any geojson, then commit the regenerated CSVs.
+Run this whenever `<state>_datasets/lgd_normalized/` changes, then commit the regenerated CSVs.
 
 ## Consumed by
 
