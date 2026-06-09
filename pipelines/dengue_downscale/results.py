@@ -14,7 +14,7 @@ class LoadPredictionsResult:
 
 @dataclass(frozen=True)
 class DownscaleResult:
-    output_csv_path: str  # storage key: {run_id}/results/Predictions_downscaled_*.csv
+    output_csv_path: str  # storage key: {run_id}/outputs/predictions.csv
     n_parent_rows: int
     n_child_rows: int
     # Sanity/heterogeneity diagnostics (see downscale_diagnostics)

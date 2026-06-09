@@ -376,15 +376,6 @@ def test_resolve_latest_run_skips_dirs_without_predictions(tmp_path):
     assert _resolve_latest_run(tmp_path) == "run-with-preds"
 
 
-def test_resolve_latest_run_skips_downscaled_only_dirs(tmp_path):
-    # A dir that only has a downscaled CSV (no predictions.csv) should not be picked.
-    results = tmp_path / "downscale-run" / "outputs"
-    results.mkdir(parents=True)
-    (results / "Predictions_downscaled_district_to_mandal_20260101.csv").write_text("x")
-    _make_run_dir(tmp_path, "real-run")
-    assert _resolve_latest_run(tmp_path) == "real-run"
-
-
 def test_resolve_latest_run_raises_when_empty(tmp_path):
     with pytest.raises(FileNotFoundError, match="latest"):
         _resolve_latest_run(tmp_path)

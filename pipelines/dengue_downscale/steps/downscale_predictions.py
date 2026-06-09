@@ -124,9 +124,7 @@ class DownscalePredictionsStep(BaseStep[DownscalePredictionsInputs, DownscaleRes
         # Parents present in the predictions but with no children in the mapping.
         # In "error" mode downscale_predictions raises before here; in "warn" mode
         # they're dropped, so surface them on the result for traceability.
-        dropped = sorted(
-            set(parent_preds["regionID"]) - set(child_mapping.values())
-        )
+        dropped = sorted(set(parent_preds["regionID"]) - set(child_mapping.values()))
         if dropped:
             context.log.warning(
                 "downscale_predictions: %d parent(s) dropped (no children mapped): %s",
@@ -153,10 +151,7 @@ class DownscalePredictionsStep(BaseStep[DownscalePredictionsInputs, DownscaleRes
                 diag["n_parents_uniform"],
             )
 
-        run_date_str = inputs.load_predictions.run_date.replace("-", "")
-        dest = context.artifact_path(
-            f"outputs/Predictions_downscaled_{cfg.parent_level}_to_{cfg.child_level}_{run_date_str}.csv"
-        )
+        dest = context.artifact_path("outputs/predictions.csv")
         context.artifacts.write_text(child_preds.to_csv(index=False), dest)
 
         context.log.info(

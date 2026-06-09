@@ -54,16 +54,13 @@ def find_combined_predictions(results_dir: Path) -> Path:
 
 
 def find_downscaled_predictions(results_dir: Path) -> Path:
-    candidates = list(results_dir.glob("Predictions_downscaled_*.csv"))
-    if not candidates:
+    path = results_dir / "predictions.csv"
+    if not path.exists():
         raise FileNotFoundError(
-            f"No downscaled predictions CSV found in {results_dir}.\n"
+            f"No downscaled predictions CSV found at {path}.\n"
             f"Run the downscale pipeline first (see README.md)."
         )
-    if len(candidates) > 1:
-        candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-        print(f"[warn] multiple downscaled CSVs found, using: {candidates[0].name}")
-    return candidates[0]
+    return path
 
 
 def load_parent_data(
