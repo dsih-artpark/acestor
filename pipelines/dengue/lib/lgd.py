@@ -1,7 +1,7 @@
-"""LGD code lookup, generic by spatial level.
+"""LGD code lookup, generic by state + spatial level.
 
-Reads {region_id, lgd_code, name} from reference/lgd/<state>_<level>.csv —
-a committed, version-controlled snapshot extracted from the geojsons
+Reads {region_id, lgd_code, name} from reference/lgd/<state>/<level>s.csv —
+a committed snapshot extracted from <state>_datasets/lgd_normalized/
 (see scripts/extract_lgd_codes.py).
 
 The pipeline calls `add_lgd_column(df, state, spatial_res, region_col)`
@@ -24,13 +24,17 @@ REFERENCE_DIR = REPO / "reference" / "lgd"
 LGD_COLUMN = "lgdCode"
 
 
+def _lookup_path(state: str, spatial_res: str) -> Path:
+    return REFERENCE_DIR / state.lower() / f"{spatial_res.lower()}s.csv"
+
+
 @lru_cache(maxsize=32)
 def lgd_code_lookup(state: str, spatial_res: str) -> dict[str, str]:
     """Return {region_id: lgd_code} for the given state + spatial level.
 
     Missing CSV → empty dict (caller decides whether to warn/skip).
     """
-    path = REFERENCE_DIR / f"{state.lower()}_{spatial_res.lower()}.csv"
+    path = _lookup_path(state, spatial_res)
     if not path.exists():
         return {}
     df = pd.read_csv(path, dtype=str)
@@ -55,35 +59,45 @@ def add_lgd_column(
     if not lookup:
         log.warning(
             "add_lgd_column: no LGD lookup table for state=%r spatial_res=%r "
-            "(expected reference/lgd/%s_%s.csv) — lgdCode column not added",
+            "(expected %s) — lgdCode column not added. Regenerate with: "
+            "uv run python scripts/extract_lgd_codes.py --state %s",
             state,
             spatial_res,
-            state.lower(),
-            spatial_res.lower(),
+            _lookup_path(state, spatial_res).relative_to(REPO),
+            state.upper(),
         )
         return df
     df = df.copy()
     df[LGD_COLUMN] = df[region_col].map(lookup)
+    # Place lgdCode immediately after the region column for readability.
+    cols = [c for c in df.columns if c != LGD_COLUMN]
+    insert_at = cols.index(region_col) + 1
+    cols.insert(insert_at, LGD_COLUMN)
+    df = df[cols]
     unmapped = df.loc[df[LGD_COLUMN].isna(), region_col].unique()
     if len(unmapped):
         log.warning(
-            "add_lgd_column: %d region(s) have no LGD code in "
-            "reference/lgd/%s_%s.csv — lgdCode will be NaN: %s",
+            "add_lgd_column: %d region(s) have no LGD code in %s "
+            "— lgdCode will be NaN: %s",
             len(unmapped),
-            state.lower(),
-            spatial_res.lower(),
+            _lookup_path(state, spatial_res).relative_to(REPO),
             sorted(map(str, unmapped))[:20],
         )
     return df
 
 
-def infer_state_from_geojson_path(geojson_base_path: str) -> str | None:
-    """Best-effort: extract state code from a geojson base path.
+def require_state(config: dict) -> str:
+    """Return `state` from config, raising a clear error if absent.
 
-    `ap_datasets/geojsons/geojsons_AP` → 'ap'
-    `od_datasets/geojsons/geojsons_OD` → 'od'
+    The state must be declared at the top level of the run config (e.g. `state: "AP"`)
+    so the predictions writers know which `reference/lgd/<state>/` subdir to use.
     """
-    name = Path(geojson_base_path).name
-    if "_" in name:
-        return name.rsplit("_", 1)[-1].lower() or None
-    return None
+    state = (config.get("state") or "").strip()
+    if not state:
+        raise ValueError(
+            'Required config field `state` is missing. Add e.g. `state: "AP"` '
+            "at the top level of the run config so the LGD lookup can resolve "
+            "reference/lgd/<state>/<level>s.csv. Supported values: any state "
+            "with a reference/lgd/<state>/ subdirectory."
+        )
+    return state.lower()

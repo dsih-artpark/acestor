@@ -1,3 +1,5 @@
+state: "AP"
+
 pipeline:
   name: dengue
   title: "Dengue Early Warning System — Andhra Pradesh (output: both)"

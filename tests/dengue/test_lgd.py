@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from pipelines.dengue.lib.lgd import (
     LGD_COLUMN,
     add_lgd_column,
-    infer_state_from_geojson_path,
     lgd_code_lookup,
+    require_state,
 )
 
 
@@ -51,12 +52,20 @@ def test_add_lgd_column_noop_when_region_col_missing():
     assert LGD_COLUMN not in out.columns
 
 
-def test_infer_state_from_geojson_path():
-    assert infer_state_from_geojson_path("ap_datasets/geojsons/geojsons_AP") == "ap"
-    assert (
-        infer_state_from_geojson_path("/abs/od_datasets/geojsons/geojsons_OD") == "od"
-    )
+def test_require_state_returns_lowercased():
+    # Configs declare state as UPPERCASE (e.g. "AP"); paths use lowercase.
+    # require_state does the conversion so callers don't have to.
+    assert require_state({"state": "AP"}) == "ap"
+    assert require_state({"state": "OD"}) == "od"
+    # Tolerant of casing typos in config:
+    assert require_state({"state": "ap"}) == "ap"
 
 
-def test_infer_state_returns_none_on_unrecognised_path():
-    assert infer_state_from_geojson_path("/tmp/something") is None
+def test_require_state_raises_when_missing():
+    with pytest.raises(ValueError, match="state"):
+        require_state({})
+
+
+def test_require_state_raises_when_blank():
+    with pytest.raises(ValueError, match="state"):
+        require_state({"state": "   "})

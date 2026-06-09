@@ -35,6 +35,10 @@ LEVEL_FILE: dict[str, str] = {
 }
 
 
+def _plural(level: str) -> str:
+    return LEVEL_FILE[level]
+
+
 def _pipeline_region_id(level: str, region_code: str) -> str:
     width = PIPELINE_REGION_ID_WIDTH[level]
     code = region_code.zfill(width) if width else region_code
@@ -93,7 +97,7 @@ def main() -> None:
             print(f"skip: {source} (no {level} CSV)")
             continue
         rows = _extract(source, level)
-        dest = OUT_DIR / f"{state.lower()}_{level}.csv"
+        dest = OUT_DIR / state.lower() / _plural(level)
         _write_csv(rows, dest)
         print(f"wrote {dest} ({len(rows)} rows)")
 
