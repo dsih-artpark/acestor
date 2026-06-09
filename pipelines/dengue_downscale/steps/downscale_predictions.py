@@ -14,6 +14,7 @@ from pipelines.dengue.configs import (
     _section,
     resolve_threshold_config,
 )
+from pipelines.dengue.lib.lgd import add_lgd_column, require_state
 from pipelines.dengue.lib.thresholds import ThresholdContext
 from pipelines.dengue_downscale.configs import DownscaleConfig
 from pipelines.dengue_downscale.lib.downscale import (
@@ -151,6 +152,10 @@ class DownscalePredictionsStep(BaseStep[DownscalePredictionsInputs, DownscaleRes
                 diag["n_parents_uniform"],
             )
 
+        state = require_state(context.config)
+        child_preds = add_lgd_column(
+            child_preds, state=state, spatial_res=cfg.child_level
+        )
         dest = context.artifact_path("outputs/predictions.csv")
         context.artifacts.write_text(child_preds.to_csv(index=False), dest)
 

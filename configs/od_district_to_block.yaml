@@ -1,3 +1,5 @@
+state: "OD"
+
 pipeline:
   name: dengue_downscale
   title: "Dengue Downscale — Odisha District → Block"

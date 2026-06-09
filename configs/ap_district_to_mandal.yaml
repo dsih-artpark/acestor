@@ -1,3 +1,5 @@
+state: "AP"
+
 pipeline:
   name: dengue_downscale
   title: "Dengue Downscale — AP District → Mandal"
