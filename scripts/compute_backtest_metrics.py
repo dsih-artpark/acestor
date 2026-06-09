@@ -31,7 +31,7 @@ HOW ACTUALS ARE FOUND
 ---------------------
 Predictions in a run cover weeks *after* the run date. The script automatically
 finds the most recent cases CSV across all run artifacts to use as ground truth.
-If you have newer case data, add it under any run's datasets/ folder — it will
+If you have newer case data, add it under any run's inputs/ folder — it will
 be picked up automatically.
 
 ADDING NEW METRICS
@@ -46,7 +46,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import re
 import warnings
 from pathlib import Path
 
@@ -65,12 +64,7 @@ PREPARED_CASES_CSV = (
 )
 
 
-MODEL_FILE_PATTERNS = {
-    "nbr": r"District_nbr_",
-    "rf": r"District_rf_",
-    "xgb": r"District_xgb_",
-    "ensemble": r"District_\d{8}\.csv$",
-}
+MODEL_KEYS = ["nbr", "rf", "xgb", "ensemble"]
 
 MODEL_LABELS = {
     "nbr": "Negative Binomial",
@@ -116,14 +110,12 @@ def classify_who_zone(value: float, t0: float, t1: float, t2: float) -> int | No
 # ---------------------------------------------------------------------------
 
 
-def find_prediction_csv(results_dir: Path, model_key: str) -> Path | None:
-    pattern = MODEL_FILE_PATTERNS[model_key]
-    candidates = [f for f in results_dir.glob("*.csv") if re.search(pattern, f.name)]
-    if len(candidates) == 1:
-        return candidates[0]
-    if len(candidates) > 1:
-        return sorted(candidates)[-1]
-    return None
+def find_prediction_csv(outputs_dir: Path, model_key: str) -> Path | None:
+    if model_key == "ensemble":
+        path = outputs_dir / "predictions.csv"
+    else:
+        path = outputs_dir / "per_model" / f"predictions_{model_key}.csv"
+    return path if path.exists() else None
 
 
 def find_best_cases_csv() -> tuple[Path | None, str, str]:
@@ -145,7 +137,7 @@ def find_best_cases_csv() -> tuple[Path | None, str, str]:
     # --- fallback: most recent sampled CSV inside artifact runs ---
     best_path = None
     best_date = pd.Timestamp.min
-    for csv_path in ARTIFACTS_ROOT.glob("*/datasets/cases_district_sampled.csv"):
+    for csv_path in ARTIFACTS_ROOT.glob("*/inputs/cases_district_sampled.csv"):
         try:
             df = pd.read_csv(
                 csv_path,
@@ -203,8 +195,8 @@ def normalise_threshold_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def load_predictions(results_dir: Path, model_key: str) -> pd.DataFrame | None:
-    csv_path = find_prediction_csv(results_dir, model_key)
+def load_predictions(outputs_dir: Path, model_key: str) -> pd.DataFrame | None:
+    csv_path = find_prediction_csv(outputs_dir, model_key)
     if csv_path is None:
         return None
     df = pd.read_csv(csv_path, parse_dates=["startDatePredictedWeek"])
@@ -298,16 +290,16 @@ def compute_metrics_for_group(group: pd.DataFrame) -> dict:
 
 def evaluate_run(run_dir: Path, actuals: pd.DataFrame) -> list[dict]:
     run_id = run_dir.name
-    results_dir = run_dir / "results"
-    if not results_dir.exists():
+    outputs_dir = run_dir / "outputs"
+    if not outputs_dir.exists():
         print(
-            f"  skip  {run_id}  — no results/ directory (did the pipeline run complete successfully?)"
+            f"  skip  {run_id}  — no outputs/ directory (did the pipeline run complete successfully?)"
         )
         return []
 
     records = []
-    for model_key in MODEL_FILE_PATTERNS:
-        preds = load_predictions(results_dir, model_key)
+    for model_key in MODEL_KEYS:
+        preds = load_predictions(outputs_dir, model_key)
         if preds is None:
             continue
 
@@ -444,7 +436,7 @@ def _zone_color(acc: float | None) -> str:
 
 def build_html_report(json_data: dict, actuals_date: str) -> str:
     runs = list(json_data.keys())
-    models = list(MODEL_FILE_PATTERNS.keys())
+    models = list(MODEL_KEYS)
 
     all_mae = [
         json_data[r][m][th]["mae"]
@@ -903,7 +895,7 @@ examples:
         "--models",
         nargs="+",
         metavar="MODEL",
-        choices=list(MODEL_FILE_PATTERNS.keys()),
+        choices=list(MODEL_KEYS),
         help="Models to evaluate: nbr rf xgb ensemble (default: all)",
     )
     parser.add_argument(
@@ -922,9 +914,7 @@ examples:
 
     # Apply CLI filters to the module-level constants so all helpers respect them
     if args.models:
-        for k in list(MODEL_FILE_PATTERNS.keys()):
-            if k not in args.models:
-                del MODEL_FILE_PATTERNS[k]
+        MODEL_KEYS[:] = [k for k in MODEL_KEYS if k in args.models]
     if args.method:
         THRESHOLD_METHODS[:] = [args.method]
 
@@ -974,8 +964,8 @@ examples:
             "\nNo metrics could be computed. Common reasons:\n"
             "  1. The run date is too recent — predictions cover future weeks that have no actuals yet.\n"
             "     Fix: use a run_date at least 5–6 weeks before today.\n"
-            "  2. The run's results/ folder has no prediction CSVs.\n"
-            "     Check: ls artifacts/ap/<run-id>/results/\n"
+            "  2. The run's outputs/ folder has no prediction CSVs.\n"
+            "     Check: ls artifacts/ap/<run-id>/outputs/ artifacts/ap/<run-id>/outputs/per_model/\n"
             "  3. The model was filtered out with --models.\n"
             "     Check: re-run without --models to see all models."
         )
@@ -1004,7 +994,7 @@ examples:
     html_path.write_text(html)
 
     print(f"\nOutputs written to {output_dir}/")
-    print("  metrics_report.html     ← open this in your browser")
+    print(f"  open: file://{html_path.resolve()}")
     print("  metrics_summary.csv")
     print("  metrics_per_week.csv")
     print("  metrics_per_district.csv")
