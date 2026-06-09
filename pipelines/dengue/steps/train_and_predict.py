@@ -16,6 +16,8 @@ from pipelines.dengue.configs import (
 )
 from pipelines.dengue.lib import predictions as pred_lib
 from pipelines.dengue.lib import zones
+from pipelines.dengue.lib.lgd import add_lgd_column, infer_state_from_geojson_path
+from pipelines.dengue.sources.filesystem import get_geojson_base_dir
 from pipelines.dengue.lib.thresholds import icmr_quartile_zones
 from pipelines.dengue.lib.ensembles import get_ensemble
 from pipelines.dengue.lib.models import get_model, ModelContext
@@ -282,6 +284,11 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
 
             if cfg.spatial_res in classified.columns and cfg.spatial_res != "regionID":
                 classified = classified.drop(columns=[cfg.spatial_res])
+            state = infer_state_from_geojson_path(get_geojson_base_dir())
+            if state:
+                classified = add_lgd_column(
+                    classified, state=state, spatial_res=cfg.spatial_res
+                )
             dest = context.artifact_path(dest_key)
             context.artifacts.write_text(classified.to_csv(index=False), dest)
             context.log.info(
