@@ -12,6 +12,19 @@ downscale:
   cases_csv: "od_datasets/prepared_data/block/cases_daily.csv"
   geojson_base_path: "od_datasets/geojsons/geojsons_OD"
 
+thresholds:
+  region_type: block
+  list_alpha: [1.0, 2.0]
+  classification_method: who
+  methods: [historical, prev_nweeks]
+  method_configs:
+    prev_nweeks:
+      n_weeks: 4
+    historical:
+      historical_n_years: 4
+      excluded_years: []
+      included_years: []
+
 storages:
   artifacts:
     kind: filesystem
