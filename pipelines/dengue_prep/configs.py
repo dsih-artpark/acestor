@@ -89,6 +89,62 @@ class PrepCaseDownloadConfig:
 
 
 @dataclass(frozen=True)
+class PrepGeocodingConfig:
+    """Configures the geocode → spatial-join resolver for ``region_id``.
+
+    When ``enabled`` is True and the IHIP file lacks an LGD code column, the
+    case parser geocodes ``address_column`` (composed with ``context_columns``
+    for disambiguation), validates the result against tokens from the same
+    context columns, retries with area-only composition if validation fails,
+    and PIPs the validated coords against the configured region's geojson
+    layer to produce ``region_id``. See ``lib/geocoding.py`` for the gory bits.
+
+    Default is ``enabled=False`` — opt in per pipeline config.
+    """
+
+    enabled: bool
+    address_column: str
+    context_columns: tuple[str, ...]
+    cache_file: str  # JSON cache path; persists across runs
+    extra_stopwords: tuple[str, ...]  # appended to DEFAULT_STOPWORDS in geocoding.py
+    require_address: bool  # drop rows where address_column is empty
+    require_validation: (
+        bool  # drop rows that fail validation (vs keeping w/ NaN region_id)
+    )
+
+    @classmethod
+    def from_raw(cls, raw: Mapping[str, Any] | None) -> PrepGeocodingConfig:
+        raw = raw or {}
+
+        def _s(v: Any) -> str:
+            return "" if v is None else str(v).strip()
+
+        ctx = raw.get("context_columns", [])
+        if not isinstance(ctx, list):
+            raise ValueError(
+                "geocoding.context_columns must be a list of column names "
+                f"(got {type(ctx).__name__})"
+            )
+        extra_sw = raw.get("extra_stopwords", [])
+        if not isinstance(extra_sw, list):
+            raise ValueError(
+                "geocoding.extra_stopwords must be a list of tokens "
+                f"(got {type(extra_sw).__name__})"
+            )
+
+        return cls(
+            enabled=bool(raw.get("enabled", False)),
+            address_column=_s(raw.get("address_column", "")),
+            context_columns=tuple(_s(c) for c in ctx if _s(c)),
+            cache_file=_s(raw.get("cache_file", "./cache/geocode_cache.json"))
+            or "./cache/geocode_cache.json",
+            extra_stopwords=tuple(_s(w).lower() for w in extra_sw if _s(w)),
+            require_address=bool(raw.get("require_address", True)),
+            require_validation=bool(raw.get("require_validation", True)),
+        )
+
+
+@dataclass(frozen=True)
 class PrepCaseParseConfig:
     region_types: list[str]
     date_start: str
@@ -99,9 +155,13 @@ class PrepCaseParseConfig:
     )
     lat_column: str  # latitude column name for spatial join fallback
     lon_column: str  # longitude column name for spatial join fallback
+    header_row: (
+        int  # 0-indexed row containing column headers (banner-row exports use 1)
+    )
     filters: list[
         dict[str, Any]
     ]  # [{column: str, values: [str, ...]}, ...]; AND across entries, OR within values
+    geocoding: PrepGeocodingConfig  # opt-in geocode → PIP resolver (default disabled)
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any]) -> PrepCaseParseConfig:
@@ -126,6 +186,12 @@ class PrepCaseParseConfig:
             if col and vals:
                 filters.append({"column": col, "values": vals})
 
+        geocoding = PrepGeocodingConfig.from_raw(raw.get("geocoding"))
+        if geocoding.enabled and not geocoding.address_column:
+            raise ValueError(
+                "data.case_parse.geocoding.enabled=true requires address_column to be set"
+            )
+
         return cls(
             region_types=region_types,
             date_start=_s(raw.get("date_start", "")),
@@ -135,7 +201,9 @@ class PrepCaseParseConfig:
             lgd_code_column=_s(raw.get("lgd_code_column", "")),
             lat_column=_s(raw.get("lat_column", "Latitude")) or "Latitude",
             lon_column=_s(raw.get("lon_column", "Longitude")) or "Longitude",
+            header_row=int(raw.get("header_row", 0)),
             filters=filters,
+            geocoding=geocoding,
         )
 
 

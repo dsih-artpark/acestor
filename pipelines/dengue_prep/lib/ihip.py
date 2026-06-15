@@ -3,17 +3,23 @@
 Each row in the IHIP linelist represents one confirmed positive case. Aggregation
 is a row count grouped by (region_id, date) → case_count.
 
-Region ID resolution — two strategies, tried in this order:
+Region ID resolution — three strategies, tried in this priority order:
 
 1. LGD code column (if configured via ``lgd_code_column`` and present in the file)
-   The LGD district code (integer) maps directly to region_id as
+   The LGD code (integer) maps directly to region_id as
    ``"{region_type}_{code}"``, e.g. District Code 502 → ``district_502``.
-   No GeoJSON lookup required. Fast and exact.
+   No GeoJSON lookup required. Fast and exact. Preferred when available.
 
-2. Spatial join (lat/lon point-in-polygon via GeoJSON)
-   Used when no LGD code column is available or configured.
-   Each row's (Latitude, Longitude) is matched against the GeoJSON polygons for
-   the configured region_type. Works for any region_type (district, zone, etc.).
+2. Geocoding (if ``geocoding.enabled`` is True in config)
+   Used when the IHIP file has neither an LGD code column nor reliable lat/lon —
+   only a free-text address column. Each row's address (composed with context
+   columns for disambiguation) is geocoded via Google, validated against
+   source-specific tokens (Murugeshpalya-bug guard — see ``lib/geocoding.py``),
+   and the resulting coords are PIP'd against the region's geojson layer.
+
+3. Spatial join (lat/lon point-in-polygon via GeoJSON)
+   Used as a fallback when the file already has lat/lon columns and no other
+   resolver is configured. Works for any region_type (district, ward, etc.).
 
 Multiple files dropped into the folder are all read, merged, and deduplicated.
 If the same (region_id, date) appears across files, the last-processed value wins
@@ -29,6 +35,12 @@ import geopandas as gpd
 import pandas as pd
 from shapely.geometry import Point
 
+from pipelines.dengue_prep.configs import PrepGeocodingConfig
+from pipelines.dengue_prep.lib.geocoding import (
+    DEFAULT_STOPWORDS,
+    resolve_via_geocode,
+)
+
 log = logging.getLogger(__name__)
 
 DEFAULT_DATE_COLUMN = "Sample Collected Date"
@@ -36,15 +48,20 @@ DEFAULT_LATITUDE_COLUMN = "Latitude"
 DEFAULT_LONGITUDE_COLUMN = "Longitude"
 
 
-def _read_file(path: Path) -> pd.DataFrame:
-    """Read a single IHIP file (Excel or CSV). For Excel, all sheets are concatenated."""
+def _read_file(path: Path, header_row: int = 0) -> pd.DataFrame:
+    """Read a single IHIP file (Excel or CSV). For Excel, all sheets are concatenated.
+
+    ``header_row`` is the 0-indexed row containing column headers. The standard
+    IHIP exports have headers in row 0; some weekly state exports (e.g. BBMP)
+    prepend a banner / title row, in which case set ``header_row=1``.
+    """
     suffix = path.suffix.lower()
     if suffix in (".xlsx", ".xls"):
         xl = pd.ExcelFile(path)
-        sheets = [xl.parse(sheet) for sheet in xl.sheet_names]
+        sheets = [xl.parse(sheet, header=header_row) for sheet in xl.sheet_names]
         return pd.concat(sheets, ignore_index=True)
     if suffix == ".csv":
-        return pd.read_csv(path, low_memory=False)
+        return pd.read_csv(path, low_memory=False, header=header_row)
     raise ValueError(
         f"ihip parser: unsupported file type {suffix!r} for file {path.name!r}. "
         "Supported formats: .xlsx, .xls, .csv"
@@ -66,34 +83,29 @@ def _detect_resolution_method(
     lat_column: str,
     lon_column: str,
     path: Path,
+    geocoding_cfg: PrepGeocodingConfig | None = None,
 ) -> str:
-    """Determine whether to use LGD code or spatial join for this file.
+    """Determine the region_id resolution method for this file.
 
-    Returns 'lgd' or 'spatial'.
-    Logs a warning if lgd_code_column was configured but is absent (falls back to spatial).
-    Raises if neither LGD nor lat/lon columns are available.
+    Returns one of: ``'lgd'``, ``'geocode'``, ``'spatial'``.
+
+    Priority order (highest first):
+      1. ``'lgd'``    — if ``lgd_code_column`` is configured AND present in the file
+      2. ``'geocode'`` — if ``geocoding_cfg.enabled`` AND the address column is present
+      3. ``'spatial'`` — if ``lat_column``/``lon_column`` are present
+
+    Logs a warning if a higher-priority resolver was configured but its
+    column(s) are missing — falls through to the next available option.
+    Raises if no resolver applies.
     """
     cols = set(df.columns)
-    has_lgd = lgd_code_column and lgd_code_column in cols
+    has_lgd = bool(lgd_code_column) and lgd_code_column in cols
+    has_geocode = (
+        geocoding_cfg is not None
+        and geocoding_cfg.enabled
+        and geocoding_cfg.address_column in cols
+    )
     has_latlon = lat_column in cols and lon_column in cols
-
-    if lgd_code_column and not has_lgd:
-        if has_latlon:
-            log.warning(
-                "ihip parser: file %r is missing configured LGD code column %r — "
-                "falling back to lat/lon spatial join (using columns %r, %r).",
-                path.name,
-                lgd_code_column,
-                lat_column,
-                lon_column,
-            )
-            return "spatial"
-        raise ValueError(
-            f"ihip parser: file {path.name!r} is missing LGD code column {lgd_code_column!r} "
-            f"and has no lat/lon columns ({lat_column!r}, {lon_column!r}). "
-            f"Cannot resolve region_id.\n"
-            f"Found columns: {sorted(cols)}"
-        )
 
     if has_lgd:
         log.info(
@@ -102,6 +114,30 @@ def _detect_resolution_method(
             lgd_code_column,
         )
         return "lgd"
+
+    if lgd_code_column and not has_lgd:
+        log.warning(
+            "ihip parser: file %r is missing configured LGD code column %r — "
+            "trying next resolver",
+            path.name,
+            lgd_code_column,
+        )
+
+    if has_geocode:
+        log.info(
+            "ihip parser: file %r → using geocoding resolver (address column %r)",
+            path.name,
+            geocoding_cfg.address_column,
+        )
+        return "geocode"
+
+    if geocoding_cfg is not None and geocoding_cfg.enabled and not has_geocode:
+        log.warning(
+            "ihip parser: file %r geocoding enabled but address column %r is missing — "
+            "trying next resolver",
+            path.name,
+            geocoding_cfg.address_column,
+        )
 
     if has_latlon:
         log.info(
@@ -113,8 +149,11 @@ def _detect_resolution_method(
         return "spatial"
 
     raise ValueError(
-        f"ihip parser: file {path.name!r} has neither LGD code column nor "
-        f"lat/lon columns ({lat_column!r}, {lon_column!r}). Cannot resolve region_id.\n"
+        f"ihip parser: file {path.name!r} has no resolvable region_id source.\n"
+        f"  configured LGD column: {lgd_code_column!r} (present={has_lgd})\n"
+        f"  geocoding enabled: {bool(geocoding_cfg and geocoding_cfg.enabled)} "
+        f"(address column present={has_geocode})\n"
+        f"  lat/lon columns: ({lat_column!r}, {lon_column!r}) (present={has_latlon})\n"
         f"Found columns: {sorted(cols)}"
     )
 
@@ -232,6 +271,70 @@ def _resolve_via_spatial_join(
     return joined.set_index("idx")["region_id"].reindex(df.index).values
 
 
+def _apply_geocode_resolver(
+    df: pd.DataFrame,
+    cfg: PrepGeocodingConfig,
+    region_type: str,
+    geojson_base: str,
+    path: Path,
+) -> pd.DataFrame:
+    """Run the geocode → spatial-join resolver and apply drop/keep policies.
+
+    Returns the (possibly row-filtered) DataFrame with ``region_id`` attached.
+    Rows where geocoding failed get ``NaN`` initially; whether they're kept
+    or dropped is controlled by ``cfg.require_validation``. Rows with empty
+    addresses are dropped upfront when ``cfg.require_address`` is True.
+    """
+    addr_col = cfg.address_column
+
+    if cfg.require_address:
+        before = len(df)
+        has_addr = df[addr_col].notna() & (df[addr_col].astype(str).str.strip() != "")
+        df = df.loc[has_addr].copy()
+        dropped = before - len(df)
+        if dropped:
+            log.warning(
+                "ihip parser: file %r dropped %d row(s) with missing %r "
+                "(geocoding.require_address=true)",
+                path.name,
+                dropped,
+                addr_col,
+            )
+
+    # Geojson layer is loaded once internally by resolve_via_geocode (handles
+    # both <base>/<region_type>/ and <base>/<region_type>s/ layouts).
+    geo_dir = Path(geojson_base) / region_type
+    if not geo_dir.is_dir():
+        geo_dir = Path(geojson_base) / f"{region_type}s"
+
+    stopwords = frozenset(DEFAULT_STOPWORDS | set(cfg.extra_stopwords))
+    region_ids = resolve_via_geocode(
+        df,
+        address_column=addr_col,
+        context_columns=cfg.context_columns,
+        cache_file=cfg.cache_file,
+        geojson_dir=geo_dir,
+        stopwords=stopwords,
+    )
+    df = df.copy()
+    df["region_id"] = region_ids
+
+    if cfg.require_validation:
+        before = len(df)
+        df = df.loc[df["region_id"].notna()].copy()
+        dropped = before - len(df)
+        if dropped:
+            log.warning(
+                "ihip parser: file %r dropped %d row(s) where geocoding "
+                "failed validation or PIP'd outside %s polygons "
+                "(geocoding.require_validation=true)",
+                path.name,
+                dropped,
+                region_type,
+            )
+    return df
+
+
 def parse_ihip_files(
     folder: str,
     region_type: str,
@@ -241,6 +344,8 @@ def parse_ihip_files(
     lat_column: str = DEFAULT_LATITUDE_COLUMN,
     lon_column: str = DEFAULT_LONGITUDE_COLUMN,
     filters: list[dict] | None = None,
+    geocoding_cfg: PrepGeocodingConfig | None = None,
+    header_row: int = 0,
 ) -> pd.DataFrame:
     """Read all IHIP files from folder, aggregate to (date, region_id, case_count).
 
@@ -289,7 +394,7 @@ def parse_ihip_files(
         [f.name for f in files],
     )
     for path in files:
-        df = _read_file(path)
+        df = _read_file(path, header_row=header_row)
         log.info("ihip parser: file %r → read %d rows", path.name, len(df))
         _validate_columns(df, date_column, path)
 
@@ -314,7 +419,7 @@ def parse_ihip_files(
                 before,
             )
         method = _detect_resolution_method(
-            df, lgd_code_column, lat_column, lon_column, path
+            df, lgd_code_column, lat_column, lon_column, path, geocoding_cfg
         )
 
         # Parse dates per file — fail loudly on unparseable values
@@ -340,6 +445,13 @@ def parse_ihip_files(
 
         if method == "lgd":
             df["region_id"] = _resolve_via_lgd(df, lgd_code_column, region_type)
+        elif method == "geocode":
+            assert (
+                geocoding_cfg is not None
+            )  # for type-checker; _detect_resolution_method guarantees
+            df = _apply_geocode_resolver(
+                df, geocoding_cfg, region_type, geojson_base, path
+            )
         else:
             df["region_id"] = _resolve_via_spatial_join(
                 df, geojson_base, region_type, lat_column, lon_column
