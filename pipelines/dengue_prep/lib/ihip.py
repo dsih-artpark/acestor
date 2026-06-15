@@ -35,6 +35,11 @@ DEFAULT_DATE_COLUMN = "Sample Collected Date"
 DEFAULT_LATITUDE_COLUMN = "Latitude"
 DEFAULT_LONGITUDE_COLUMN = "Longitude"
 
+# Tolerance for snapping points just outside a polygon to its nearest region.
+# Beyond this distance (in metres, EPSG:32644) a point is considered genuinely
+# out of bounds and dropped with a warning rather than silently snapped.
+SPATIAL_JOIN_NEAREST_TOLERANCE_M = 1000.0
+
 
 def _read_file(path: Path) -> pd.DataFrame:
     """Read a single IHIP file (Excel or CSV). For Excel, all sheets are concatenated."""
@@ -166,14 +171,6 @@ def _resolve_via_spatial_join(
     lon_column: str,
 ) -> pd.Series:
     """Spatial join: assign region_id based on which polygon each lat/lon falls in."""
-    null_mask = df[lat_column].isna() | df[lon_column].isna()
-    if null_mask.any():
-        raise ValueError(
-            f"ihip parser: {null_mask.sum()} rows have missing {lat_column!r}/{lon_column!r}. "
-            "Cannot perform spatial join. Either fix the data or configure "
-            "lgd_code_column in your config to use LGD code lookup instead."
-        )
-
     gdf_regions = _load_geojson(geojson_base, region_type)
 
     geometry = [Point(lon, lat) for lon, lat in zip(df[lon_column], df[lat_column])]
@@ -204,11 +201,14 @@ def _resolve_via_spatial_join(
             region_type,
         )
         unmatched_points = gdf_points[gdf_points["idx"].isin(unmatched_idx)].copy()
-        # Reproject to metric CRS for correct distance calculation
+        # Reproject to metric CRS so max_distance is in metres.
         unmatched_proj = unmatched_points.to_crs("EPSG:32644")
         regions_proj = gdf_regions[["region_id", "geometry"]].to_crs("EPSG:32644")
         nearest = gpd.sjoin_nearest(
-            unmatched_proj, regions_proj, how="left"
+            unmatched_proj,
+            regions_proj,
+            how="left",
+            max_distance=SPATIAL_JOIN_NEAREST_TOLERANCE_M,
         ).drop_duplicates(subset=["idx"], keep="first")
         idx_to_region = nearest.set_index("idx")["region_id"]
         joined.loc[joined["idx"].isin(unmatched_idx), "region_id"] = (
@@ -222,14 +222,18 @@ def _resolve_via_spatial_join(
         sample = df.loc[still_unmatched[:5], [lat_column, lon_column]].to_dict(
             "records"
         )
-        raise ValueError(
-            f"ihip parser: {len(still_unmatched)} row(s) could not be matched to any "
-            f"{region_type} polygon even after nearest-neighbour fallback.\n"
-            f"Sample coordinates: {sample}\n"
-            "Check that coordinates are valid and within the expected region."
+        log.warning(
+            "ihip parser: dropping %d of %d row(s) whose coordinates fall outside "
+            "every %s polygon (further than %.0fm from the nearest one). "
+            "Sample: %s",
+            len(still_unmatched),
+            n_total,
+            region_type,
+            SPATIAL_JOIN_NEAREST_TOLERANCE_M,
+            sample,
         )
 
-    return joined.set_index("idx")["region_id"].reindex(df.index).values
+    return joined.set_index("idx")["region_id"].reindex(df.index)
 
 
 def parse_ihip_files(
@@ -341,9 +345,34 @@ def parse_ihip_files(
         if method == "lgd":
             df["region_id"] = _resolve_via_lgd(df, lgd_code_column, region_type)
         else:
+            n_before_coord_drop = len(df)
+            df = df.dropna(subset=[lat_column, lon_column])
+            n_dropped_coords = n_before_coord_drop - len(df)
+            if n_dropped_coords:
+                log.warning(
+                    "ihip parser: file %r dropped %d row(s) with missing %r/%r "
+                    "before spatial join.",
+                    path.name,
+                    n_dropped_coords,
+                    lat_column,
+                    lon_column,
+                )
+            if df.empty:
+                continue
             df["region_id"] = _resolve_via_spatial_join(
                 df, geojson_base, region_type, lat_column, lon_column
             )
+            n_before_region_drop = len(df)
+            df = df.dropna(subset=["region_id"])
+            n_dropped_oob = n_before_region_drop - len(df)
+            if n_dropped_oob:
+                log.warning(
+                    "ihip parser: file %r dropped %d row(s) whose coordinates did "
+                    "not fall within any %s polygon.",
+                    path.name,
+                    n_dropped_oob,
+                    region_type,
+                )
 
         log.info(
             "ihip parser: file %r → %d rows, method=%s",
@@ -352,6 +381,13 @@ def parse_ihip_files(
             method,
         )
         frames.append(df[["date", "region_id"]].copy())
+
+    if not frames:
+        log.warning(
+            "ihip parser: all input rows were dropped (missing dates / coordinates "
+            "/ out-of-bounds points). Returning empty result."
+        )
+        return pd.DataFrame(columns=["date", "region_id", "case_count"])
 
     combined = pd.concat(frames, ignore_index=True)
     log.info(
