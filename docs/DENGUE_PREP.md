@@ -88,16 +88,29 @@ to stay within the 600 API-unit/min rate limit.
 
 ## Case region ID resolution
 
-Two strategies, tried in order:
+Three strategies, tried in order of priority:
 
 1. **LGD code column** — if `data.case_parse.lgd_code_column` is configured and
    the column is present in the file, the integer code maps directly to
    `{region_type}_{code}` (e.g. District Code 502 → `district_502`). Fast and
    exact.
 
-2. **Spatial join** — if no LGD code column is available, each row's
-   `(Latitude, Longitude)` is matched against GeoJSON polygons for the configured
-   `region_type`. Requires `data.geojson.base_path` to be set.
+2. **Geocode → spatial join** — if `data.case_parse.geocoding.enabled` is `true`
+   and the source has neither an LGD code column nor lat/lon, each row's
+   `address_fields` are composed and sent to Google's Geocoding API (with a
+   persistent JSON cache). Results are validated against the source's named area
+   (fuzzy ≤ 1 char, generic stopwords filtered) and against
+   `restrict_admin_area_tokens` (e.g. require `"Karnataka"` to drop cross-state
+   hits). Validated coords are then PIP'd against the region geojson layer.
+   Rows that don't resolve on `address_fields` are retried with
+   `fallback_address_fields` (typically a facility-name column).
+   `bounds` viewport-biases the geocoder toward the admin region.
+
+   See `data.case_parse.geocoding` in the [Config Reference](CONFIG_REFERENCE.md#datacaseparsegeocoding).
+
+3. **Spatial join (direct)** — if a file already has trustworthy
+   `(Latitude, Longitude)` columns, those are matched against GeoJSON polygons
+   for the configured `region_type`. Requires `data.geojson.base_path` to be set.
 
 ---
 

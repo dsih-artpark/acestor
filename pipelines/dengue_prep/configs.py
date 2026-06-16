@@ -89,6 +89,87 @@ class PrepCaseDownloadConfig:
 
 
 @dataclass(frozen=True)
+class PrepGeocodingConfig:
+    """Configures the geocode → spatial-join resolver for ``region_id``.
+
+    When ``enabled`` is True and the IHIP file lacks an LGD code column, the
+    case parser composes each row's address by concatenating the column values
+    listed in ``address_fields``, sends to Google, validates that the response
+    references at least one specific token from the same fields (fuzzy ≤ 1
+    char), and PIPs the validated coords against the region's geojson layer.
+
+    Rows that don't resolve on the primary fields are retried with
+    ``fallback_address_fields`` if set — useful when ``Patient Address``
+    can be cross-state or missing, and a ``Facility`` column gives a more
+    reliable in-jurisdiction signal.
+
+    Default is ``enabled=False`` — opt in per pipeline config.
+    """
+
+    enabled: bool
+    address_fields: tuple[str, ...]
+    fallback_address_fields: tuple[str, ...]
+    cache_file: str
+    extra_stopwords: tuple[str, ...]
+    require_address: bool  # drop rows where the first address_field is empty
+    require_validation: (
+        bool  # drop rows that fail both passes (vs keeping w/ NaN region_id)
+    )
+    # (min_lat, min_lon, max_lat, max_lon) viewport biasing the geocoder.
+    # Soft bias only — Google may still return a hit outside the box.
+    bounds: tuple[float, float, float, float] | None
+    # Substrings that must appear in Google's formatted_address (case-
+    # insensitive) for the result to be accepted. Hard reject — used to
+    # drop cross-state hits (e.g. require "Karnataka" so a Jhansi UP
+    # geocode is thrown out before PIP).
+    restrict_admin_area_tokens: tuple[str, ...]
+
+    @classmethod
+    def from_raw(cls, raw: Mapping[str, Any] | None) -> PrepGeocodingConfig:
+        raw = raw or {}
+
+        def _s(v: Any) -> str:
+            return "" if v is None else str(v).strip()
+
+        def _list(key: str) -> list[str]:
+            value = raw.get(key, [])
+            if not isinstance(value, list):
+                raise ValueError(
+                    f"geocoding.{key} must be a list of column names "
+                    f"(got {type(value).__name__})"
+                )
+            return [_s(c) for c in value if _s(c)]
+
+        bounds_raw = raw.get("bounds")
+        bounds: tuple[float, float, float, float] | None = None
+        if bounds_raw is not None:
+            if not isinstance(bounds_raw, list) or len(bounds_raw) != 4:
+                raise ValueError(
+                    "geocoding.bounds must be a list of 4 numbers "
+                    "[min_lat, min_lon, max_lat, max_lon]"
+                )
+            bounds = (
+                float(bounds_raw[0]),
+                float(bounds_raw[1]),
+                float(bounds_raw[2]),
+                float(bounds_raw[3]),
+            )
+
+        return cls(
+            enabled=bool(raw.get("enabled", False)),
+            address_fields=tuple(_list("address_fields")),
+            fallback_address_fields=tuple(_list("fallback_address_fields")),
+            cache_file=_s(raw.get("cache_file", "./cache/geocode_cache.json"))
+            or "./cache/geocode_cache.json",
+            extra_stopwords=tuple(_s(w).lower() for w in _list("extra_stopwords")),
+            require_address=bool(raw.get("require_address", True)),
+            require_validation=bool(raw.get("require_validation", True)),
+            bounds=bounds,
+            restrict_admin_area_tokens=tuple(_list("restrict_admin_area_tokens")),
+        )
+
+
+@dataclass(frozen=True)
 class PrepCaseParseConfig:
     region_types: list[str]
     date_start: str
@@ -99,9 +180,13 @@ class PrepCaseParseConfig:
     )
     lat_column: str  # latitude column name for spatial join fallback
     lon_column: str  # longitude column name for spatial join fallback
+    header_row: (
+        int  # 0-indexed row containing column headers (banner-row exports use 1)
+    )
     filters: list[
         dict[str, Any]
     ]  # [{column: str, values: [str, ...]}, ...]; AND across entries, OR within values
+    geocoding: PrepGeocodingConfig  # opt-in geocode → PIP resolver (default disabled)
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any]) -> PrepCaseParseConfig:
@@ -126,6 +211,13 @@ class PrepCaseParseConfig:
             if col and vals:
                 filters.append({"column": col, "values": vals})
 
+        geocoding = PrepGeocodingConfig.from_raw(raw.get("geocoding"))
+        if geocoding.enabled and not geocoding.address_fields:
+            raise ValueError(
+                "data.case_parse.geocoding.enabled=true requires address_fields to be "
+                "a non-empty list of column names"
+            )
+
         return cls(
             region_types=region_types,
             date_start=_s(raw.get("date_start", "")),
@@ -135,7 +227,9 @@ class PrepCaseParseConfig:
             lgd_code_column=_s(raw.get("lgd_code_column", "")),
             lat_column=_s(raw.get("lat_column", "Latitude")) or "Latitude",
             lon_column=_s(raw.get("lon_column", "Longitude")) or "Longitude",
+            header_row=int(raw.get("header_row", 0)),
             filters=filters,
+            geocoding=geocoding,
         )
 
 

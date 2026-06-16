@@ -28,6 +28,7 @@ from pipelines.dengue_prep.configs import (
     PrepOutputConfig,
     _section,
 )
+from pipelines.dengue_prep.lib.date_range import resolve_date_range
 from pipelines.dengue_prep.lib.ihip import parse_ihip_files
 from pipelines.dengue_prep.lib.upsert import write_csv as _write_csv
 from pipelines.dengue_prep.results import (
@@ -48,14 +49,16 @@ class PrepParseCaseDataStep(BaseStep[PrepParseCaseDataInputs, PrepCaseParseResul
         self, context: PipelineContext, inputs: PrepParseCaseDataInputs
     ) -> PrepCaseParseResult:
         data_raw = context.config.get("data") or {}
-        date_range = data_raw.get("date_range") or {}
         top_region_type = str(data_raw.get("region_type", "")).strip()
 
+        # Date window is shared with weather download via data.date_range —
+        # see pipelines/dengue_prep/lib/date_range.py.
+        dr_start, dr_end = resolve_date_range(context.config)
         case_parse_raw = dict(_section(context.config, "data.case_parse"))
-        if date_range.get("start"):
-            case_parse_raw.setdefault("date_start", date_range["start"])
-        if date_range.get("end"):
-            case_parse_raw.setdefault("date_end", date_range["end"])
+        if dr_start:
+            case_parse_raw.setdefault("date_start", dr_start)
+        if dr_end:
+            case_parse_raw.setdefault("date_end", dr_end)
         if top_region_type and not case_parse_raw.get("region_types"):
             case_parse_raw["region_types"] = [top_region_type]
 
@@ -96,6 +99,8 @@ class PrepParseCaseDataStep(BaseStep[PrepParseCaseDataInputs, PrepCaseParseResul
                 lat_column=cfg.lat_column,
                 lon_column=cfg.lon_column,
                 filters=cfg.filters or None,
+                geocoding_cfg=cfg.geocoding,
+                header_row=cfg.header_row,
             )
 
             # Apply date range filter — only if set in config

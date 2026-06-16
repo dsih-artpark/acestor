@@ -115,6 +115,12 @@ data:
       - "district"
     date_start: "2021-09-01"
     date_end: ""
+    date_column: "Sample Collected Date"
+    header_row: 0
+    lgd_code_column: "District Code"
+    filters:
+      - column: "Confirmed Diagnosis"
+        values: ["Dengue"]
 ```
 
 | Key | Type | Default | Notes |
@@ -122,8 +128,57 @@ data:
 | `region_types` | **required** list[string] | — | e.g. `["corp", "zone"]` or `["district"]`. Last entry drives downstream steps |
 | `date_start` | **required** YYYY-MM-DD | — | Earliest case date to include |
 | `date_end` | YYYY-MM-DD | run_date | Latest case date; empty → run_date |
+| `date_column` | string | `"Sample Collected Date"` | Which column in the IHIP file to use as case date |
+| `header_row` | int | `0` | 0-indexed row containing column headers; set to `1` for banner-row exports (BBMP weekly L-forms) |
+| `lgd_code_column` | string | `""` | If set, this column drives the LGD → `{region_type}_{code}` resolver. Empty falls back to spatial join or geocoding |
+| `lat_column` | string | `"Latitude"` | Latitude column for the spatial-join resolver |
+| `lon_column` | string | `"Longitude"` | Longitude column for the spatial-join resolver |
+| `filters` | list[obj] | `[]` | Row-level filters; AND across entries, OR within `values`. Example: keep only confirmed dengue |
+| `geocoding` | object | (disabled) | Optional geocode-then-PIP resolver — see below |
 
 **Accepted region types:** `corp`, `zone`, `ward`, `district`, `subdistrict`, `mandal`
+
+### `data.case_parse.geocoding`
+
+Opt-in resolver for sources that lack both an LGD code column and reliable
+`(Latitude, Longitude)` — only free-text address fields. Composes an address
+per row, sends to Google's Geocoding API (with a persistent JSON cache),
+validates that the response actually references the source's named area
+(fuzzy ≤ 1 char, with a stopword filter), then PIPs the coords against the
+region geojson layer. Disabled by default.
+
+```yaml
+data:
+  case_parse:
+    geocoding:
+      enabled: true
+      address_fields:
+        - "Patient Address"
+        - "Village Or Ward"
+        - "Sub District"
+        - "Ulb"
+      fallback_address_fields:
+        - "Facility Name Lform"
+        - "Village Or Ward"
+        - "Sub District"
+        - "Ulb"
+      cache_file: "cache/gba_geocode_cache.json"
+      bounds: [12.7, 77.3, 13.3, 77.9]
+      restrict_admin_area_tokens:
+        - "Karnataka"
+```
+
+| Key | Type | Default | Notes |
+|---|---|---|---|
+| `enabled` | bool | `false` | Master switch. When `true`, `address_fields` must be non-empty |
+| `address_fields` | list[string] | `[]` | Primary composition — `", "`-joined in order. First entry is also the "primary identifier" for `require_address` |
+| `fallback_address_fields` | list[string] | `[]` | Tried only for rows that didn't resolve on `address_fields` (e.g. cross-state Patient Addresses). Same `", "`-join semantics |
+| `cache_file` | string | `"./cache/geocode_cache.json"` | Persistent JSON cache, keyed by normalised address. Weekly re-runs are zero-cost for already-seen rows |
+| `extra_stopwords` | list[string] | `[]` | Extra tokens (e.g. district / corporation names) to suppress from the validation set — prevents generic words from carrying through a wrong-area Google guess |
+| `require_address` | bool | `true` | Drop rows where the first `address_fields` column is empty (vs carrying them through with `NaN` region_id) |
+| `require_validation` | bool | `true` | Drop rows that fail both primary and fallback passes (vs keeping them with `NaN` region_id) |
+| `bounds` | list[float] (4 items) | `null` | `[min_lat, min_lon, max_lat, max_lon]` viewport biasing the geocoder. **Soft** bias only — pair with `restrict_admin_area_tokens` for a hard reject. The bounds value is also folded into the cache key so bounded and unbounded runs don't collide |
+| `restrict_admin_area_tokens` | list[string] | `[]` | Substrings (case-insensitive) at least one of which must appear in Google's `formatted_address` for the result to be accepted. **Hard** reject — used to drop cross-state hits (e.g. require `"Karnataka"` so a Jhansi UP geocode is rejected before PIP) |
 
 ---
 
