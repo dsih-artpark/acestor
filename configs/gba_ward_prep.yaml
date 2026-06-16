@@ -33,16 +33,26 @@ data:
     # kick in automatically; for now the IHIP files only carry Patient Address.
     geocoding:
       enabled: true
-      address_column: "Patient Address"
-      context_columns:
-        - "Village Or Ward"   # most-specific source token (e.g. "Ward No.21(Hebbala)" → "hebbala")
-        - "Sub District"      # mid-specific (e.g. "Bengaluru North" → "north")
-        - "Ulb"               # broad, mostly stopworded ("Greater Bengaluru Authority")
+      address_fields:
+        # Primary composition — joined as "v1, v2, v3, v4".
+        # First field is also the "primary identifier" for require_address.
+        - "Patient Address"   # specific but can be cross-state (e.g. Jhansi, UP)
+        - "Village Or Ward"   # specific area token (e.g. "Ward No.21(Hebbala)")
+        - "Sub District"      # e.g. "Bengaluru North"
+        - "Ulb"               # "Greater Bengaluru Authority" — broad, mostly stopworded
+      fallback_address_fields:
+        # Tried only for rows that didn't produce a usable ward on the primary
+        # composition. Facility names are well-known to Google AND always in
+        # BBMP, so this recovers cross-state-patient cases like the Jhansi one.
+        - "Facility Name Lform"
+        - "Village Or Ward"
+        - "Sub District"
+        - "Ulb"
       cache_file: "cache/gba_geocode_cache.json"
-      # require_address: true   (default) — drop rows with no Patient Address
-      # require_validation: true (default) — drop rows where geocode didn't
-      # validate or didn't land in any ward polygon. Flip to false to keep
-      # them in cases_daily.csv with NaN region_id (partial-aggregation use).
+      # require_address: true   (default) — drop rows where the first
+      #                                     address_field column is empty.
+      # require_validation: true (default) — drop rows where BOTH passes
+      #                                     failed (no ward attached).
     filters:
       - column: "Confirmed Diagnosis"
         values: ["Dengue"]

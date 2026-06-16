@@ -93,23 +93,27 @@ class PrepGeocodingConfig:
     """Configures the geocode → spatial-join resolver for ``region_id``.
 
     When ``enabled`` is True and the IHIP file lacks an LGD code column, the
-    case parser geocodes ``address_column`` (composed with ``context_columns``
-    for disambiguation), validates the result against tokens from the same
-    context columns, retries with area-only composition if validation fails,
-    and PIPs the validated coords against the configured region's geojson
-    layer to produce ``region_id``. See ``lib/geocoding.py`` for the gory bits.
+    case parser composes each row's address by concatenating the column values
+    listed in ``address_fields``, sends to Google, validates that the response
+    references at least one specific token from the same fields (fuzzy ≤ 1
+    char), and PIPs the validated coords against the region's geojson layer.
+
+    Rows that don't resolve on the primary fields are retried with
+    ``fallback_address_fields`` if set — useful when ``Patient Address``
+    can be cross-state or missing, and a ``Facility`` column gives a more
+    reliable in-jurisdiction signal.
 
     Default is ``enabled=False`` — opt in per pipeline config.
     """
 
     enabled: bool
-    address_column: str
-    context_columns: tuple[str, ...]
-    cache_file: str  # JSON cache path; persists across runs
-    extra_stopwords: tuple[str, ...]  # appended to DEFAULT_STOPWORDS in geocoding.py
-    require_address: bool  # drop rows where address_column is empty
+    address_fields: tuple[str, ...]
+    fallback_address_fields: tuple[str, ...]
+    cache_file: str
+    extra_stopwords: tuple[str, ...]
+    require_address: bool  # drop rows where the first address_field is empty
     require_validation: (
-        bool  # drop rows that fail validation (vs keeping w/ NaN region_id)
+        bool  # drop rows that fail both passes (vs keeping w/ NaN region_id)
     )
 
     @classmethod
@@ -119,26 +123,22 @@ class PrepGeocodingConfig:
         def _s(v: Any) -> str:
             return "" if v is None else str(v).strip()
 
-        ctx = raw.get("context_columns", [])
-        if not isinstance(ctx, list):
-            raise ValueError(
-                "geocoding.context_columns must be a list of column names "
-                f"(got {type(ctx).__name__})"
-            )
-        extra_sw = raw.get("extra_stopwords", [])
-        if not isinstance(extra_sw, list):
-            raise ValueError(
-                "geocoding.extra_stopwords must be a list of tokens "
-                f"(got {type(extra_sw).__name__})"
-            )
+        def _list(key: str) -> list[str]:
+            value = raw.get(key, [])
+            if not isinstance(value, list):
+                raise ValueError(
+                    f"geocoding.{key} must be a list of column names "
+                    f"(got {type(value).__name__})"
+                )
+            return [_s(c) for c in value if _s(c)]
 
         return cls(
             enabled=bool(raw.get("enabled", False)),
-            address_column=_s(raw.get("address_column", "")),
-            context_columns=tuple(_s(c) for c in ctx if _s(c)),
+            address_fields=tuple(_list("address_fields")),
+            fallback_address_fields=tuple(_list("fallback_address_fields")),
             cache_file=_s(raw.get("cache_file", "./cache/geocode_cache.json"))
             or "./cache/geocode_cache.json",
-            extra_stopwords=tuple(_s(w).lower() for w in extra_sw if _s(w)),
+            extra_stopwords=tuple(_s(w).lower() for w in _list("extra_stopwords")),
             require_address=bool(raw.get("require_address", True)),
             require_validation=bool(raw.get("require_validation", True)),
         )
@@ -187,9 +187,10 @@ class PrepCaseParseConfig:
                 filters.append({"column": col, "values": vals})
 
         geocoding = PrepGeocodingConfig.from_raw(raw.get("geocoding"))
-        if geocoding.enabled and not geocoding.address_column:
+        if geocoding.enabled and not geocoding.address_fields:
             raise ValueError(
-                "data.case_parse.geocoding.enabled=true requires address_column to be set"
+                "data.case_parse.geocoding.enabled=true requires address_fields to be "
+                "a non-empty list of column names"
             )
 
         return cls(

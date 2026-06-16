@@ -103,7 +103,8 @@ def _detect_resolution_method(
     has_geocode = (
         geocoding_cfg is not None
         and geocoding_cfg.enabled
-        and geocoding_cfg.address_column in cols
+        and bool(geocoding_cfg.address_fields)
+        and geocoding_cfg.address_fields[0] in cols
     )
     has_latlon = lat_column in cols and lon_column in cols
 
@@ -125,18 +126,23 @@ def _detect_resolution_method(
 
     if has_geocode:
         log.info(
-            "ihip parser: file %r → using geocoding resolver (address column %r)",
+            "ihip parser: file %r → using geocoding resolver (address_fields %r)",
             path.name,
-            geocoding_cfg.address_column,
+            list(geocoding_cfg.address_fields),
         )
         return "geocode"
 
     if geocoding_cfg is not None and geocoding_cfg.enabled and not has_geocode:
+        first = (
+            geocoding_cfg.address_fields[0]
+            if geocoding_cfg.address_fields
+            else "(empty)"
+        )
         log.warning(
-            "ihip parser: file %r geocoding enabled but address column %r is missing — "
+            "ihip parser: file %r geocoding enabled but first address_field %r is missing — "
             "trying next resolver",
             path.name,
-            geocoding_cfg.address_column,
+            first,
         )
 
     if has_latlon:
@@ -148,11 +154,12 @@ def _detect_resolution_method(
         )
         return "spatial"
 
+    geocode_fields = list(geocoding_cfg.address_fields) if geocoding_cfg else []
     raise ValueError(
         f"ihip parser: file {path.name!r} has no resolvable region_id source.\n"
         f"  configured LGD column: {lgd_code_column!r} (present={has_lgd})\n"
         f"  geocoding enabled: {bool(geocoding_cfg and geocoding_cfg.enabled)} "
-        f"(address column present={has_geocode})\n"
+        f"(address_fields={geocode_fields}, primary present={has_geocode})\n"
         f"  lat/lon columns: ({lat_column!r}, {lon_column!r}) (present={has_latlon})\n"
         f"Found columns: {sorted(cols)}"
     )
@@ -285,21 +292,24 @@ def _apply_geocode_resolver(
     or dropped is controlled by ``cfg.require_validation``. Rows with empty
     addresses are dropped upfront when ``cfg.require_address`` is True.
     """
-    addr_col = cfg.address_column
+    primary_col = cfg.address_fields[0] if cfg.address_fields else ""
 
-    if cfg.require_address:
-        before = len(df)
-        has_addr = df[addr_col].notna() & (df[addr_col].astype(str).str.strip() != "")
-        df = df.loc[has_addr].copy()
-        dropped = before - len(df)
-        if dropped:
-            log.warning(
-                "ihip parser: file %r dropped %d row(s) with missing %r "
-                "(geocoding.require_address=true)",
-                path.name,
-                dropped,
-                addr_col,
+    if cfg.require_address and primary_col:
+        if primary_col in df.columns:
+            before = len(df)
+            has_addr = df[primary_col].notna() & (
+                df[primary_col].astype(str).str.strip() != ""
             )
+            df = df.loc[has_addr].copy()
+            dropped = before - len(df)
+            if dropped:
+                log.warning(
+                    "ihip parser: file %r dropped %d row(s) with missing %r "
+                    "(geocoding.require_address=true)",
+                    path.name,
+                    dropped,
+                    primary_col,
+                )
 
     # Geojson layer is loaded once internally by resolve_via_geocode (handles
     # both <base>/<region_type>/ and <base>/<region_type>s/ layouts).
@@ -310,8 +320,8 @@ def _apply_geocode_resolver(
     stopwords = frozenset(DEFAULT_STOPWORDS | set(cfg.extra_stopwords))
     region_ids = resolve_via_geocode(
         df,
-        address_column=addr_col,
-        context_columns=cfg.context_columns,
+        address_fields=cfg.address_fields,
+        fallback_address_fields=cfg.fallback_address_fields,
         cache_file=cfg.cache_file,
         geojson_dir=geo_dir,
         stopwords=stopwords,
