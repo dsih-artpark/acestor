@@ -298,7 +298,14 @@ def test_get_model_raises_for_unknown():
 
 
 def test_train_predict_config_default_models():
+    """NBR was retired from the default ensemble in #63 — opt-in only now."""
     cfg = TrainPredictConfig.from_raw({})
+    assert cfg.models == ["tse"]
+
+
+def test_nbr_still_opt_in_via_explicit_config():
+    """NBR remains registered + selectable — only the implicit default changed."""
+    cfg = TrainPredictConfig.from_raw({"models": ["nbr", "tse"]})
     assert cfg.models == ["nbr", "tse"]
 
 

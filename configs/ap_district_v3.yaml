@@ -65,25 +65,13 @@ thresholds:
 
 model:
   spatial_res: "district"
-  models: [nbr, rf, xgb]      # models to run; predictions are combined via ensemble
+  models: [rf, xgb]           # models to run; predictions are combined via ensemble
   ensemble: mean               # mean | none
   output: both                 # ensemble | per_model | both
   debug: false                 # true → saves X_train, X_test+predictions, feature_importance to artifacts/debug/
 
 # Per-model config. Each model owns its own lag, year filters, and tuning settings.
 model_configs:
-  nbr:
-    data_features:
-      - "case"       # y_train
-      - "recordYear" # year filtering
-      - "ISOWeek"    # one-hot encoded into X_train
-    lag:
-      lag_temp: [12]
-      lag_rainfall: [4]
-      lag_humidity: [4]
-    years_to_exclude: []
-    years_to_include: []
-
   rf:
     lag:
       lag_temp: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]

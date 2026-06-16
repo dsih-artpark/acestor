@@ -59,7 +59,7 @@ thresholds:
 
 model:
   spatial_res: "district"
-  models: [nbr, tse]
+  models: [tse]
   ensemble: mean
   output: both
   data_features:
