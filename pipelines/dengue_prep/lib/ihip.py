@@ -325,6 +325,8 @@ def _apply_geocode_resolver(
         cache_file=cfg.cache_file,
         geojson_dir=geo_dir,
         stopwords=stopwords,
+        bounds=cfg.bounds,
+        restrict_admin_area_tokens=cfg.restrict_admin_area_tokens,
     )
     df = df.copy()
     df["region_id"] = region_ids

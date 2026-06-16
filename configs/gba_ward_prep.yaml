@@ -49,6 +49,14 @@ data:
         - "Sub District"
         - "Ulb"
       cache_file: "cache/gba_geocode_cache.json"
+      # Viewport-bias Google toward Greater Bengaluru. Soft only — pairs
+      # with restrict_admin_area_tokens (below) to hard-reject anything
+      # that still lands outside Karnataka (e.g. cross-state Patient
+      # Addresses like "jhansi, uttar pradesh").
+      # [min_lat, min_lon, max_lat, max_lon]
+      bounds: [12.7, 77.3, 13.3, 77.9]
+      restrict_admin_area_tokens:
+        - "Karnataka"
       # require_address: true   (default) — drop rows where the first
       #                                     address_field column is empty.
       # require_validation: true (default) — drop rows where BOTH passes

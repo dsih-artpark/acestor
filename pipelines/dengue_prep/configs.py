@@ -115,6 +115,14 @@ class PrepGeocodingConfig:
     require_validation: (
         bool  # drop rows that fail both passes (vs keeping w/ NaN region_id)
     )
+    # (min_lat, min_lon, max_lat, max_lon) viewport biasing the geocoder.
+    # Soft bias only — Google may still return a hit outside the box.
+    bounds: tuple[float, float, float, float] | None
+    # Substrings that must appear in Google's formatted_address (case-
+    # insensitive) for the result to be accepted. Hard reject — used to
+    # drop cross-state hits (e.g. require "Karnataka" so a Jhansi UP
+    # geocode is thrown out before PIP).
+    restrict_admin_area_tokens: tuple[str, ...]
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any] | None) -> PrepGeocodingConfig:
@@ -132,6 +140,21 @@ class PrepGeocodingConfig:
                 )
             return [_s(c) for c in value if _s(c)]
 
+        bounds_raw = raw.get("bounds")
+        bounds: tuple[float, float, float, float] | None = None
+        if bounds_raw is not None:
+            if not isinstance(bounds_raw, list) or len(bounds_raw) != 4:
+                raise ValueError(
+                    "geocoding.bounds must be a list of 4 numbers "
+                    "[min_lat, min_lon, max_lat, max_lon]"
+                )
+            bounds = (
+                float(bounds_raw[0]),
+                float(bounds_raw[1]),
+                float(bounds_raw[2]),
+                float(bounds_raw[3]),
+            )
+
         return cls(
             enabled=bool(raw.get("enabled", False)),
             address_fields=tuple(_list("address_fields")),
@@ -141,6 +164,8 @@ class PrepGeocodingConfig:
             extra_stopwords=tuple(_s(w).lower() for w in _list("extra_stopwords")),
             require_address=bool(raw.get("require_address", True)),
             require_validation=bool(raw.get("require_validation", True)),
+            bounds=bounds,
+            restrict_admin_area_tokens=tuple(_list("restrict_admin_area_tokens")),
         )
 
 

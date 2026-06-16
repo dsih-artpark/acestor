@@ -264,15 +264,28 @@ _EMPTY_RESULT: dict[str, Any] = {
 }
 
 
-def _google_geocode_one(addr: str, geolocator: Any) -> dict[str, Any]:
-    """Call Google once. Returns an empty-result dict on null/empty/error."""
+def _google_geocode_one(
+    addr: str,
+    geolocator: Any,
+    bounds: tuple[float, float, float, float] | None = None,
+) -> dict[str, Any]:
+    """Call Google once. Returns an empty-result dict on null/empty/error.
+
+    ``bounds`` (min_lat, min_lon, max_lat, max_lon) is passed as Google's
+    viewport-bias parameter — soft only; results outside the box are still
+    possible and must be filtered downstream via ``restrict_admin_area_tokens``.
+    """
     if addr is None or pd.isna(addr):
         return dict(_EMPTY_RESULT)
     text = str(addr).strip()
     if not text:
         return dict(_EMPTY_RESULT)
+    kwargs: dict[str, Any] = {}
+    if bounds is not None:
+        # geopy accepts [(lat, lon), (lat, lon)] as the SW/NE corners.
+        kwargs["bounds"] = [(bounds[0], bounds[1]), (bounds[2], bounds[3])]
     try:
-        loc = geolocator.geocode(text)
+        loc = geolocator.geocode(text, **kwargs)
     except Exception as exc:  # noqa: BLE001 — log + continue
         log.warning("geocode failed for %r: %s: %s", text, type(exc).__name__, exc)
         return dict(_EMPTY_RESULT)
@@ -289,16 +302,26 @@ def _google_geocode_one(addr: str, geolocator: Any) -> dict[str, Any]:
 
 
 def _geocode_with_cache(
-    addr: str, cache: GeocodeCache, geolocator: Any
+    addr: str,
+    cache: GeocodeCache,
+    geolocator: Any,
+    bounds: tuple[float, float, float, float] | None = None,
 ) -> tuple[dict[str, Any], bool]:
-    """Cached geocode. Returns (result, made_api_call)."""
+    """Cached geocode. Returns (result, made_api_call).
+
+    Cache key includes ``bounds`` when set so a bounded request and an
+    unbounded request for the same address don't share a cache entry
+    (Google can return different hits for each).
+    """
     key = normalize_address(addr)
     if not key:
         return (dict(_EMPTY_RESULT), False)
+    if bounds is not None:
+        key = f"{key}__b={bounds[0]},{bounds[1]},{bounds[2]},{bounds[3]}"
     hit = cache.get(key)
     if hit is not None:
         return (hit, False)
-    result = _google_geocode_one(addr, geolocator)
+    result = _google_geocode_one(addr, geolocator, bounds=bounds)
     cache.put(key, result)
     return (result, True)
 
@@ -315,31 +338,56 @@ class GeocodeResult:
     attempted: bool = False  # False when the composed string was empty
 
 
+def _formatted_address_contains_required(
+    formatted: object, required_tokens: tuple[str, ...] | list[str]
+) -> bool:
+    """True iff ``formatted`` contains at least one of the required substrings.
+
+    Case-insensitive exact substring match — used as a hard cross-state
+    guardrail (e.g. require "Karnataka") so a geocode hit that lands in
+    Jhansi UP is rejected before PIP. Empty token list means "no
+    restriction" → always True.
+    """
+    if not required_tokens:
+        return True
+    if formatted is None or pd.isna(formatted):
+        return False
+    fmt = str(formatted).lower()
+    return any(tok.lower() in fmt for tok in required_tokens if tok)
+
+
 def geocode_row_for_fields(
     row: pd.Series,
     fields: list[str] | tuple[str, ...],
     cache: GeocodeCache,
     geolocator: Any,
     stopwords: frozenset[str] | set[str] = DEFAULT_STOPWORDS,
+    bounds: tuple[float, float, float, float] | None = None,
+    restrict_admin_area_tokens: tuple[str, ...] | list[str] = (),
 ) -> tuple[GeocodeResult, int]:
     """One geocode + validate attempt over the given fields.
 
-    Composes the address from ``fields``, sends to Google (cached), and
-    validates that the response contains at least one specific token from
-    the same fields. Returns ``(GeocodeResult, n_api_calls_made)``.
+    Composes the address from ``fields``, sends to Google (cached, with
+    optional ``bounds`` viewport bias), validates that the response contains
+    at least one specific token from the same fields, and applies the hard
+    cross-state guardrail if ``restrict_admin_area_tokens`` is set.
+    Returns ``(GeocodeResult, n_api_calls_made)``.
     """
     composed = compose_fields(row, fields)
     if not composed:
         return (GeocodeResult(attempted=False), 0)
     tokens = extract_validation_tokens(row, fields, stopwords=stopwords)
-    hit, made_call = _geocode_with_cache(composed, cache, geolocator)
+    hit, made_call = _geocode_with_cache(composed, cache, geolocator, bounds=bounds)
     api_calls = int(made_call)
-    validated = formatted_address_contains_any(hit.get("formatted_address"), tokens)
+    fmt = hit.get("formatted_address")
+    validated = formatted_address_contains_any(fmt, tokens) and (
+        _formatted_address_contains_required(fmt, restrict_admin_area_tokens)
+    )
     return (
         GeocodeResult(
             lat=hit.get("lat") if validated else None,
             long=hit.get("long") if validated else None,
-            formatted_address=hit.get("formatted_address"),
+            formatted_address=fmt,
             location_type=hit.get("location_type"),
             validated=validated,
             attempted=True,
@@ -457,6 +505,8 @@ def _geocode_pass(
     stopwords: frozenset[str] | set[str],
     region_id_col: str,
     label: str,
+    bounds: tuple[float, float, float, float] | None = None,
+    restrict_admin_area_tokens: tuple[str, ...] | list[str] = (),
 ) -> pd.Series:
     """Geocode all rows of ``df`` with ``fields``, PIP, return region_id Series."""
     lats: list[float | None] = [None] * len(df)
@@ -466,7 +516,13 @@ def _geocode_pass(
     api_calls = 0
     for i, (_, row) in enumerate(df.iterrows()):
         result, calls = geocode_row_for_fields(
-            row, fields, cache, geolocator, stopwords
+            row,
+            fields,
+            cache,
+            geolocator,
+            stopwords,
+            bounds=bounds,
+            restrict_admin_area_tokens=restrict_admin_area_tokens,
         )
         api_calls += calls
         if result.validated:
@@ -502,6 +558,8 @@ def resolve_via_geocode(
     stopwords: frozenset[str] | set[str] | None = None,
     region_id_col: str = "region_id",
     region_name_col: str = "name",
+    bounds: tuple[float, float, float, float] | None = None,
+    restrict_admin_area_tokens: tuple[str, ...] | list[str] = (),
 ) -> pd.Series:
     """Two-pass geocode → spatial-join. Returns Series of region_ids per row.
 
@@ -552,6 +610,8 @@ def resolve_via_geocode(
         stopwords,
         region_id_col,
         label="primary",
+        bounds=bounds,
+        restrict_admin_area_tokens=restrict_admin_area_tokens,
     )
 
     if fallback_address_fields:
@@ -573,6 +633,8 @@ def resolve_via_geocode(
                 stopwords,
                 region_id_col,
                 label="fallback",
+                bounds=bounds,
+                restrict_admin_area_tokens=restrict_admin_area_tokens,
             )
             region_ids.loc[fb_ids.index] = fb_ids.values
 
