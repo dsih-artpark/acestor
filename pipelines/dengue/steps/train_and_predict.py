@@ -196,17 +196,19 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
 
         failed_models = [m for m in cfg.models if m not in per_model_dfs]
         if failed_models:
-            context.log.error(
-                "train_and_predict: %d/%d configured model(s) produced no predictions: %s",
-                len(failed_models),
-                len(cfg.models),
-                failed_models,
-            )
-
-        if not prediction_dfs:
+            # Any model dropout — partial or total — fails the run. Previously
+            # partial dropouts were log.error-only and the run continued with
+            # status="success", indistinguishable from a healthy run to any
+            # caller checking the exit code (issue #65). The all-empty case
+            # already raised; this raises on the partial case too so the run
+            # status reflects the degraded outcome.
             raise RuntimeError(
-                f"train_and_predict: all configured models ({cfg.models}) returned empty "
-                f"predictions — cannot continue. Check ERROR logs above for the likely cause."
+                f"train_and_predict: {len(failed_models)}/{len(cfg.models)} "
+                f"configured model(s) returned empty predictions: "
+                f"{failed_models}. Likely cause: prediction dates fall past the "
+                f"case-data cutoff, NaN-ing case-lag features. Fix: set "
+                f"run_date to a date within the case data window, or re-run "
+                f"dengue_prep to refresh prepared_data/."
             )
 
         # Combine via the configured ensemble strategy (or skip if "none").

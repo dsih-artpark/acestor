@@ -157,6 +157,14 @@ class CaseSufficiencyConfig:
     # Empty strings → derive from ``ParseCaseDataResult.region_type`` (admin ID columns).
     region_column: str
     date_column: str
+    # Recency guard: max acceptable gap (in days) between run_date and the most
+    # recent date observed in the prepared case data, BEFORE clamping to run_date.
+    # 0 = disabled (legacy behaviour). The clamp in load_prepared_case_data makes
+    # "run_date <= max_observed" true by construction, so the genuine failure mode
+    # this guard catches is the opposite: a run_date materially ahead of the
+    # actually-available data — every model's prediction window then falls past
+    # the cutoff, NaN-ing out case-lag features and silently dropping models.
+    max_staleness_days: int
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any]) -> CaseSufficiencyConfig:
@@ -168,6 +176,7 @@ class CaseSufficiencyConfig:
             case_column=str(raw.get("case_column", "case")),
             region_column=str(raw.get("region_column", "")),
             date_column=str(raw.get("date_column", "")),
+            max_staleness_days=int(raw.get("max_staleness_days", 0)),
         )
 
 

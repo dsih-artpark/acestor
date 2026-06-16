@@ -138,6 +138,7 @@ data:
     min_total_rows: 30
     min_distinct_regions: 2
     min_date_span_days: 14
+    max_staleness_days: 14
 ```
 
 | Key | Type | Default | Notes |
@@ -146,6 +147,7 @@ data:
 | `min_total_rows` | int | `30` | Minimum case rows across all regions |
 | `min_distinct_regions` | int | `2` | Minimum distinct region IDs |
 | `min_date_span_days` | int | `14` | Minimum date range in days |
+| `max_staleness_days` | int | `0` | Recency guard. Max acceptable gap (in days) between `run_date` and the most recent date observed in prepared data — checked **before** the case-data clamp. `0` = disabled (legacy behaviour). Catches the silent failure mode of `run_date` running ahead of the available data — every model's prediction window then falls past the data cutoff, NaN-ing out case-lag features and silently dropping models. Recommended value: a few days more than your prep cadence (e.g. `14` for weekly prep). |
 
 ---
 
