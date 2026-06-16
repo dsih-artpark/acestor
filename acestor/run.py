@@ -88,6 +88,17 @@ def main(argv: list[str] | None = None) -> int:
         help="Override a config value using dot-notation, e.g. --set model_configs.rf.tune=true. "
         "Values are parsed as YAML (booleans, ints, lists all work). Repeatable.",
     )
+    parser.add_argument(
+        "--clean",
+        action="store_true",
+        help=(
+            "Wipe the run-id's artifact subtree before the DAG executes. Default "
+            "off — when re-using a run-id deliberately (e.g. re-running only a "
+            "downstream step), omit this. Set it when iterating on configs to "
+            "stop files from a previous run shadowing the current one (e.g. an "
+            "orphan predictions_<model>.csv from a since-removed model)."
+        ),
+    )
 
     args = parser.parse_args(argv)
 
@@ -110,6 +121,13 @@ def main(argv: list[str] | None = None) -> int:
     dag = builder(config)
 
     context = PipelineContext.from_config(config, run_id=run_id)
+
+    if args.clean:
+        removed = context.artifacts.delete_prefix(run_id)
+        context.log.warning(
+            "--clean: removed %d file(s) under run-id %r", removed, run_id
+        )
+
     runner = PipelineRunner(dag=dag, context=context)
 
     result = runner.run()

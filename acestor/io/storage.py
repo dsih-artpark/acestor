@@ -34,6 +34,18 @@ class Storage(ABC):
     @abstractmethod
     def list_objects(self, prefix: str = "") -> list[str]: ...
 
+    @abstractmethod
+    def delete_prefix(self, prefix: str) -> int:
+        """Delete every object under ``prefix``. Returns the count removed.
+
+        Idempotent — a prefix that doesn't exist returns 0. Used by the CLI
+        ``--clean`` flag to wipe a run-id's artifact subtree before the DAG
+        executes so files from a previous run with the same run-id can't
+        shadow the current one (e.g. an orphan ``predictions_<model>.csv``
+        from a model that's since been removed from the config).
+        """
+        ...
+
     def write_json(self, data: Any, path: str) -> str:
         return self.write(json.dumps(data, indent=2, sort_keys=True) + "\n", path)
 
@@ -85,6 +97,19 @@ class FileStorage(Storage):
         return sorted(
             str(p.relative_to(base)) for p in search_dir.rglob("*") if p.is_file()
         )
+
+    def delete_prefix(self, prefix: str) -> int:
+        import shutil
+
+        target = self.base_path / prefix if prefix else self.base_path
+        if not target.exists():
+            return 0
+        if target.is_file():
+            target.unlink()
+            return 1
+        n = sum(1 for p in target.rglob("*") if p.is_file())
+        shutil.rmtree(target)
+        return n
 
 
 @dataclass
@@ -154,3 +179,24 @@ class S3Storage(Storage):
                 rel = raw_key[len(base) :].lstrip("/") if base else raw_key
                 keys.append(rel)
         return keys
+
+    def delete_prefix(self, prefix: str) -> int:
+        full_prefix = self._full_key(prefix) if prefix else (self.base_prefix or "")
+        if full_prefix and not full_prefix.endswith("/"):
+            full_prefix += "/"
+
+        total = 0
+        paginator = self._client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=self.bucket, Prefix=full_prefix):
+            contents = page.get("Contents", [])
+            if not contents:
+                continue
+            # S3 delete_objects caps at 1000 keys per request.
+            for i in range(0, len(contents), 1000):
+                chunk = contents[i : i + 1000]
+                self._client.delete_objects(
+                    Bucket=self.bucket,
+                    Delete={"Objects": [{"Key": obj["Key"]} for obj in chunk]},
+                )
+                total += len(chunk)
+        return total
