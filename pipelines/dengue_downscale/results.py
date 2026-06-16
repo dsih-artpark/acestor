@@ -32,3 +32,10 @@ class DownscaleResult:
 class DownscaleBriefResult:
     report_path: str  # outputs/report.html
     charts_dir: str  # outputs/charts/
+
+
+@dataclass(frozen=True)
+class DownscaleMapsResult:
+    """Per-week static PNG choropleths of child-level risk zones (issue #64)."""
+
+    map_paths: tuple[str, ...]  # one per (week, model, threshold) combination
