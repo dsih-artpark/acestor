@@ -27,11 +27,12 @@ from pipelines.dengue_downscale.results import DownscaleResult, LoadPredictionsR
 
 def _build_threshold_contexts(
     raw_thresholds: dict,
-) -> tuple[list[float], str, dict[str, ThresholdContext]]:
+) -> tuple[list[float], str, dict[str, ThresholdContext], list[float]]:
     """Parse the downscale config's `thresholds:` block into the same shape the
     dengue pipeline uses, so child zones are derived with matching settings.
 
-    Returns (list_alpha, classification_method, {method: ThresholdContext}).
+    Returns (list_alpha, classification_method, {method: ThresholdContext},
+    percentile_cutoffs).
     """
     cfg = ThresholdsConfig.from_raw(raw_thresholds)
     raw_method_configs = dict(raw_thresholds.get("method_configs") or {})
@@ -48,7 +49,12 @@ def _build_threshold_contexts(
             weight_recent=mc.weight_recent,
             weight_seasonal=mc.weight_seasonal,
         )
-    return cfg.list_alpha, cfg.classification_method, ctx_by_method
+    return (
+        cfg.list_alpha,
+        cfg.classification_method,
+        ctx_by_method,
+        cfg.percentile_cutoffs,
+    )
 
 
 @dataclass(frozen=True)
@@ -99,9 +105,12 @@ class DownscalePredictionsStep(BaseStep[DownscalePredictionsInputs, DownscaleRes
             cfg.window_weeks,
         )
 
-        list_alpha, classification_method, ctx_by_method = _build_threshold_contexts(
-            _section(context.config, "thresholds")
-        )
+        (
+            list_alpha,
+            classification_method,
+            ctx_by_method,
+            percentile_cutoffs,
+        ) = _build_threshold_contexts(_section(context.config, "thresholds"))
         context.log.info(
             "downscale_predictions: zone re-derivation — classification=%s, list_alpha=%s, "
             "methods=%s",
@@ -119,6 +128,7 @@ class DownscalePredictionsStep(BaseStep[DownscalePredictionsInputs, DownscaleRes
             list_alpha=list_alpha,
             classification_method=classification_method,
             ctx_by_method=ctx_by_method,
+            percentile_cutoffs=percentile_cutoffs,
             on_missing_parents=cfg.on_missing_parents,
         )
 

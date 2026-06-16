@@ -262,6 +262,8 @@ thresholds:
   historical_n_years: 4
   excluded_years: []
   included_years: []
+  classification_method: "who"        # "who" | "icmr" | "percentile"
+  percentile_cutoffs: [25, 50, 75]    # only used when classification_method = "percentile"
 ```
 
 | Key | Type | Default | Notes |
@@ -271,6 +273,8 @@ thresholds:
 | `historical_n_years` | int \| null | `null` (all years) | Limit historical data to last N years |
 | `excluded_years` | list[int] | `[2020, 2021]` | Years to skip (e.g. COVID anomaly) |
 | `included_years` | list[int] | `[]` | If non-empty, only use these years |
+| `classification_method` | `"who"` \| `"icmr"` \| `"percentile"` | `"who"` | Risk-zone classifier. **Unknown values now raise** — until 2026 they silently fell through to WHO output. `who` = per-region threshold bands `T_α = Mean + α·StdDev`. `icmr` = cross-sectional quartile strata (A1–A4) per predicted week. `percentile` = per-region historical-percentile bands cut at `percentile_cutoffs` of each region's own case history. |
+| `percentile_cutoffs` | list[float] | `[25, 50, 75]` | Percentile values (0–100) at which to cut each region's history. `N` cutoffs yield `N+1` bands; band 1 = lowest, band `N+1` = highest. Only used when `classification_method = "percentile"`. |
 
 ---
 

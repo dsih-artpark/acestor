@@ -243,6 +243,7 @@ def assign_child_zones(
     list_alpha,
     classification_method: str,
     ctx_by_method: dict,
+    percentile_cutoffs: list[float] | None = None,
 ) -> pd.Series:
     """Re-derive each child's risk zone from child-level data, never inherited.
 
@@ -250,6 +251,8 @@ def assign_child_zones(
       - "who": per-region threshold bands T_α = Mean + α·StdDev, using the parent
         row's thresholdMethod and the per-method context from config.
       - "icmr": cross-sectional quartile strata across all children per predicted week.
+      - "percentile": per-region historical-percentile bands cut at
+        ``percentile_cutoffs`` of each child's own case history.
 
     Returns a Series of zones aligned to ``child_preds.index``.
     """
@@ -268,9 +271,31 @@ def assign_child_zones(
         zones = pd.to_numeric(
             classified.sort_index()["predictionZone"], errors="coerce"
         ).fillna(0.0)
+    elif classification_method == "percentile":
+        from pipelines.dengue.lib.thresholds import percentile_historical_zones
+
+        cuts = percentile_cutoffs or [25.0, 50.0, 75.0]
+        # cases_df uses 'region_id' as the spatial column; mirror child_preds'
+        # 'regionID' by renaming for the function's spatial_col contract.
+        cp_for_pct = cp.rename(columns={"regionID": "region_id"})
+        cases_for_pct = (
+            cases_df.rename(columns={"case_count": "case"})
+            if ("case_count" in cases_df.columns and "case" not in cases_df.columns)
+            else cases_df
+        )
+        classified = percentile_historical_zones(
+            cp_for_pct,
+            cases_for_pct,
+            spatial_col="region_id",
+            percentile_cutoffs=cuts,
+        )
+        zones = pd.to_numeric(
+            classified.sort_index()["predictionZone"], errors="coerce"
+        ).fillna(0.0)
     else:
         raise ValueError(
-            f"classification_method must be 'who' or 'icmr', got {classification_method!r}"
+            f"classification_method must be 'who', 'icmr', or 'percentile'; "
+            f"got {classification_method!r}"
         )
     zones.index = child_preds.index
     return zones
@@ -320,9 +345,9 @@ def check_numeric_sanity(
 
     child = child_preds.copy()
     child["_parent"] = child["regionID"].map(child_mapping)
-    csum = child.groupby(
-        ["_parent", "startDatePredictedWeek", "thresholdMethod"]
-    )["prediction"].sum()
+    csum = child.groupby(["_parent", "startDatePredictedWeek", "thresholdMethod"])[
+        "prediction"
+    ].sum()
     parent_lookup = parent_preds.set_index(key)["prediction"]
     for (parent_id, week, method), got in csum.items():
         expected = parent_lookup.get((parent_id, week, method))
@@ -415,6 +440,7 @@ def downscale_predictions(
     list_alpha,
     classification_method: str,
     ctx_by_method: dict,
+    percentile_cutoffs: list[float] | None = None,
     on_missing_parents: str = "error",
 ) -> pd.DataFrame:
     """Disaggregate parent-level predictions to child level.
@@ -496,6 +522,7 @@ def downscale_predictions(
         list_alpha=list_alpha,
         classification_method=classification_method,
         ctx_by_method=ctx_by_method,
+        percentile_cutoffs=percentile_cutoffs,
     )
     check_numeric_sanity(parent_preds, child_preds, child_mapping)
     return child_preds
