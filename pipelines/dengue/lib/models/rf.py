@@ -175,25 +175,30 @@ def _get_rf_params(
 
     _log = ctx.log if ctx.log is not None else log
 
-    cached = _tuning_mod.load_cached_params(ctx.artifacts, "rf")
-    if cached is not None and not ctx.cfg.tune:
-        _tuning_mod.check_fingerprint(
-            ctx.artifacts, "rf", ctx.cfg, train_max_date, _log
-        )
+    region_type = getattr(ctx.cfg, "spatial_res", "") or ""
+    cached = _tuning_mod.load_cached_params(ctx.artifacts, "rf", region_type)
+    fingerprint_ok = _tuning_mod.check_fingerprint(
+        ctx.artifacts, "rf", ctx.cfg, train_max_date, _log
+    )
+    if cached is not None and not ctx.cfg.tune and fingerprint_ok:
         _log.info(
-            "RF: using cached hyperparameters (tuned %s, RMSE=%.4f) from hp/rf_best_params.json",
+            "RF [%s]: using cached hyperparameters (tuned %s, RMSE=%.4f)",
+            region_type or "?",
             cached["tuned_at"],
             cached["best_rmse"],
         )
         return cached["params"]
 
+    if ctx.cfg.tune:
+        reason = "tune=True, forcing retune"
+    elif cached is None:
+        reason = "no cached hyperparameters found"
+    else:
+        reason = "fingerprint stale — auto-retuning"
     _log.info(
-        "RF: %s — running Optuna tuning (n_trials=%d)",
-        (
-            "tune=True, forcing retune"
-            if ctx.cfg.tune
-            else "no cached hyperparameters found"
-        ),
+        "RF [%s]: %s — running Optuna tuning (n_trials=%d)",
+        region_type or "?",
+        reason,
         ctx.cfg.n_trials,
     )
     params, rmse = _tuning_mod.tune_rf(X_train, y_train, n_trials=ctx.cfg.n_trials)
@@ -201,6 +206,7 @@ def _get_rf_params(
     _tuning_mod.save_params(
         ctx.artifacts,
         "rf",
+        region_type,
         params,
         rmse=rmse,
         n_trials=ctx.cfg.n_trials,
@@ -209,6 +215,7 @@ def _get_rf_params(
     _tuning_mod.save_fingerprint(
         ctx.artifacts,
         "rf",
+        region_type,
         _tuning_mod.compute_fingerprint(ctx.cfg, train_max_date),
     )
     _log.info(
