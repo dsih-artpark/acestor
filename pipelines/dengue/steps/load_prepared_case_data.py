@@ -16,7 +16,12 @@ from typing import ClassVar
 import pandas as pd
 
 from acestor import BaseStep, PipelineContext
-from pipelines.dengue.configs import CaseParseConfig, PreparedDataConfig, _section
+from pipelines.dengue.configs import (
+    CaseParseConfig,
+    CaseSufficiencyConfig,
+    PreparedDataConfig,
+    _section,
+)
 from pipelines.dengue.lib import case_data
 from pipelines.dengue.results import ParseCaseDataResult, SamplingDayResult
 
@@ -24,6 +29,34 @@ from pipelines.dengue.results import ParseCaseDataResult, SamplingDayResult
 @dataclass(frozen=True)
 class LoadPreparedCaseDataInputs:
     identify_sampling_day: SamplingDayResult
+
+
+def check_data_recency(
+    daily: pd.DataFrame,
+    run_date: pd.Timestamp,
+    max_staleness_days: int,
+) -> int | None:
+    """Return staleness in days, or raise if it exceeds ``max_staleness_days``.
+
+    Returns ``None`` when the guard is disabled (``max_staleness_days <= 0``)
+    or when the dataframe is empty (no signal). Callers can log the returned
+    staleness on the happy path.
+    """
+    if max_staleness_days <= 0 or daily.empty:
+        return None
+    max_observed = pd.Timestamp(daily["date"].max()).normalize()
+    staleness_days = (run_date - max_observed).days
+    if staleness_days > max_staleness_days:
+        raise ValueError(
+            f"data recency check failed: run_date={run_date.date()} is "
+            f"{staleness_days} day(s) ahead of the most recent case date in "
+            f"prepared data ({max_observed.date()}), exceeding "
+            f"data.case_sufficiency.max_staleness_days={max_staleness_days}. "
+            f"The prepared data is likely stale — re-run dengue_prep or use "
+            f"an earlier run_date. Set max_staleness_days=0 to disable this "
+            f"guard."
+        )
+    return staleness_days
 
 
 class LoadPreparedCaseDataStep(
@@ -68,6 +101,26 @@ class LoadPreparedCaseDataStep(
             daily = daily[
                 daily["date"] >= pd.Timestamp(parse_cfg.date_start).normalize()
             ]
+
+        # Recency guard — runs BEFORE the clamp at `daily["date"] <= run_date`,
+        # which would otherwise make any recency check vacuous. Catches the
+        # genuine failure mode of run_date running ahead of available data
+        # (every model's prediction window ends past the data → NaN case lags
+        # → silent model dropout).
+        sufficiency_cfg = CaseSufficiencyConfig.from_raw(
+            _section(context.config, "data.case_sufficiency")
+        )
+        staleness = check_data_recency(
+            daily, run_date, sufficiency_cfg.max_staleness_days
+        )
+        if staleness is not None:
+            context.log.info(
+                "load_prepared_case_data: recency ok — staleness=%d day(s) "
+                "(threshold=%d)",
+                staleness,
+                sufficiency_cfg.max_staleness_days,
+            )
+
         daily = daily[daily["date"] <= run_date]
 
         # Reindex each region onto a contiguous daily grid (zero-fill no-case days)
