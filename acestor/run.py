@@ -120,13 +120,7 @@ def main(argv: list[str] | None = None) -> int:
     builder = _load_builder(args.pipeline)
     dag = builder(config)
 
-    context = PipelineContext.from_config(config, run_id=run_id)
-
-    if args.clean:
-        removed = context.artifacts.delete_prefix(run_id)
-        context.log.warning(
-            "--clean: removed %d file(s) under run-id %r", removed, run_id
-        )
+    context = PipelineContext.from_config(config, run_id=run_id, clean=args.clean)
 
     runner = PipelineRunner(dag=dag, context=context)
 
