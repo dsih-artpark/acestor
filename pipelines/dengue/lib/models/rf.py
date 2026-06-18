@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestRegressor
 
-from pipelines.dengue.lib.models._shared import _lag
+from pipelines.dengue.lib.models._shared import _lag, recursive_forecast
 from pipelines.dengue.lib.models import _tuning as _tuning_mod
 
 log = logging.getLogger(__name__)
@@ -38,7 +38,11 @@ def random_forest_regression(
     random_state: int = 42,
     ctx: "ModelContext | None" = None,
 ) -> pd.DataFrame:
-    """Train Random Forest on history and predict the last 4 weeks of weather data."""
+    """Train Random Forest on history, then recursively forecast the next 4 weeks.
+
+    Weather/iso lags for the forecast weeks are known ahead of time; case lags are
+    filled from earlier weeks' own predictions (see _shared.recursive_forecast).
+    """
     from pipelines.dengue.lib.zones import ret_na_filled_df
 
     df0 = ret_na_filled_df(
@@ -81,25 +85,6 @@ def random_forest_regression(
     X_train = train_data[lag_cols].reset_index(drop=True)
     y_train = train_data["case"].values
 
-    test_data = df0[df0["recordDate"].isin(last_4)].copy().reset_index(drop=True)
-    valid_mask = test_data[lag_cols].notna().all(axis=1)
-    skipped = sorted(test_data.loc[~valid_mask, spatial_col].unique())
-    if skipped:
-        log.warning(
-            "RF: skipping %d region(s) with NaN lag features — no weather coverage: %s",
-            len(skipped),
-            skipped,
-        )
-        test_data = test_data[valid_mask].copy().reset_index(drop=True)
-
-    if test_data.empty:
-        log.warning(
-            "RF: no regions with valid lag features — returning empty predictions"
-        )
-        return pd.DataFrame()
-
-    X_test = test_data[lag_cols].reset_index(drop=True)
-
     train_max_date = str(train_data["recordDate"].max().date())
     hp = (
         _get_rf_params(ctx, X_train.values, y_train, train_max_date)
@@ -118,31 +103,40 @@ def random_forest_regression(
     )
     rf.fit(X_train.values, y_train)
 
-    test_data["prediction"] = np.maximum(0.0, rf.predict(X_test.values))
-    test_data["recordDate"] = pd.to_datetime(test_data["recordDate"])
-    test_data["model"] = "randomForestRegression"
-
-    if (
+    debug_on = bool(
         ctx is not None
         and getattr(ctx.cfg, "debug", False)
         and ctx.artifacts is not None
-    ):
-        _save_debug(
-            ctx,
-            "rf",
-            X_train,
-            y_train,
-            X_test,
-            test_data,
-            rf.feature_importances_,
-            lag_cols,
-        )
+    )
+    preds, debug_rows = recursive_forecast(
+        rf,
+        df0,
+        spatial_col=spatial_col,
+        feature_cols=lag_cols,
+        lag_cases=lag_cases,
+        future_dates=sorted(pd.to_datetime(d) for d in last_4),
+        clip_multiplier=getattr(ctx.cfg, "clip_multiplier", None)
+        if ctx is not None
+        else None,
+        train_max=float(np.nanmax(y_train)) if len(y_train) else None,
+        debug=debug_on,
+    )
 
-    return test_data.reset_index(drop=True)
+    if preds.empty:
+        log.warning(
+            "RF: no regions with valid lag features — returning empty predictions"
+        )
+        return pd.DataFrame()
+
+    preds["model"] = "randomForestRegression"
+    if debug_on:
+        _save_debug(ctx, "rf", X_train, y_train, preds, debug_rows, rf.feature_importances_, lag_cols)
+
+    return preds.reset_index(drop=True)
 
 
 def _save_debug(
-    ctx, model_name, X_train, y_train, X_test, test_data, importances, lag_cols
+    ctx, model_name, X_train, y_train, preds, debug_rows, importances, lag_cols
 ):
     import json as _json
 
@@ -150,10 +144,14 @@ def _save_debug(
     train_df = pd.DataFrame(X_train, columns=lag_cols)
     train_df["case"] = y_train
     ctx.artifacts.write_text(train_df.to_csv(index=False), f"{prefix}/X_train.csv")
-    ctx.artifacts.write_text(
-        test_data.to_csv(index=False),
-        f"{prefix}/X_test_predictions.csv",
-    )
+    ctx.artifacts.write_text(preds.to_csv(index=False), f"{prefix}/predictions.csv")
+    if debug_rows:
+        # Per-horizon recursive trace: each case-lag value + source (observed/
+        # predicted/zero_pad) and raw vs clipped prediction.
+        ctx.artifacts.write_text(
+            pd.DataFrame(debug_rows).to_csv(index=False),
+            f"{prefix}/recursive_trace.csv",
+        )
     importance_dict = dict(
         sorted(zip(lag_cols, [float(v) for v in importances]), key=lambda x: -x[1])
     )

@@ -485,6 +485,9 @@ class TrainPredictConfig:
     tune: bool  # False = use cache; True = force Optuna retune
     n_trials: int  # Optuna trials when tuning runs
     debug: bool  # True = save intermediate CSVs to artifacts/debug/<model>/
+    # Recursive-forecast upper clip: None = floor at 0 only (default, parity with
+    # reference); a value M caps each step at M * max(train cases).
+    clip_multiplier: float | None = None
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any]) -> TrainPredictConfig:
@@ -522,6 +525,11 @@ class TrainPredictConfig:
             tune=bool(raw.get("tune", False)),
             n_trials=int(raw.get("n_trials", 50)),
             debug=bool(raw.get("debug", False)),
+            clip_multiplier=(
+                float(raw["clip_multiplier"])
+                if raw.get("clip_multiplier") is not None
+                else None
+            ),
         )
 
 
@@ -558,6 +566,7 @@ def resolve_model_config(
         "tune": base.tune,
         "n_trials": base.n_trials,
         "debug": base.debug,
+        "clip_multiplier": base.clip_multiplier,
     }
 
     for key in (
@@ -567,6 +576,7 @@ def resolve_model_config(
         "tune",
         "n_trials",
         "debug",
+        "clip_multiplier",
     ):
         if key in raw_overrides:
             merged[key] = raw_overrides[key]
