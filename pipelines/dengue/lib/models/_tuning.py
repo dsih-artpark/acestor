@@ -21,19 +21,31 @@ optuna.logging.set_verbosity(optuna.logging.WARNING)
 log = logging.getLogger(__name__)
 
 
-def hp_cache_path(model_name: str) -> str:
-    return f"hp/{model_name}_best_params.json"
+def _key(model_name: str, region_type: str) -> str:
+    """Combine model + region into a single cache key segment.
+
+    Cache files are keyed by ``(model, region_type)`` so a run that tuned
+    against district-level data cannot silently feed those params back to a
+    ward-level run (the training distribution is different, but nothing in
+    the legacy ``model_name``-only key prevented the share).
+    """
+    return f"{model_name}_{region_type}" if region_type else model_name
 
 
-def fingerprint_path(model_name: str) -> str:
-    return f"hp/{model_name}_fingerprint.json"
+def hp_cache_path(model_name: str, region_type: str = "") -> str:
+    return f"hp/{_key(model_name, region_type)}_best_params.json"
+
+
+def fingerprint_path(model_name: str, region_type: str = "") -> str:
+    return f"hp/{_key(model_name, region_type)}_fingerprint.json"
 
 
 def compute_fingerprint(cfg: Any, train_max_date: str) -> str:
     """Return a short hash of the inputs that would invalidate cached hyperparams.
 
-    Covers lag windows, feature list, year filters, and the training data cutoff.
-    If any of these change, cached params from a previous run are stale.
+    Covers lag windows, feature list, year filters, the training data cutoff,
+    and the region type (so a district / ward swap invalidates the cache even
+    if all other inputs match).
     """
     payload = {
         "lag_temp": sorted(cfg.lag_temp),
@@ -44,21 +56,26 @@ def compute_fingerprint(cfg: Any, train_max_date: str) -> str:
         "years_to_exclude": sorted(cfg.years_to_exclude),
         "years_to_include": sorted(cfg.years_to_include),
         "train_max_date": train_max_date,
+        "region_type": getattr(cfg, "spatial_res", "") or "",
     }
     raw = json.dumps(payload, sort_keys=True).encode()
     return hashlib.sha256(raw).hexdigest()[:16]
 
 
-def save_fingerprint(storage: Any, model_name: str, fingerprint: str) -> None:
+def save_fingerprint(
+    storage: Any, model_name: str, region_type: str, fingerprint: str
+) -> None:
     storage.write_text(
         json.dumps({"fingerprint": fingerprint}),
-        fingerprint_path(model_name),
+        fingerprint_path(model_name, region_type),
     )
 
 
-def load_fingerprint(storage: Any, model_name: str) -> str | None:
+def load_fingerprint(
+    storage: Any, model_name: str, region_type: str = ""
+) -> str | None:
     try:
-        data = storage.read_json(fingerprint_path(model_name))
+        data = storage.read_json(fingerprint_path(model_name, region_type))
         return data.get("fingerprint")
     except (FileNotFoundError, KeyError):
         return None
@@ -73,31 +90,38 @@ def check_fingerprint(
 ) -> bool:
     """Return True if cached params are valid for the current config.
 
-    Logs a warning if the fingerprint is missing or stale so the operator knows
-    to set tune=true to regenerate hyperparameters.
+    Returns False on mismatch or when the fingerprint file is missing — the
+    caller must honor this (auto-retune or fail). Until 2026 this function's
+    return was being discarded at every call site; the silent-stale-params
+    path is the bug fixed by #66.
     """
+    region_type = getattr(cfg, "spatial_res", "") or ""
     current = compute_fingerprint(cfg, train_max_date)
-    saved = load_fingerprint(storage, model_name)
+    saved = load_fingerprint(storage, model_name, region_type)
     if saved is None:
         _log.warning(
-            "%s: no tuning fingerprint found alongside cached params — "
-            "if you changed lag config or features, set tune=true to retune",
+            "%s [%s]: no tuning fingerprint found — treating cached params as "
+            "stale and retuning",
             model_name.upper(),
+            region_type or "?",
         )
-        return True  # allow cached params through; operator must opt-in to retune
+        return False
     if saved != current:
         _log.warning(
-            "%s: tuning fingerprint mismatch — cached params may be stale "
-            "(config changed since last tune). Set tune=true to regenerate.",
+            "%s [%s]: tuning fingerprint mismatch (config changed since last "
+            "tune) — retuning",
             model_name.upper(),
+            region_type or "?",
         )
         return False
     return True
 
 
-def load_cached_params(storage: Any, model_name: str) -> dict | None:
+def load_cached_params(
+    storage: Any, model_name: str, region_type: str = ""
+) -> dict | None:
     try:
-        return storage.read_json(hp_cache_path(model_name))
+        return storage.read_json(hp_cache_path(model_name, region_type))
     except (FileNotFoundError, KeyError):
         return None
 
@@ -105,6 +129,7 @@ def load_cached_params(storage: Any, model_name: str) -> dict | None:
 def save_params(
     storage: Any,
     model_name: str,
+    region_type: str,
     params: dict,
     *,
     rmse: float,
@@ -117,7 +142,9 @@ def save_params(
         "best_rmse": round(float(rmse), 4),
         "params": params,
     }
-    storage.write_text(json.dumps(payload, indent=2), hp_cache_path(model_name))
+    storage.write_text(
+        json.dumps(payload, indent=2), hp_cache_path(model_name, region_type)
+    )
 
 
 def _make_folds(n: int, n_folds: int = 5) -> list[dict]:

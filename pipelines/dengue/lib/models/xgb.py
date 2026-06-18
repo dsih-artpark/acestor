@@ -171,25 +171,30 @@ def _get_xgb_params(
 
     _log = ctx.log if ctx.log is not None else log
 
-    cached = _tuning_mod.load_cached_params(ctx.artifacts, "xgb")
-    if cached is not None and not ctx.cfg.tune:
-        _tuning_mod.check_fingerprint(
-            ctx.artifacts, "xgb", ctx.cfg, train_max_date, _log
-        )
+    region_type = getattr(ctx.cfg, "spatial_res", "") or ""
+    cached = _tuning_mod.load_cached_params(ctx.artifacts, "xgb", region_type)
+    fingerprint_ok = _tuning_mod.check_fingerprint(
+        ctx.artifacts, "xgb", ctx.cfg, train_max_date, _log
+    )
+    if cached is not None and not ctx.cfg.tune and fingerprint_ok:
         _log.info(
-            "XGB: using cached hyperparameters (tuned %s, RMSE=%.4f) from hp/xgb_best_params.json",
+            "XGB [%s]: using cached hyperparameters (tuned %s, RMSE=%.4f)",
+            region_type or "?",
             cached["tuned_at"],
             cached["best_rmse"],
         )
         return cached["params"]
 
+    if ctx.cfg.tune:
+        reason = "tune=True, forcing retune"
+    elif cached is None:
+        reason = "no cached hyperparameters found"
+    else:
+        reason = "fingerprint stale — auto-retuning"
     _log.info(
-        "XGB: %s — running Optuna tuning (n_trials=%d)",
-        (
-            "tune=True, forcing retune"
-            if ctx.cfg.tune
-            else "no cached hyperparameters found"
-        ),
+        "XGB [%s]: %s — running Optuna tuning (n_trials=%d)",
+        region_type or "?",
+        reason,
         ctx.cfg.n_trials,
     )
     params, rmse = _tuning_mod.tune_xgb(X_train, y_train, n_trials=ctx.cfg.n_trials)
@@ -197,6 +202,7 @@ def _get_xgb_params(
     _tuning_mod.save_params(
         ctx.artifacts,
         "xgb",
+        region_type,
         params,
         rmse=rmse,
         n_trials=ctx.cfg.n_trials,
@@ -205,6 +211,7 @@ def _get_xgb_params(
     _tuning_mod.save_fingerprint(
         ctx.artifacts,
         "xgb",
+        region_type,
         _tuning_mod.compute_fingerprint(ctx.cfg, train_max_date),
     )
     _log.info(
