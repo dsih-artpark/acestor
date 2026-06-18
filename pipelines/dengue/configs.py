@@ -514,7 +514,9 @@ class TrainPredictConfig:
                 int(y) for y in raw.get("years_to_exclude", [2020, 2021])
             ],
             years_to_include=[int(y) for y in raw.get("years_to_include", [])],
-            models=list(raw.get("models", ["nbr", "tse"])),
+            # NBR retired from the default ensemble (issue #63). Still opt-in
+            # via @register("nbr") — any config can list it in model.models.
+            models=list(raw.get("models", ["tse"])),
             ensemble=ensemble,
             output=output,
             tune=bool(raw.get("tune", False)),
