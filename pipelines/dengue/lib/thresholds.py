@@ -363,6 +363,57 @@ def icmr_quartile_zones(
     return pd.concat(parts, ignore_index=True) if parts else df.copy()
 
 
+def percentile_historical_zones(
+    df_predictions: pd.DataFrame,
+    case_data: pd.DataFrame,
+    *,
+    spatial_col: str,
+    percentile_cutoffs: list[float],
+    prediction_col: str = "prediction",
+    case_col: str = "case",
+) -> pd.DataFrame:
+    """Assign per-region historical-percentile bands as ``predictionZone``.
+
+    For each region, the cutoff values come from ``case_data[case_col]`` at
+    the requested percentiles of that region's own history. A prediction is
+    placed into band ``i + 1`` where ``i`` is the count of cutoffs the
+    prediction strictly exceeds — so ``N`` cutoffs yield ``N + 1`` bands,
+    band 1 = lowest, band ``N+1`` = highest. Regions with no history get
+    ``predictionZone = pd.NA``.
+
+    Differs fundamentally from :func:`icmr_quartile_zones`:
+      * ICMR cuts cross-sectionally per date (across all regions).
+      * This cuts per-region across the region's own history.
+
+    Issue #62 — adds a configurable third classification method alongside
+    ``who`` and ``icmr``.
+    """
+    out = df_predictions.copy()
+    out["predictionZone"] = pd.NA
+
+    cutoffs_sorted = sorted(percentile_cutoffs)
+    n_bands = len(cutoffs_sorted) + 1
+
+    for region, region_preds in out.groupby(spatial_col, sort=False):
+        history = case_data.loc[case_data[spatial_col] == region, case_col].dropna()
+        if history.empty:
+            continue
+        cuts = np.percentile(history.values, cutoffs_sorted)
+        preds = pd.to_numeric(region_preds[prediction_col], errors="coerce").values
+        # np.searchsorted(cuts, x, side='right') returns the count of cuts
+        # strictly less than (or equal to, for ties) x — i.e. the band index.
+        bands = np.searchsorted(cuts, preds, side="right") + 1
+        bands = np.clip(bands, 1, n_bands)
+        # NaN predictions get nan from searchsorted via the to_numeric step:
+        # explicitly preserve NaN as NA in the output.
+        nan_mask = pd.isna(preds)
+        out.loc[region_preds.index, "predictionZone"] = bands
+        if nan_mask.any():
+            out.loc[region_preds.index[nan_mask], "predictionZone"] = pd.NA
+
+    return out
+
+
 # PRISM-H §4.2 — method preference order (camelCase labels as they appear in thresholdMethod)
 _METHOD_PRIORITY = ["historical", "previousNweeks", "weightedBaseline"]
 

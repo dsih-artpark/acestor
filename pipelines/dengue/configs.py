@@ -400,7 +400,12 @@ class ThresholdsConfig:
     included_years: list[int]  # empty = no restriction; non-empty = only these years
     list_alpha: list[float] = field(default_factory=lambda: [1.0, 2.0])
     methods: list[str] = field(default_factory=lambda: ["historical", "prev_nweeks"])
-    classification_method: str = "who"  # "who" | "icmr"
+    classification_method: str = "who"  # "who" | "icmr" | "percentile"
+    # percentile-method knobs (issue #62) — cutoffs at the configured percentile
+    # values of each region's own historical case distribution. N cutoffs →
+    # N+1 bands; default [25, 50, 75] gives 4 bands matching the WHO/ICMR
+    # convention.
+    percentile_cutoffs: list[float] = field(default_factory=lambda: [25.0, 50.0, 75.0])
     # weighted_baseline knobs
     recent_weeks: int = 4
     sd_window_weeks: int = 8
@@ -410,6 +415,17 @@ class ThresholdsConfig:
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any]) -> ThresholdsConfig:
         ny = raw.get("historical_n_years")
+        classification_method = (
+            str(raw.get("classification_method", "who")).strip().lower() or "who"
+        )
+        allowed = {"who", "icmr", "percentile"}
+        if classification_method not in allowed:
+            raise ValueError(
+                f"thresholds.classification_method must be one of "
+                f"{sorted(allowed)}; got {classification_method!r}. "
+                f"(Until 2026 unknown values silently produced WHO output — "
+                f"issue #62.)"
+            )
         return cls(
             region_type=raw.get("region_type", "zone"),
             n_weeks=int(raw.get("n_weeks", 4)),
@@ -418,10 +434,10 @@ class ThresholdsConfig:
             included_years=[int(y) for y in raw.get("included_years", [])],
             list_alpha=[float(a) for a in raw.get("list_alpha", [1.0, 2.0])],
             methods=list(raw.get("methods", ["historical", "prev_nweeks"])),
-            classification_method=str(raw.get("classification_method", "who"))
-            .strip()
-            .lower()
-            or "who",
+            classification_method=classification_method,
+            percentile_cutoffs=[
+                float(p) for p in raw.get("percentile_cutoffs", [25.0, 50.0, 75.0])
+            ],
             recent_weeks=int(raw.get("recent_weeks", 4)),
             sd_window_weeks=int(raw.get("sd_window_weeks", 8)),
             weight_recent=float(raw.get("weight_recent", 0.7)),

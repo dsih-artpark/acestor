@@ -17,7 +17,10 @@ from pipelines.dengue.configs import (
 from pipelines.dengue.lib import predictions as pred_lib
 from pipelines.dengue.lib import zones
 from pipelines.dengue.lib.lgd import add_lgd_column, require_state
-from pipelines.dengue.lib.thresholds import icmr_quartile_zones
+from pipelines.dengue.lib.thresholds import (
+    icmr_quartile_zones,
+    percentile_historical_zones,
+)
 from pipelines.dengue.lib.ensembles import get_ensemble
 from pipelines.dengue.lib.models import get_model, ModelContext
 from pipelines.dengue.results import (
@@ -253,8 +256,18 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
             icmr_classified = icmr_quartile_zones(classified)
             classified["icmrZone"] = icmr_classified["predictionZone"]
 
+            percentile_classified = percentile_historical_zones(
+                classified,
+                case_df,
+                spatial_col=cfg.spatial_res,
+                percentile_cutoffs=thresh_cfg.percentile_cutoffs,
+            )
+            classified["percentileZone"] = percentile_classified["predictionZone"]
+
             if thresh_cfg.classification_method == "icmr":
                 classified["predictionZone"] = classified["icmrZone"]
+            elif thresh_cfg.classification_method == "percentile":
+                classified["predictionZone"] = classified["percentileZone"]
             else:
                 classified["predictionZone"] = classified["whoZone"]
             classified["predictionZone"] = classified["predictionZone"].fillna(0)
