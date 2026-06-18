@@ -44,6 +44,22 @@ python -m acestor.run \
 
 > **Note:** `dengue_prep` is designed to be idempotent — re-running it upserts new data without discarding what was already prepared. You can run it as often as you need fresh data before triggering a forecast.
 
+### `--clean` — start with an empty artifact tree
+
+Re-running with the same `--run-id` after a config change (e.g. removing a model from `model.models`) can leave **orphan files** from the previous run on disk — nothing in the pipeline deletes them. Most consumers read `outputs/predictions.csv` and are unaffected, but anything that addresses a per-model output by name (e.g. `scripts/compute_backtest_metrics.py`) will silently pick up the stale file.
+
+Pass `--clean` to wipe the run-id's artifact subtree before the DAG executes:
+
+```bash
+python -m acestor.run \
+  --pipeline pipelines.dengue.pipeline:build_pipeline \
+  --config configs/ap_district.yaml \
+  --run-id 2026-06-15 \
+  --clean
+```
+
+Default is **off** — when you reuse a run-id deliberately (e.g. re-running just a downstream step after fixing a config), omit `--clean` so the previous step's outputs are still there.
+
 ---
 
 ## Scheduling with `run_schedules.py`

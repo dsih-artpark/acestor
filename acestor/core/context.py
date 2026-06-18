@@ -86,7 +86,12 @@ class PipelineContext:
         return lg
 
     @classmethod
-    def from_config(cls, config: PipelineConfig, run_id: str) -> "PipelineContext":
+    def from_config(
+        cls,
+        config: PipelineConfig,
+        run_id: str,
+        clean: bool = False,
+    ) -> "PipelineContext":
         raw = dict(config.raw)
         storages_cfg = raw.get("storages", {}) or {}
 
@@ -120,6 +125,13 @@ class PipelineContext:
             else:
                 raise ValueError(f"Unknown storage kind {kind!r} for storage {name!r}.")
 
+        # Honour --clean BEFORE the run log handler is opened. Otherwise the
+        # delete_prefix below would rmtree the just-created run.log, leaving
+        # the FileHandler writing into an orphaned inode.
+        n_cleaned = 0
+        if clean and "artifacts" in storages:
+            n_cleaned = storages["artifacts"].delete_prefix(run_id)
+
         logging_cfg = raw.get("logging") or {}
         logger: Any | None = None
         if logging_cfg:
@@ -141,5 +153,9 @@ class PipelineContext:
                 logger.setLevel(getattr(logging, level_str, logging.INFO))
             except Exception:
                 pass
+            if clean:
+                logger.warning(
+                    "--clean: removed %d file(s) under run-id %r", n_cleaned, run_id
+                )
 
         return cls(config=config.raw, run_id=run_id, storages=storages, logger=logger)
