@@ -99,7 +99,19 @@ uv run python -m acestor.run \
   --run-id downscale-march-10
 ```
 
-Produces `artifacts/ap/downscale-march-10/results/Predictions_downscaled_*.csv`.
+Produces:
+
+- `artifacts/ap/downscale-march-10/outputs/predictions.csv` — child-level predictions CSV.
+- `artifacts/ap/downscale-march-10/outputs/maps/*.png` — per-week static choropleth PNGs (one per `(week, model, threshold)`), rendered against the child geojson layer. Suitable for offline use and PDF embedding; produced by the `generate_downscale_maps` step.
+
+Configure under `downscale_maps:` (all keys optional, sensible defaults):
+
+```yaml
+downscale_maps:
+  enabled: true                   # set false to skip PNG output
+  output_dir: "outputs/maps"      # under the run-id artifacts dir
+  figure_title: "AP Mandal Risk"  # appears on each PNG
+```
 
 ---
 

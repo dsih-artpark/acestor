@@ -6,7 +6,8 @@ from child-level geojsons and case history.
 
 DAG shape::
 
-    load_predictions → downscale_predictions → generate_downscale_brief
+    load_predictions → downscale_predictions ─┬─ generate_downscale_maps
+                                              └─ generate_downscale_brief
 """
 
 from __future__ import annotations
@@ -20,6 +21,9 @@ from pipelines.dengue_downscale.steps.downscale_predictions import (
 from pipelines.dengue_downscale.steps.generate_downscale_brief import (
     GenerateDownscaleBriefStep,
 )
+from pipelines.dengue_downscale.steps.generate_downscale_maps import (
+    GenerateDownscaleMapsStep,
+)
 
 
 def build_pipeline(config: PipelineConfig) -> PipelineDAG:
@@ -27,13 +31,22 @@ def build_pipeline(config: PipelineConfig) -> PipelineDAG:
     downscale_predictions = PipelineStep(
         name="downscale_predictions", impl=DownscalePredictionsStep()
     )
+    generate_downscale_maps = PipelineStep(
+        name="generate_downscale_maps", impl=GenerateDownscaleMapsStep()
+    )
     generate_downscale_brief = PipelineStep(
         name="generate_downscale_brief", impl=GenerateDownscaleBriefStep()
     )
 
     load_predictions >> downscale_predictions
+    downscale_predictions >> generate_downscale_maps
     downscale_predictions >> generate_downscale_brief
 
     return PipelineDAG.from_steps(
-        [load_predictions, downscale_predictions, generate_downscale_brief]
+        [
+            load_predictions,
+            downscale_predictions,
+            generate_downscale_maps,
+            generate_downscale_brief,
+        ]
     )

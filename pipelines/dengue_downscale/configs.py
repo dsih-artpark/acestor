@@ -64,7 +64,9 @@ class DownscaleConfig:
             geojson_base_path=str(
                 raw.get("geojson_base_path", "ap_datasets/geojsons/geojsons_AP")
             ).strip(),
-            on_missing_parents=_validated_on_missing(raw.get("on_missing_parents", "error")),
+            on_missing_parents=_validated_on_missing(
+                raw.get("on_missing_parents", "error")
+            ),
         )
 
 
@@ -75,3 +77,27 @@ def _validated_on_missing(value: Any) -> str:
             f"downscale.on_missing_parents must be 'error' or 'warn', got {value!r}"
         )
     return v
+
+
+@dataclass(frozen=True)
+class DownscaleMapsConfig:
+    """Static PNG choropleth output for child-level predictions (issue #64).
+
+    Mirrors the dengue pipeline's MapsConfig — one PNG per (week, model,
+    threshold) tuple, rendered against the child geojson layer that the
+    downscale step already loads.
+    """
+
+    enabled: bool
+    output_dir: str
+    figure_title: str
+
+    @classmethod
+    def from_raw(cls, raw: Mapping[str, Any]) -> DownscaleMapsConfig:
+        return cls(
+            enabled=bool(raw.get("enabled", True)),
+            output_dir=str(raw.get("output_dir", "outputs/maps")).strip()
+            or "outputs/maps",
+            figure_title=str(raw.get("figure_title") or "Dengue risk map").strip()
+            or "Dengue risk map",
+        )
