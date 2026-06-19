@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Any
 
 import geopandas as gpd
 import pandas as pd
@@ -89,21 +90,26 @@ def _detect_resolution_method(
     lon_column: str,
     path: Path,
     geocoding_cfg: PrepGeocodingConfig | None = None,
+    region_id_column: str | None = None,
 ) -> str:
     """Determine the region_id resolution method for this file.
 
-    Returns one of: ``'lgd'``, ``'geocode'``, ``'spatial'``.
+    Returns one of: ``'region_id'``, ``'lgd'``, ``'geocode'``, ``'spatial'``.
 
     Priority order (highest first):
-      1. ``'lgd'``    — if ``lgd_code_column`` is configured AND present in the file
-      2. ``'geocode'`` — if ``geocoding_cfg.enabled`` AND the address column is present
-      3. ``'spatial'`` — if ``lat_column``/``lon_column`` are present
+      1. ``'region_id'`` — if ``region_id_column`` is configured AND present in the
+         file. Trust a pre-resolved column from an upstream system (e.g. the
+         dashboard's `Region Id` export). Skips all on-the-fly resolution.
+      2. ``'lgd'``    — if ``lgd_code_column`` is configured AND present in the file
+      3. ``'geocode'`` — if ``geocoding_cfg.enabled`` AND the address column is present
+      4. ``'spatial'`` — if ``lat_column``/``lon_column`` are present
 
     Logs a warning if a higher-priority resolver was configured but its
     column(s) are missing — falls through to the next available option.
     Raises if no resolver applies.
     """
     cols = set(df.columns)
+    has_region_id = bool(region_id_column) and region_id_column in cols
     has_lgd = bool(lgd_code_column) and lgd_code_column in cols
     has_geocode = (
         geocoding_cfg is not None
@@ -112,6 +118,22 @@ def _detect_resolution_method(
         and geocoding_cfg.address_fields[0] in cols
     )
     has_latlon = lat_column in cols and lon_column in cols
+
+    if has_region_id:
+        log.info(
+            "ihip parser: file %r → using pre-resolved region_id column %r",
+            path.name,
+            region_id_column,
+        )
+        return "region_id"
+
+    if region_id_column and not has_region_id:
+        log.warning(
+            "ihip parser: file %r is missing configured region_id_column %r — "
+            "trying next resolver",
+            path.name,
+            region_id_column,
+        )
 
     if has_lgd:
         log.info(
@@ -162,6 +184,7 @@ def _detect_resolution_method(
     geocode_fields = list(geocoding_cfg.address_fields) if geocoding_cfg else []
     raise ValueError(
         f"ihip parser: file {path.name!r} has no resolvable region_id source.\n"
+        f"  configured region_id_column: {region_id_column!r} (present={has_region_id})\n"
         f"  configured LGD column: {lgd_code_column!r} (present={has_lgd})\n"
         f"  geocoding enabled: {bool(geocoding_cfg and geocoding_cfg.enabled)} "
         f"(address_fields={geocode_fields}, primary present={has_geocode})\n"
@@ -191,6 +214,99 @@ def _load_geojson(geojson_base: str, region_type: str) -> gpd.GeoDataFrame:
 
     gdfs = [gpd.read_file(f) for f in files]
     return gpd.GeoDataFrame(pd.concat(gdfs, ignore_index=True), crs=gdfs[0].crs)
+
+
+def _resolve_via_region_id_column(
+    df: pd.DataFrame,
+    region_id_column: str,
+    region_type: str,
+    path: Path,
+    geojson_base: str,
+) -> pd.Series:
+    """Trust a pre-resolved region_id column verbatim.
+
+    Strips whitespace. Rows at the target ``<region_type>_*`` granularity are
+    kept as-is; rows at a finer granularity (e.g. ward IDs in a corp-level run)
+    are rolled up via the geojson ``parent`` chain. Rows whose ID can't be
+    rolled up — wrong scope, broken chain — return NaN; the caller drops them.
+    """
+    raw = df[region_id_column].astype("string").str.strip()
+    raw = raw.where(raw.notna() & (raw != ""), other=pd.NA)
+    expected_prefix = f"{region_type}_"
+    needs_rollup = raw.notna() & ~raw.str.startswith(expected_prefix, na=False)
+    if needs_rollup.any():
+        parent_map = _build_parent_map(geojson_base)
+        rolled = raw[needs_rollup].map(
+            lambda rid: _walk_to_prefix(rid, expected_prefix, parent_map)
+        )
+        n_resolved = int(rolled.notna().sum())
+        n_unresolvable = int(rolled.isna().sum())
+        log.info(
+            "ihip parser: file %r rolled up %d of %d row(s) from %r-prefix IDs "
+            "to %r via geojson parent chain",
+            path.name,
+            n_resolved,
+            int(needs_rollup.sum()),
+            ", ".join(
+                sorted(
+                    {str(s).split("_")[0] for s in raw[needs_rollup].dropna().head(20)}
+                )
+            ),
+            expected_prefix.rstrip("_"),
+        )
+        if n_unresolvable:
+            samples = raw[needs_rollup][rolled.isna()].head(5).tolist()
+            log.warning(
+                "ihip parser: file %r found %d row(s) in column %r whose region_id "
+                "could not be rolled up to %r via parent chain — dropping. Sample: %s",
+                path.name,
+                n_unresolvable,
+                region_id_column,
+                expected_prefix,
+                samples,
+            )
+        raw.loc[needs_rollup] = rolled
+    return raw
+
+
+def _build_parent_map(geojson_base: str) -> dict[str, str]:
+    """Scan every geojson under ``geojson_base`` and return ``{region_id: parent_id}``."""
+    import json
+
+    parent_map: dict[str, str] = {}
+    for path in Path(geojson_base).rglob("*.geojson"):
+        try:
+            data = json.loads(path.read_text())
+        except Exception:
+            continue
+        features = data.get("features", [data]) if isinstance(data, dict) else []
+        for feat in features:
+            props = feat.get("properties", {}) if isinstance(feat, dict) else {}
+            rid = props.get("region_id")
+            parent = props.get("parent")
+            if rid and parent and rid not in parent_map:
+                parent_map[rid] = parent
+    return parent_map
+
+
+def _walk_to_prefix(
+    rid: Any,
+    target_prefix: str,
+    parent_map: dict[str, str],
+    max_depth: int = 6,
+) -> Any:
+    """Walk the parent chain from ``rid`` until prefix matches, or give up."""
+    cur = rid
+    for _ in range(max_depth):
+        if not isinstance(cur, str) or not cur:
+            return pd.NA
+        if cur.startswith(target_prefix):
+            return cur
+        nxt = parent_map.get(cur)
+        if not nxt or nxt == cur:
+            return pd.NA
+        cur = nxt
+    return pd.NA
 
 
 def _resolve_via_lgd(
@@ -362,6 +478,7 @@ def parse_ihip_files(
     filters: list[dict] | None = None,
     geocoding_cfg: PrepGeocodingConfig | None = None,
     header_row: int = 0,
+    region_id_column: str | None = None,
 ) -> pd.DataFrame:
     """Read all IHIP files from folder, aggregate to (date, region_id, case_count).
 
@@ -435,17 +552,25 @@ def parse_ihip_files(
                 before,
             )
         method = _detect_resolution_method(
-            df, lgd_code_column, lat_column, lon_column, path, geocoding_cfg
+            df,
+            lgd_code_column,
+            lat_column,
+            lon_column,
+            path,
+            geocoding_cfg,
+            region_id_column=region_id_column,
         )
 
-        # Parse dates per file — fail loudly on unparseable values
-        try:
-            df["date"] = pd.to_datetime(df[date_column], dayfirst=True)
-        except Exception as exc:
-            raise ValueError(
-                f"ihip parser: could not parse date column {date_column!r} in {path.name!r}. "
-                f"Ensure all values are valid dates. Error: {exc}"
-            ) from exc
+        # Parse dates per file. IHIP linelists are dd/mm/yyyy; dashboard exports
+        # are ISO yyyy-mm-dd. Pick the parse that yields fewer NaNs.
+        raw_dates = df[date_column]
+        parsed_dayfirst = pd.to_datetime(raw_dates, dayfirst=True, errors="coerce")
+        parsed_iso = pd.to_datetime(raw_dates, errors="coerce")
+        df["date"] = (
+            parsed_iso
+            if parsed_iso.notna().sum() >= parsed_dayfirst.notna().sum()
+            else parsed_dayfirst
+        )
 
         n_before_dropna = len(df)
         df = df.dropna(subset=["date"])
@@ -459,7 +584,24 @@ def parse_ihip_files(
                 date_column,
             )
 
-        if method == "lgd":
+        if method == "region_id":
+            assert region_id_column is not None
+            df = df.copy()
+            df["region_id"] = _resolve_via_region_id_column(
+                df, region_id_column, region_type, path, geojson_base
+            )
+            n_before_drop = len(df)
+            df = df.dropna(subset=["region_id"])
+            n_dropped = n_before_drop - len(df)
+            if n_dropped:
+                log.warning(
+                    "ihip parser: file %r dropped %d row(s) with missing or "
+                    "malformed pre-resolved %r",
+                    path.name,
+                    n_dropped,
+                    region_id_column,
+                )
+        elif method == "lgd":
             df["region_id"] = _resolve_via_lgd(df, lgd_code_column, region_type)
         elif method == "geocode":
             assert (
