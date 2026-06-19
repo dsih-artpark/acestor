@@ -43,14 +43,31 @@ def load_region_names(geojson_dir: Path) -> dict[str, str]:
 def load_child_geojson_combined(
     geojson_dir: Path,
     *,
-    simplify_tolerance: float = 0.005,
+    simplify_tolerance: float = 0.0015,
 ) -> dict:
     """Combine per-region geojsons into a single FeatureCollection, simplified.
 
     Keeps only essential properties: region_id, name, parent, parent_name.
     Simplifies polygon geometry to keep inlined JSON manageable.
     """
-    from shapely.geometry import mapping, shape
+    from shapely.geometry import MultiPolygon, Polygon, mapping, shape
+    from shapely.geometry.polygon import orient
+
+    def _d3_wind(g):
+        """Force exterior rings clockwise (sign=-1.0).
+
+        d3-geo uses a spherical convention where CCW exterior rings are
+        interpreted as 'everything OUTSIDE this ring' (the antimeridian-spanning
+        complement). With CCW exterior rings, d3.geoBounds returns global
+        bounds, projection.fitSize falls back to the default world view, and
+        every path renders a viewBox-spanning rectangle (solid-coloured-block
+        bug). CW exterior rings are what d3 expects — opposite to RFC 7946's
+        cartesian convention."""
+        if isinstance(g, Polygon):
+            return orient(g, sign=-1.0)
+        if isinstance(g, MultiPolygon):
+            return MultiPolygon([orient(p, sign=-1.0) for p in g.geoms])
+        return g
 
     features = []
     for p in sorted(Path(geojson_dir).glob("*.geojson")):
@@ -64,6 +81,7 @@ def load_child_geojson_combined(
             geom = shape(f["geometry"])
             if simplify_tolerance > 0:
                 geom = geom.simplify(simplify_tolerance, preserve_topology=True)
+            geom = _d3_wind(geom)
             features.append(
                 {
                     "type": "Feature",

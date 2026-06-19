@@ -126,9 +126,9 @@ def xgboost_regression(
         feature_cols=lag_cols,
         lag_cases=lag_cases,
         future_dates=sorted(pd.to_datetime(d) for d in last_4),
-        clip_multiplier=getattr(ctx.cfg, "clip_multiplier", None)
-        if ctx is not None
-        else None,
+        clip_multiplier=(
+            getattr(ctx.cfg, "clip_multiplier", None) if ctx is not None else None
+        ),
         train_max=float(np.nanmax(y_train)) if len(y_train) else None,
         debug=debug_on,
     )
@@ -144,8 +144,14 @@ def xgboost_regression(
         from pipelines.dengue.lib.models.rf import _save_debug
 
         _save_debug(
-            ctx, "xgb", X_train, y_train, preds, debug_rows,
-            xgb_model.feature_importances_, lag_cols,
+            ctx,
+            "xgb",
+            X_train,
+            y_train,
+            preds,
+            debug_rows,
+            xgb_model.feature_importances_,
+            lag_cols,
         )
 
     return preds.reset_index(drop=True)
@@ -215,8 +221,10 @@ def _get_xgb_params(
         _tuning_mod.compute_fingerprint(ctx.cfg, train_max_date),
     )
     _log.info(
-        "XGB: tuning complete — best RMSE=%.4f, params saved to hp/xgb_best_params.json",
+        "XGB [%s]: tuning complete — best RMSE=%.4f, params saved to %s",
+        region_type,
         rmse,
+        _tuning_mod.hp_cache_path("xgb", region_type),
     )
     return params
 
