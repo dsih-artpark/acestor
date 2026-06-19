@@ -179,6 +179,25 @@ def _get_xgb_params(
 
     region_type = getattr(ctx.cfg, "spatial_res", "") or ""
     cached = _tuning_mod.load_cached_params(ctx.artifacts, "xgb", region_type)
+
+    # tune="never" — trust the cache regardless of fingerprint (hindcast /
+    # operational mode). Fail loud if the cache is missing.
+    if ctx.cfg.tune == "never":
+        if cached is None:
+            raise FileNotFoundError(
+                f"XGB [{region_type or '?'}]: tune='never' but no cached "
+                f"hyperparameters found at {_tuning_mod.hp_cache_path('xgb', region_type)!r}. "
+                f"Prime the cache with a one-time run using tune=true."
+            )
+        _log.info(
+            "XGB [%s]: tune='never' — using cached hyperparameters "
+            "(tuned %s, RMSE=%.4f) without fingerprint check",
+            region_type or "?",
+            cached["tuned_at"],
+            cached["best_rmse"],
+        )
+        return cached["params"]
+
     fingerprint_ok = _tuning_mod.check_fingerprint(
         ctx.artifacts, "xgb", ctx.cfg, train_max_date, _log
     )
@@ -191,7 +210,7 @@ def _get_xgb_params(
         )
         return cached["params"]
 
-    if ctx.cfg.tune:
+    if ctx.cfg.tune is True:
         reason = "tune=True, forcing retune"
     elif cached is None:
         reason = "no cached hyperparameters found"

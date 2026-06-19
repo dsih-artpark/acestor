@@ -485,6 +485,23 @@ def resolve_threshold_config(
 # ---------------------------------------------------------------------------
 
 
+def _parse_tune(raw: Any) -> bool | str:
+    """Accept bool or the sentinel string 'never'. Anything else is an error."""
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        s = raw.strip().lower()
+        if s in ("true", "yes", "1"):
+            return True
+        if s in ("false", "no", "0", ""):
+            return False
+        if s == "never":
+            return "never"
+    raise ValueError(
+        f"model_configs.<model>.tune must be true, false, or 'never'; got {raw!r}"
+    )
+
+
 @dataclass(frozen=True)
 class TrainPredictConfig:
     spatial_res: str
@@ -498,7 +515,14 @@ class TrainPredictConfig:
     models: list[str]
     ensemble: str  # registered ensemble strategy name, or "none"
     output: str  # "ensemble" | "per_model" | "both"
-    tune: bool  # False = use cache; True = force Optuna retune
+    # Tuning behavior:
+    #   True        — always Optuna-retune
+    #   False       — use cache when fingerprint matches, otherwise retune (default)
+    #   "never"     — trust the cache regardless of fingerprint, fail loud if no cache
+    # The "never" mode is the hindcast/production path: tune once on a representative
+    # window, then run many vintages without re-tuning. Matches what production deploys
+    # would do — they don't retune per inference run.
+    tune: bool | str
     n_trials: int  # Optuna trials when tuning runs
     debug: bool  # True = save intermediate CSVs to artifacts/debug/<model>/
     # Recursive-forecast upper clip: None = floor at 0 only (default, parity with
@@ -538,7 +562,7 @@ class TrainPredictConfig:
             models=list(raw.get("models", ["tse"])),
             ensemble=ensemble,
             output=output,
-            tune=bool(raw.get("tune", False)),
+            tune=_parse_tune(raw.get("tune", False)),
             n_trials=int(raw.get("n_trials", 50)),
             debug=bool(raw.get("debug", False)),
             clip_multiplier=(
