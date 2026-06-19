@@ -1,0 +1,125 @@
+state: "GBA"
+
+pipeline:
+  name: dengue
+  title: "Dengue Early Warning System — Greater Bengaluru Authority (zone)"
+
+run:
+  run_date: ""   # blank → today's date
+
+data:
+  prepared_data:
+    base_dir: "gba_datasets/prepared_data"
+    region_type: "zone"
+
+  case_parse:
+    region_types:
+      - "zone"
+    date_start: "2022-01-01"
+    date_end: ""
+
+  case_sufficiency:
+    enabled: true
+    min_total_rows: 30
+    min_distinct_regions: 2
+    min_date_span_days: 14
+
+  geojson:
+    base_path: "gba_datasets/geojsons/geojsons_GBA"
+
+  weather_parse:
+    region_type: "zone"
+    weather_variables:
+      - "2mTemperature"
+      - "totalPrecipitation"
+      - "2mDewpointTemperature"
+    rolling_n_days: 7
+    rolling_agg:
+      - {name: "2mTemperature",         op: "mean"}
+      - {name: "2mDewpointTemperature", op: "mean"}
+      - {name: "totalPrecipitation",    op: "sum"}
+    sampling_rate: 7
+    intermediate_col_rename:
+      "2mTemperature_max": "t2m_max"
+      "2mTemperature_min": "t2m_min"
+      "2mTemperature": "t2m_mean"
+      "2mDewpointTemperature": "d2m_mean"
+      "totalPrecipitation": "tp_sum"
+
+cutoff:
+  case_min_regions: 2
+  weather_min_regions: 5
+
+thresholds:
+  region_type: "zone"
+  list_alpha: [1.0, 2.0]
+  methods: [historical, prev_nweeks, weighted_baseline]
+  classification_method: icmr
+  method_configs:
+    prev_nweeks:
+      n_weeks: 4
+    historical:
+      historical_n_years: 4
+      excluded_years: []
+      included_years: []
+
+model:
+  spatial_res: "zone"
+  models: [rf, xgb]
+  ensemble: mean
+  output: both
+  debug: false
+
+model_configs:
+  rf:
+    lag:
+      lag_temp: [4, 5, 6, 7, 8, 9, 10, 11, 12]
+      lag_rainfall: [4]
+      lag_humidity: [4]
+      lag_cases: [1, 2, 3, 4, 5]
+    years_to_exclude: []
+    years_to_include: []
+    tune: false
+    n_trials: 50
+
+  xgb:
+    lag:
+      lag_temp: [4, 5, 6, 7, 8, 9, 10, 11, 12]
+      lag_rainfall: [4]
+      lag_humidity: [4]
+      lag_cases: [1, 2, 3, 4, 5]
+    years_to_exclude: []
+    years_to_include: []
+    tune: false
+    n_trials: 50
+
+assess:
+  total_district_regions: 10
+
+maps:
+  output_dir: "outputs/maps"
+  figure_title: "Greater Bengaluru Authority Dengue Risk Map"
+
+report:
+  output_dir: "outputs/report"
+
+report_distribution:
+  system_name: "Dengue Early Warning System"
+  organization: "ARTPARK, IISc Bengaluru"
+  state: "Karnataka"
+  region: "Greater Bengaluru Authority (10 zones)"
+  department: "BBMP / Greater Bengaluru Authority"
+  contact_email: ""
+  footer_note: ""
+
+logging:
+  level: INFO
+
+email:
+  enabled: false
+
+storages:
+  artifacts:
+    kind: filesystem
+    filesystem:
+      base_path: "./artifacts/gba_zone"
