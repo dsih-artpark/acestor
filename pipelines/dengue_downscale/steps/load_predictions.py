@@ -14,21 +14,39 @@ from pipelines.dengue_downscale.results import LoadPredictionsResult
 _MODEL_SUFFIXES = ("_nbr_", "_rf_", "_xgb_", "_tse_")
 
 
-def _resolve_latest_run(base_path: Path) -> str:
-    """Return the name of the most recently modified run dir that has a canonical predictions.csv."""
-    candidates = []
+def _resolve_latest_run(base_path: Path, parent_level: str) -> str:
+    """Return the name of the most recently modified run dir whose predictions.csv
+    is at ``parent_level`` granularity.
+
+    Filters out prior downscale runs (whose predictions.csv is at the *child*
+    level): without this guard, 'latest' will happily pick a previous downscale
+    output as the source and try to downscale it again, which either crashes
+    loudly ('no children in the mapping') or — worse — produces nonsense.
+    """
+    parent_prefix = f"{parent_level}_"
+    candidates: list[tuple[float, str]] = []
     for run_dir in base_path.iterdir():
         if not run_dir.is_dir():
             continue
-        results_dir = run_dir / "outputs"
-        if not results_dir.exists():
+        pred_path = run_dir / "outputs" / "predictions.csv"
+        if not pred_path.exists():
             continue
-        if (results_dir / "predictions.csv").exists():
-            candidates.append((run_dir.stat().st_mtime, run_dir.name))
+        try:
+            head = pd.read_csv(pred_path, usecols=["regionID"], nrows=1)
+        except Exception:
+            continue
+        if head.empty:
+            continue
+        rid = str(head["regionID"].iloc[0])
+        if not rid.startswith(parent_prefix):
+            continue
+        candidates.append((run_dir.stat().st_mtime, run_dir.name))
     if not candidates:
         raise FileNotFoundError(
-            f"source_run_id='latest' but no valid dengue run found in {base_path}. "
-            f"Run the dengue pipeline first."
+            f"source_run_id='latest' but no dengue forecast run at parent_level="
+            f"{parent_level!r} found in {base_path}. Either run the dengue "
+            f"pipeline at this region_type first, or set source_run_id "
+            f"explicitly in the downscale config."
         )
     candidates.sort(reverse=True)
     return candidates[0][1]
@@ -48,9 +66,17 @@ class LoadPredictionsStep(BaseStep[NoInputs, LoadPredictionsResult]):
 
         source_run_id = cfg.source_run_id
         if cfg.is_latest:
-            source_run_id = _resolve_latest_run(storage.base_path)
+            from pipelines.dengue_downscale.configs import DownscaleConfig
+
+            ds_cfg = DownscaleConfig.from_raw(context.config.get("downscale") or {})
+            source_run_id = _resolve_latest_run(
+                storage.base_path, parent_level=ds_cfg.parent_level
+            )
             context.log.info(
-                "load_predictions: source_run_id='latest' resolved to %r", source_run_id
+                "load_predictions: source_run_id='latest' (parent_level=%r) "
+                "resolved to %r",
+                ds_cfg.parent_level,
+                source_run_id,
             )
 
         results_dir = storage.base_path / source_run_id / "outputs"
