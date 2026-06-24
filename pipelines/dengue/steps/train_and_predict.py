@@ -171,6 +171,10 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
                 artifacts=context.artifacts,
                 run_id=context.run_id,
                 log=context.log,
+                model_params=dict(raw_model_configs.get(model_name, {}) or {}),
+                prediction_dates=list(
+                    inputs.identify_cutoff_dates.prediction_dates or []
+                ),
             )
             model = get_model(model_name)
             pred = model.predict(ctx)
