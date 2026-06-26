@@ -32,9 +32,9 @@ def test_tune_defaults_to_false():
     assert cfg.tune is False
 
 
-def test_n_trials_defaults_to_50():
+def test_n_trials_defaults_to_100():
     cfg = TrainPredictConfig.from_raw(_base_raw())
-    assert cfg.n_trials == 50
+    assert cfg.n_trials == 100
 
 
 def test_tune_can_be_set_true():

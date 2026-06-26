@@ -539,7 +539,7 @@ class TrainPredictConfig:
             ensemble=ensemble,
             output=output,
             tune=bool(raw.get("tune", False)),
-            n_trials=int(raw.get("n_trials", 50)),
+            n_trials=int(raw.get("n_trials", 100)),
             debug=bool(raw.get("debug", False)),
             clip_multiplier=(
                 float(raw["clip_multiplier"])
