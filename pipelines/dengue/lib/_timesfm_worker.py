@@ -45,11 +45,21 @@ def _run(workdir: Path) -> None:
     # Trim each series back to its true length — the parent right-pads so the
     # 2D layout transports cleanly, but TimesFM accepts variable-length inputs.
     inputs: list[np.ndarray] = [
-        series_padded[i, : int(lengths[i])].astype(np.float32)
-        for i in range(n_regions)
+        series_padded[i, : int(lengths[i])].astype(np.float32) for i in range(n_regions)
     ]
 
     import timesfm  # noqa: PLC0415
+    from huggingface_hub import snapshot_download  # noqa: PLC0415
+
+    # Idempotent: if (repo_id, revision) is already in cache_dir this is a
+    # no-op; otherwise it downloads the pinned snapshot. Keeps the pinned-SHA
+    # safety (asking for a specific commit; HF can't silently sub a different
+    # one) while removing the separate warmup step.
+    snapshot_download(
+        repo_id=spec["repo_id"],
+        revision=spec["revision"],
+        cache_dir=spec["cache_dir"],
+    )
 
     model = timesfm.TimesFM_2p5_200M_torch.from_pretrained(
         spec["repo_id"],
@@ -82,8 +92,10 @@ def _run(workdir: Path) -> None:
             )
         out_chunks.append(point)
 
-    output = np.concatenate(out_chunks, axis=0) if out_chunks else np.zeros(
-        (0, horizon), dtype=np.float32
+    output = (
+        np.concatenate(out_chunks, axis=0)
+        if out_chunks
+        else np.zeros((0, horizon), dtype=np.float32)
     )
     np.save(workdir / "output.npy", output)
 

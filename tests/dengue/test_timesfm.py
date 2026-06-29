@@ -370,6 +370,21 @@ def test_worker_calls_timesfm_2p5_api_correctly(tmp_path: Path, monkeypatch):
     fake.ForecastConfig = _ForecastConfig
     monkeypatch.setitem(sys.modules, "timesfm", fake)
 
+    # Worker now calls huggingface_hub.snapshot_download for idempotent
+    # cache warming. Stub it so the test stays offline; assert it's called.
+    fake_hf = types.ModuleType("huggingface_hub")
+
+    def _snapshot_download(*, repo_id, revision, cache_dir):
+        captured["snapshot_download"] = {
+            "repo_id": repo_id,
+            "revision": revision,
+            "cache_dir": cache_dir,
+        }
+        return cache_dir
+
+    fake_hf.snapshot_download = _snapshot_download
+    monkeypatch.setitem(sys.modules, "huggingface_hub", fake_hf)
+
     # Lay out worker inputs.
     workdir = tmp_path / "wd"
     workdir.mkdir()
@@ -413,6 +428,13 @@ def test_worker_calls_timesfm_2p5_api_correctly(tmp_path: Path, monkeypatch):
         "revision": VALID_SHA,
         "cache_dir": str(tmp_path / "cache"),
         "local_files_only": True,
+    }
+    # snapshot_download was called with the same (repo_id, revision, cache_dir)
+    # before from_pretrained, ensuring idempotent cache warming.
+    assert captured["snapshot_download"] == {
+        "repo_id": "google/timesfm-2.5-200m-pytorch",
+        "revision": VALID_SHA,
+        "cache_dir": str(tmp_path / "cache"),
     }
     fc = captured["forecast_config"]
     assert fc["max_context"] == 1024
