@@ -83,14 +83,20 @@ def _run(workdir: Path) -> None:
     out_chunks: list[np.ndarray] = []
     for start in range(0, n_regions, chunk):
         sub = inputs[start : start + chunk]
+        # Capture the real input count BEFORE forecast — TimesFM 2.5 pads the
+        # inputs list in-place to per_core_batch_size for its internal batching,
+        # so len(sub) post-call no longer reflects what we passed in.
+        n_sub = len(sub)
         point, _quantile = model.forecast(horizon=horizon, inputs=sub)
         point = np.asarray(point, dtype=np.float32)
-        if point.shape != (len(sub), horizon):
+        # Accept either exactly (n_sub, horizon) or a wider (>=n_sub, horizon)
+        # padded output and slice back to the real input count.
+        if point.ndim != 2 or point.shape[1] != horizon or point.shape[0] < n_sub:
             raise RuntimeError(
                 f"timesfm.forecast returned shape {point.shape}, "
-                f"expected ({len(sub)}, {horizon})"
+                f"expected ({n_sub}, {horizon}) or wider"
             )
-        out_chunks.append(point)
+        out_chunks.append(point[:n_sub])
 
     output = (
         np.concatenate(out_chunks, axis=0)
