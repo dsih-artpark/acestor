@@ -26,7 +26,7 @@ data:
   case_parse:
     region_types:
       - "zone"
-    date_column: "Sample Collected Date"
+    date_column: "Test Performed Date"
     # The dashboard's GBA export already attaches a resolved ward ID to every
     # row in the "Region Id" column (e.g. "ward_gba-63") via its own pipeline.
     # Trust it — skip geocoding / spatial join entirely.
@@ -49,4 +49,4 @@ storages:
   artifacts:
     kind: filesystem
     filesystem:
-      base_path: "./artifacts/gba_prep"
+      base_path: "./artifacts/gba_zone_prep"
