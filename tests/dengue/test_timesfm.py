@@ -14,7 +14,6 @@ import sys
 import types
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
 
 import numpy as np
 import pandas as pd
@@ -53,7 +52,9 @@ def _params(**over: Any) -> TimesFmParams:
     return TimesFmParams.from_raw(base)
 
 
-def _case_df(regions=("r1", "r2"), n_weeks: int = 12, base: pd.Timestamp = None) -> pd.DataFrame:
+def _case_df(
+    regions=("r1", "r2"), n_weeks: int = 12, base: pd.Timestamp = None
+) -> pd.DataFrame:
     base = base or pd.Timestamp("2026-01-05")  # Monday
     rows = []
     for region in regions:
@@ -72,10 +73,12 @@ def _fake_runner(point_values: np.ndarray):
     """Build a runner stub that returns ``point_values`` (n_regions, horizon)."""
     from pipelines.dengue.lib.isolation import IsolatedRunResult
 
-    def runner(*, worker_module, series, lengths, spec, workdir, timeout_s, expected_shape):
-        assert point_values.shape == expected_shape, (
-            f"test bug: point_values {point_values.shape} != expected {expected_shape}"
-        )
+    def runner(
+        *, worker_module, series, lengths, spec, workdir, timeout_s, expected_shape
+    ):
+        assert (
+            point_values.shape == expected_shape
+        ), f"test bug: point_values {point_values.shape} != expected {expected_shape}"
         return IsolatedRunResult(
             output=point_values.astype(np.float32), stdout="", stderr=""
         )
@@ -196,9 +199,7 @@ def test_forecast_returns_contract_columns_and_full_model_name():
     # Re-stamp the synthetic data so its last row IS cutoff.
     df["recordDate"] = pd.to_datetime(df["recordDate"])
     df["recordDate"] = df["recordDate"] + (cutoff - df["recordDate"].max())
-    prediction_dates = [
-        str((cutoff + pd.Timedelta(days=7 * h)).date()) for h in (1, 2)
-    ]
+    prediction_dates = [str((cutoff + pd.Timedelta(days=7 * h)).date()) for h in (1, 2)]
     point = np.array([[3.0, 4.0], [30.0, 40.0]], dtype=np.float32)
     out = forecast(
         case_df=df,
@@ -215,16 +216,28 @@ def test_forecast_returns_contract_columns_and_full_model_name():
     assert len(out) == 4
 
 
-def test_forecast_rejects_unsupported_spatial_res():
-    with pytest.raises(ValueError, match="too sparse"):
-        forecast(
-            case_df=_case_df(),
-            spatial_col="ward",
-            cutoff_case=pd.Timestamp("2026-02-23"),
-            prediction_dates=["2026-03-02"],
-            params=_params(),
-            _runner=_fake_runner(np.zeros((1, 1), dtype=np.float32)),
-        )
+def test_forecast_is_spatial_res_agnostic():
+    """TimesFM accepts any spatial_res — sparsity is handled by
+    ``min_context_weeks`` skipping per-region, not by a hard policy gate."""
+    # Stamp 12 weeks of history at the cutoff for a 'ward' region.
+    df = _case_df(regions=("ward_1",), n_weeks=12).rename(columns={"district": "ward"})
+    cutoff = pd.Timestamp("2026-02-23")
+    df["recordDate"] = pd.to_datetime(df["recordDate"]) + (
+        cutoff - df["recordDate"].max()
+    )
+    prediction_dates = [str((cutoff + pd.Timedelta(days=7)).date())]
+
+    point = np.array([[1.0]], dtype=np.float32)
+    out = forecast(
+        case_df=df,
+        spatial_col="ward",
+        cutoff_case=cutoff,
+        prediction_dates=prediction_dates,
+        params=_params(min_context_weeks=2),
+        _runner=_fake_runner(point),
+    )
+    assert "ward" in out.columns
+    assert len(out) == 1
 
 
 def test_forecast_empty_prediction_dates_returns_empty():

@@ -5,10 +5,11 @@ region's weekly case history; ignores weather** (unlike nbr/rf/xgb).
 Runs in an isolated subprocess via :mod:`pipelines.dengue.lib.isolation`
 so torch's runtime can't share a process with xgboost's OpenMP.
 
-Scope: ``district`` and ``corp`` only — ward/subdistrict/mandal weekly
-counts are too sparse for a univariate foundation model. The model
-itself is spatial-agnostic; the restriction is policy enforced at
-predict time.
+Spatial-agnostic — works at any ``spatial_res`` the rest of the pipeline
+supports (corp, zone, ward, district, subdistrict, mandal). At
+high-resolution units case counts are sparser, so ``min_context_weeks``
+and the regular per-region skip logic do the right thing without a
+hard policy gate.
 
 Standalone, backtest-gated: integration into the scheduled ensemble
 happens after a separate validation gate.
@@ -21,7 +22,7 @@ onto :class:`pipelines.dengue.lib.models.ModelContext.model_params` by
 
     model:
       models: [timesfm]
-      spatial_res: district           # or corp
+      spatial_res: district           # any spatial_res the pipeline supports
       ensemble: none
       output: per_model
     model_configs:
@@ -54,7 +55,6 @@ log = logging.getLogger(__name__)
 
 
 _WORKER_MODULE = "pipelines.dengue.lib._timesfm_worker"
-_ALLOWED_SPATIAL_RES = {"district", "corp"}
 _REVISION_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 
 
@@ -110,9 +110,7 @@ class TimesFmParams:
         }
         for k, v in positives.items():
             if v <= 0:
-                raise ValueError(
-                    f"model_configs.timesfm.{k} must be > 0; got {v}"
-                )
+                raise ValueError(f"model_configs.timesfm.{k} must be > 0; got {v}")
 
         return cls(
             huggingface_repo_id=str(raw["huggingface_repo_id"]).strip(),
@@ -174,9 +172,7 @@ def build_weekly_series(
         if weekly.empty:
             continue
         # Zero-fill missing weeks across the region's own span up to cutoff.
-        full_index = pd.date_range(
-            start=weekly.index.min(), end=anchor, freq="7D"
-        )
+        full_index = pd.date_range(start=weekly.index.min(), end=anchor, freq="7D")
         weekly = weekly.reindex(full_index, fill_value=0.0).clip(lower=0.0)
         # Last week's stamp should equal the anchor; rebase the index to that.
         weekly.index = full_index
@@ -220,7 +216,9 @@ def horizon_and_indices_for_targets(
 
 def _classify_series(
     series_by_region: dict[str, pd.Series], *, min_context_weeks: int
-) -> tuple[dict[str, pd.Series], dict[str, pd.Series], list[str], list[tuple[str, float]]]:
+) -> tuple[
+    dict[str, pd.Series], dict[str, pd.Series], list[str], list[tuple[str, float]]
+]:
     """Split regions into ``(forecastable, all_zero, skipped_thin, gap_log)``.
 
     ``gap_log`` is a list of ``(region, gap_fraction)`` for diagnostics —
@@ -300,13 +298,6 @@ def forecast(
     runs.
     """
     empty = pd.DataFrame(columns=[spatial_col, "recordDate", "prediction", "model"])
-
-    if spatial_col not in _ALLOWED_SPATIAL_RES:
-        raise ValueError(
-            f"timesfm supports spatial_res in {sorted(_ALLOWED_SPATIAL_RES)} only; "
-            f"got {spatial_col!r}. Ward/subdistrict/mandal weekly counts are "
-            f"too sparse for a univariate foundation model."
-        )
 
     horizon, indices, target_timestamps = horizon_and_indices_for_targets(
         cutoff_case=cutoff_case, prediction_dates=prediction_dates
