@@ -130,7 +130,13 @@ class GenerateDownscaleBriefStep(
         interactive_map_data: dict | None = None
         if child_geojson_dir.exists():
             try:
-                geojson_fc = load_child_geojson_combined(child_geojson_dir)
+                # Tighter tolerance for downscale: child polygons are smaller
+                # than the parent dengue brief's, so the same simplification
+                # ratio is visibly choppier here. 0.0005 ≈ ~55m at the equator —
+                # well below ward-level perception thresholds.
+                geojson_fc = load_child_geojson_combined(
+                    child_geojson_dir, simplify_tolerance=0.0005
+                )
                 parent_lookup = compute_parent_lookup(geojson_fc)
                 # weekly_zones: {week_idx (str, 1-based): {region_id: zone_int}}
                 weekly_zones: dict[str, dict[str, int]] = {}

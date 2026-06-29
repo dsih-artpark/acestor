@@ -115,9 +115,9 @@ def random_forest_regression(
         feature_cols=lag_cols,
         lag_cases=lag_cases,
         future_dates=sorted(pd.to_datetime(d) for d in last_4),
-        clip_multiplier=getattr(ctx.cfg, "clip_multiplier", None)
-        if ctx is not None
-        else None,
+        clip_multiplier=(
+            getattr(ctx.cfg, "clip_multiplier", None) if ctx is not None else None
+        ),
         train_max=float(np.nanmax(y_train)) if len(y_train) else None,
         debug=debug_on,
     )
@@ -130,7 +130,16 @@ def random_forest_regression(
 
     preds["model"] = "randomForestRegression"
     if debug_on:
-        _save_debug(ctx, "rf", X_train, y_train, preds, debug_rows, rf.feature_importances_, lag_cols)
+        _save_debug(
+            ctx,
+            "rf",
+            X_train,
+            y_train,
+            preds,
+            debug_rows,
+            rf.feature_importances_,
+            lag_cols,
+        )
 
     return preds.reset_index(drop=True)
 
@@ -177,6 +186,26 @@ def _get_rf_params(
 
     region_type = getattr(ctx.cfg, "spatial_res", "") or ""
     cached = _tuning_mod.load_cached_params(ctx.artifacts, "rf", region_type)
+
+    # tune="never" — trust the cache regardless of fingerprint (hindcast /
+    # operational mode: tune once, reuse across vintages). Fail loud if the
+    # cache is missing rather than silently slipping back into auto-retune.
+    if ctx.cfg.tune == "never":
+        if cached is None:
+            raise FileNotFoundError(
+                f"RF [{region_type or '?'}]: tune='never' but no cached "
+                f"hyperparameters found at {_tuning_mod.hp_cache_path('rf', region_type)!r}. "
+                f"Prime the cache with a one-time run using tune=true."
+            )
+        _log.info(
+            "RF [%s]: tune='never' — using cached hyperparameters "
+            "(tuned %s, RMSE=%.4f) without fingerprint check",
+            region_type or "?",
+            cached["tuned_at"],
+            cached["best_rmse"],
+        )
+        return cached["params"]
+
     fingerprint_ok = _tuning_mod.check_fingerprint(
         ctx.artifacts, "rf", ctx.cfg, train_max_date, _log
     )
@@ -189,7 +218,7 @@ def _get_rf_params(
         )
         return cached["params"]
 
-    if ctx.cfg.tune:
+    if ctx.cfg.tune is True:
         reason = "tune=True, forcing retune"
     elif cached is None:
         reason = "no cached hyperparameters found"
@@ -219,8 +248,10 @@ def _get_rf_params(
         _tuning_mod.compute_fingerprint(ctx.cfg, train_max_date),
     )
     _log.info(
-        "RF: tuning complete — best RMSE=%.4f, params saved to hp/rf_best_params.json",
+        "RF [%s]: tuning complete — best RMSE=%.4f, params saved to %s",
+        region_type,
         rmse,
+        _tuning_mod.hp_cache_path("rf", region_type),
     )
     return params
 

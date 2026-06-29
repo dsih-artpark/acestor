@@ -6,7 +6,7 @@ run:
   run_date: ""
 
 data:
-  region_type: "ward"
+  region_type: "zone"
 
   prepared_data:
     base_dir: "gba_datasets/prepared_data"
@@ -25,7 +25,7 @@ data:
 
   case_parse:
     region_types:
-      - "ward"
+      - "zone"
     date_column: "Test Performed Date"
     # The dashboard's GBA export already attaches a resolved ward ID to every
     # row in the "Region Id" column (e.g. "ward_gba-63") via its own pipeline.
@@ -36,7 +36,11 @@ data:
         values: ["Dengue"]
 
   weather_download:
-    enabled: false
+    enabled: true
+    source_mode: "openmeteo"
+    parsed_output_path: "gba_datasets/weather"
+    temperature_unit: "celsius"
+    precipitation_unit: "mm"
 
 logging:
   level: INFO
@@ -45,4 +49,4 @@ storages:
   artifacts:
     kind: filesystem
     filesystem:
-      base_path: "./artifacts/gba_ward_prep"
+      base_path: "./artifacts/gba_zone_prep"

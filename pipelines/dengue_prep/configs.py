@@ -180,6 +180,13 @@ class PrepCaseParseConfig:
     )
     lat_column: str  # latitude column name for spatial join fallback
     lon_column: str  # longitude column name for spatial join fallback
+    region_id_column: (
+        str
+        # If set and present in the file, trust this column as the resolved
+        # region_id verbatim — skips LGD / geocode / spatial join. Useful when
+        # an upstream system (e.g. the dashboard) already attached region_ids
+        # to every row. Values must match the ``<region_type>_<...>`` prefix.
+    )
     header_row: (
         int  # 0-indexed row containing column headers (banner-row exports use 1)
     )
@@ -227,6 +234,7 @@ class PrepCaseParseConfig:
             lgd_code_column=_s(raw.get("lgd_code_column", "")),
             lat_column=_s(raw.get("lat_column", "Latitude")) or "Latitude",
             lon_column=_s(raw.get("lon_column", "Longitude")) or "Longitude",
+            region_id_column=_s(raw.get("region_id_column", "")),
             header_row=int(raw.get("header_row", 0)),
             filters=filters,
             geocoding=geocoding,

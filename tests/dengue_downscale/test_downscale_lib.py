@@ -351,12 +351,17 @@ def test_downscale_run_config_latest_sentinel():
 # ---------------------------------------------------------------------------
 
 
-def _make_run_dir(base: Path, run_id: str, with_predictions: bool = True) -> Path:
+def _make_run_dir(
+    base: Path,
+    run_id: str,
+    with_predictions: bool = True,
+    region_id_prefix: str = "district",
+) -> Path:
     results = base / run_id / "outputs"
     results.mkdir(parents=True)
     if with_predictions:
         (results / "predictions.csv").write_text(
-            "dateOfComputingPrediction\n2026-01-01\n"
+            f"regionID,dateOfComputingPrediction\n{region_id_prefix}_1,2026-01-01\n"
         )
     return base / run_id
 
@@ -367,18 +372,42 @@ def test_resolve_latest_run_picks_most_recent(tmp_path):
     _make_run_dir(tmp_path, "run-old")
     time.sleep(0.05)
     _make_run_dir(tmp_path, "run-new")
-    assert _resolve_latest_run(tmp_path) == "run-new"
+    assert _resolve_latest_run(tmp_path, parent_level="district") == "run-new"
 
 
 def test_resolve_latest_run_skips_dirs_without_predictions(tmp_path):
     _make_run_dir(tmp_path, "run-no-preds", with_predictions=False)
     _make_run_dir(tmp_path, "run-with-preds", with_predictions=True)
-    assert _resolve_latest_run(tmp_path) == "run-with-preds"
+    assert _resolve_latest_run(tmp_path, parent_level="district") == "run-with-preds"
 
 
 def test_resolve_latest_run_raises_when_empty(tmp_path):
     with pytest.raises(FileNotFoundError, match="latest"):
-        _resolve_latest_run(tmp_path)
+        _resolve_latest_run(tmp_path, parent_level="district")
+
+
+def test_resolve_latest_run_skips_prior_downscale_run(tmp_path):
+    """A prior downscale run's predictions are at the CHILD level (e.g. ward),
+    not the parent (zone). 'latest' must skip it and pick the dengue forecast."""
+    import time
+
+    # Oldest: an earlier zone-level forecast (should lose to zone-forecast on mtime)
+    _make_run_dir(tmp_path, "old-zone-forecast", region_id_prefix="zone")
+    time.sleep(0.05)
+    # Then a downscale run (ward-level) — must be skipped despite being newer than old-zone-forecast
+    _make_run_dir(tmp_path, "prior-downscale", region_id_prefix="ward")
+    time.sleep(0.05)
+    # Newest zone-level forecast — should win
+    _make_run_dir(tmp_path, "zone-forecast", region_id_prefix="zone")
+
+    assert _resolve_latest_run(tmp_path, parent_level="zone") == "zone-forecast"
+
+
+def test_resolve_latest_run_raises_when_only_wrong_level_runs_exist(tmp_path):
+    """Useful failure message when every candidate is at the wrong level."""
+    _make_run_dir(tmp_path, "only-downscale", region_id_prefix="ward")
+    with pytest.raises(FileNotFoundError, match="parent_level"):
+        _resolve_latest_run(tmp_path, parent_level="zone")
 
 
 def test_downscale_config_requires_parent_level():
