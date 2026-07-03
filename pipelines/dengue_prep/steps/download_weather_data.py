@@ -128,6 +128,17 @@ class PrepDownloadWeatherDataStep(BaseStep[NoInputs, PrepWeatherDownloadResult])
         )
         output_path.mkdir(parents=True, exist_ok=True)
 
+        from pipelines.dengue_prep.lib.summary import (
+            MonthFetch,
+            WeatherDownloadStats,
+            render_weather_download_summary,
+            write_markdown_report,
+        )
+
+        dl_stats = WeatherDownloadStats(
+            source_mode=cfg.source_mode, region_type=cfg.region_type
+        )
+
         now = pd.Timestamp.now().normalize()
         current_ym = (now.year, now.month)
         downloaded: list[str] = []
@@ -141,10 +152,18 @@ class PrepDownloadWeatherDataStep(BaseStep[NoInputs, PrepWeatherDownloadResult])
             dest = output_path / str(year) / f"{year}_{month:02d}.csv"
             is_current = (year, month) == current_ym
 
-            # Past complete months — skip if already on disk
+            # Past months — skip only if the file actually covers through
+            # month_end. A previous run may have hit Open-Meteo's archive lag
+            # mid-month, leaving a gap at the tail; when the month rolls into
+            # "past" the code used to treat any existing file as complete,
+            # freezing the gap forever. Now we look at the max date on disk
+            # and fall through to the resume-fetch branch if it's short.
             if not is_current and dest.exists() and _file_has_data(dest):
-                downloaded.append(f"filesystem://{dest.resolve()}")
-                continue
+                max_date = _max_date_in_file(dest)
+                if max_date and pd.Timestamp(max_date) >= pd.Timestamp(month_end):
+                    downloaded.append(f"filesystem://{dest.resolve()}")
+                    dl_stats.months_skipped_complete += 1
+                    continue
 
             # Determine fetch start: resume from the last date already stored
             if dest.exists() and _file_has_data(dest):
@@ -194,6 +213,7 @@ class PrepDownloadWeatherDataStep(BaseStep[NoInputs, PrepWeatherDownloadResult])
                     fetch_start,
                     month_end,
                 )
+                dl_stats.months_upstream_empty += 1
                 if dest.exists():
                     downloaded.append(f"filesystem://{dest.resolve()}")
                 continue
@@ -212,12 +232,26 @@ class PrepDownloadWeatherDataStep(BaseStep[NoInputs, PrepWeatherDownloadResult])
                 df_new.to_csv(dest, index=False)
 
             downloaded.append(f"filesystem://{dest.resolve()}")
+            dl_stats.months_fetched.append(
+                MonthFetch(
+                    year_month=f"{year}-{month:02d}",
+                    fetched_start=fetch_start,
+                    fetched_end=month_end,
+                    rows_added=len(df_new),
+                )
+            )
 
         context.log.info(
             "download_weather_data (%s): %d monthly files ready",
             cfg.source_mode,
             len(downloaded),
         )
+
+        # ── Rich terminal + append to markdown report ─────────────────────
+        render_weather_download_summary(dl_stats)
+        report_path = Path(context.artifact_fs_path("outputs/prep_summary.md"))
+        write_markdown_report(report_path, weather_download=dl_stats)
+
         return PrepWeatherDownloadResult(enabled=True, downloaded_files=downloaded)
 
     # ------------------------------------------------------------------

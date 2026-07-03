@@ -169,12 +169,39 @@ class PrepGeocodingConfig:
         )
 
 
+def _normalise_date_column(raw: Any) -> list[str]:
+    """Coerce ``date_column`` config value to a list of candidate column names.
+
+    Accepts a single string (back-compat) or a list of strings. Falls back to
+    ``["Sample Collected Date"]`` when unset. Strips whitespace and drops empties.
+    """
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return ["Sample Collected Date"]
+    if isinstance(raw, str):
+        return [raw.strip()]
+    if isinstance(raw, list):
+        cleaned = [str(x).strip() for x in raw if str(x).strip()]
+        if not cleaned:
+            raise ValueError(
+                "data.case_parse.date_column list is empty after stripping — "
+                "specify at least one candidate column name"
+            )
+        return cleaned
+    raise ValueError(
+        f"data.case_parse.date_column must be a string or list of strings; got {type(raw).__name__}"
+    )
+
+
 @dataclass(frozen=True)
 class PrepCaseParseConfig:
     region_types: list[str]
     date_start: str
     date_end: str  # empty → no end date filter applied
-    date_column: str  # which column in the IHIP file to use as case date
+    # One or more candidate column names for the case date. The parser tries
+    # each in order and uses the first one where at least some rows parse as
+    # dates. Configs may pass a single string (back-compat) or a list.
+    # Post-``from_raw`` this is normalised to a list.
+    date_column: list[str]
     lgd_code_column: (
         str  # if set, use this column for LGD code → region_id (skips spatial join)
     )
@@ -229,8 +256,7 @@ class PrepCaseParseConfig:
             region_types=region_types,
             date_start=_s(raw.get("date_start", "")),
             date_end=_s(raw.get("date_end", "")),
-            date_column=_s(raw.get("date_column", "Sample Collected Date"))
-            or "Sample Collected Date",
+            date_column=_normalise_date_column(raw.get("date_column")),
             lgd_code_column=_s(raw.get("lgd_code_column", "")),
             lat_column=_s(raw.get("lat_column", "Latitude")) or "Latitude",
             lon_column=_s(raw.get("lon_column", "Longitude")) or "Longitude",

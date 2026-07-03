@@ -94,19 +94,32 @@ def load_child_geojson_combined(
     return {"type": "FeatureCollection", "features": features}
 
 
-def compute_parent_lookup(feature_collection: dict) -> dict:
-    """Return {parent_id: {"name": str, "bbox": [minLon, minLat, maxLon, maxLat], "child_ids": [str]}}."""
+def compute_parent_lookup(
+    feature_collection: dict,
+    region_names: dict[str, str] | None = None,
+) -> dict:
+    """Return ``{parent_id: {"name": str, "bbox": [...], "child_ids": [str]}}``.
+
+    Parent name fallback order:
+      1. The child feature's ``parent_name`` property (baked into the geojson)
+      2. ``region_names[parent_id]`` (if the caller supplied a name lookup —
+         typically loaded from the parent-level geojsons where the real name
+         lives)
+      3. Raw ``parent_id`` (last resort, keeps the UI navigable)
+    """
     from shapely.geometry import shape
 
+    region_names = region_names or {}
     by_parent: dict = {}
     for f in feature_collection.get("features", []):
         props = f["properties"]
         pid = props.get("parent")
         if not pid:
             continue
+        display_name = props.get("parent_name") or region_names.get(pid) or pid
         entry = by_parent.setdefault(
             pid,
-            {"name": props.get("parent_name") or pid, "bboxes": [], "child_ids": []},
+            {"name": display_name, "bboxes": [], "child_ids": []},
         )
         entry["child_ids"].append(props.get("region_id"))
         b = shape(f["geometry"]).bounds  # (minx, miny, maxx, maxy)
