@@ -151,10 +151,11 @@ def test_build_mapping_empty_dir(tmp_path):
 def test_shares_sum_to_one():
     cases = _make_cases_df(["m1", "m2", "m3"])
     as_of = pd.Timestamp("2026-03-01")
-    shares = compute_shares(
+    shares, tier = compute_shares(
         cases, "district_A", ["m1", "m2", "m3"], as_of, window_weeks=4
     )
     assert pytest.approx(sum(shares.values()), abs=1e-10) == 1.0
+    assert tier == "primary"
 
 
 def test_shares_proportional_to_case_counts():
@@ -164,17 +165,23 @@ def test_shares_proportional_to_case_counts():
         rows.append({"region_id": "m2", "date": date, "case_count": 70})
     cases = pd.DataFrame(rows)
     as_of = pd.Timestamp("2026-02-02")
-    shares = compute_shares(cases, "district_A", ["m1", "m2"], as_of, window_weeks=4)
+    shares, tier = compute_shares(
+        cases, "district_A", ["m1", "m2"], as_of, window_weeks=4
+    )
     assert pytest.approx(shares["m1"], abs=1e-6) == 0.3
     assert pytest.approx(shares["m2"], abs=1e-6) == 0.7
+    assert tier == "primary"
 
 
 def test_shares_uniform_when_zero_cases():
     cases = _make_cases_df(["m1", "m2"], case_count=0)
     as_of = pd.Timestamp("2026-03-01")
-    shares = compute_shares(cases, "district_A", ["m1", "m2"], as_of, window_weeks=4)
+    shares, tier = compute_shares(
+        cases, "district_A", ["m1", "m2"], as_of, window_weeks=4
+    )
     assert pytest.approx(shares["m1"], abs=1e-10) == 0.5
     assert pytest.approx(shares["m2"], abs=1e-10) == 0.5
+    assert tier == "uniform"
 
 
 def test_shares_uses_window_not_all_history():
@@ -189,8 +196,87 @@ def test_shares_uses_window_not_all_history():
         rows.append({"region_id": "m2", "date": date, "case_count": 100})
     cases = pd.DataFrame(rows)
     as_of = pd.Timestamp("2026-03-02")
-    shares = compute_shares(cases, "district_A", ["m1", "m2"], as_of, window_weeks=4)
+    shares, tier = compute_shares(
+        cases, "district_A", ["m1", "m2"], as_of, window_weeks=4
+    )
     assert pytest.approx(shares["m2"], abs=1e-6) == 1.0
+    assert tier == "primary"
+
+
+# Historical fallback (issue #86)
+
+
+def test_historical_fallback_uses_longer_window_when_primary_empty():
+    """Primary 4-week window empty → historical 52-week window has data."""
+    rows = []
+    # Cases 30 weeks ago, well outside 4-week window but inside 52-week
+    for date in pd.date_range("2025-08-01", periods=4, freq="7D"):
+        rows.append({"region_id": "m1", "date": date, "case_count": 20})
+        rows.append({"region_id": "m2", "date": date, "case_count": 60})
+    cases = pd.DataFrame(rows)
+    as_of = pd.Timestamp("2026-03-01")
+
+    shares, tier = compute_shares(
+        cases,
+        "district_A",
+        ["m1", "m2"],
+        as_of,
+        window_weeks=4,
+        historical_fallback_weeks=52,
+    )
+    assert tier == "historical"
+    assert pytest.approx(shares["m1"], abs=1e-6) == 0.25
+    assert pytest.approx(shares["m2"], abs=1e-6) == 0.75
+
+
+def test_historical_fallback_ignored_when_primary_has_data():
+    """Primary window has cases → historical unused; behaviour unchanged."""
+    rows = []
+    for date in pd.date_range("2026-01-05", periods=4, freq="7D"):
+        rows.append({"region_id": "m1", "date": date, "case_count": 40})
+        rows.append({"region_id": "m2", "date": date, "case_count": 60})
+    cases = pd.DataFrame(rows)
+    as_of = pd.Timestamp("2026-02-02")
+    shares, tier = compute_shares(
+        cases,
+        "district_A",
+        ["m1", "m2"],
+        as_of,
+        window_weeks=4,
+        historical_fallback_weeks=52,
+    )
+    assert tier == "primary"
+    assert pytest.approx(shares["m1"], abs=1e-6) == 0.4
+
+
+def test_historical_fallback_falls_through_to_uniform_when_also_empty():
+    """Both windows empty → uniform-split, tier=uniform."""
+    cases = _make_cases_df(["m1", "m2"], case_count=0)
+    as_of = pd.Timestamp("2026-03-01")
+    shares, tier = compute_shares(
+        cases,
+        "district_A",
+        ["m1", "m2"],
+        as_of,
+        window_weeks=4,
+        historical_fallback_weeks=52,
+    )
+    assert tier == "uniform"
+    assert pytest.approx(shares["m1"], abs=1e-10) == 0.5
+
+
+def test_historical_fallback_none_is_current_behaviour():
+    """historical_fallback_weeks=None (default) skips the fallback tier."""
+    cases = _make_cases_df(["m1", "m2"], case_count=0)
+    as_of = pd.Timestamp("2026-03-01")
+    shares, tier = compute_shares(
+        cases,
+        "district_A",
+        ["m1", "m2"],
+        as_of,
+        window_weeks=4,
+    )
+    assert tier == "uniform"
 
 
 # ---------------------------------------------------------------------------

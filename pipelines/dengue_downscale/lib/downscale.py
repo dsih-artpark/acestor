@@ -16,6 +16,7 @@ _PREDICTION_COLS = [
     "startDatePredictedWeek",
     "regionID",
     "prediction",
+    "predictionInt",
     "thresholdMethod",
     "predictionZone",
     "model",
@@ -95,31 +96,56 @@ def compute_shares(
     child_ids: list[str],
     as_of_date: pd.Timestamp,
     window_weeks: int,
-) -> dict[str, float]:
+    *,
+    historical_fallback_weeks: int | None = None,
+) -> tuple[dict[str, float], str]:
     """Compute each child's share of the parent's total cases over the last window_weeks.
 
     cases_df columns: region_id (str), date (Timestamp or date string), case_count (numeric)
 
-    The window is (as_of_date - window_weeks, as_of_date] — exclusive lower bound.
-    Falls back to uniform shares (with a WARNING) when total cases in window == 0.
-    Raises ValueError on NaN case counts inside the window — a data-integrity problem,
-    not something to silently treat as zero.
-    """
-    cutoff_start = as_of_date - pd.Timedelta(weeks=window_weeks)
-    dates = pd.to_datetime(cases_df["date"])
-    mask = (
-        cases_df["region_id"].isin(child_ids)
-        & (dates > cutoff_start)
-        & (dates <= as_of_date)
-    )
-    windowed = cases_df.loc[mask]
+    Fallback hierarchy (issue #86):
+      1. Primary window ``(as_of_date - window_weeks, as_of_date]``.
+         If total > 0, use it.
+      2. If ``historical_fallback_weeks`` is provided and the primary window
+         is empty, retry over the longer window before giving up.
+      3. Uniform shares (WARNING) only when the widest window is also empty.
 
-    if windowed["case_count"].isna().any():
-        bad = sorted(windowed.loc[windowed["case_count"].isna(), "region_id"].unique())
-        raise ValueError(
-            f"compute_shares: NaN case_count in window for parent {parent_id} "
-            f"(children {bad}) — refusing to treat missing data as zero"
+    Returns ``(shares, tier)`` where ``tier`` is ``"primary"`` / ``"historical"`` /
+    ``"uniform"`` so callers can surface diagnostics.
+
+    Raises ValueError on NaN case counts inside the primary window — a
+    data-integrity problem, not something to silently treat as zero.
+    """
+    dates = pd.to_datetime(cases_df["date"])
+
+    def _totals_over(weeks: int) -> pd.Series:
+        cutoff_start = as_of_date - pd.Timedelta(weeks=weeks)
+        mask = (
+            cases_df["region_id"].isin(child_ids)
+            & (dates > cutoff_start)
+            & (dates <= as_of_date)
         )
+        windowed = cases_df.loc[mask]
+        if windowed["case_count"].isna().any():
+            bad = sorted(
+                windowed.loc[windowed["case_count"].isna(), "region_id"].unique()
+            )
+            raise ValueError(
+                f"compute_shares: NaN case_count in window for parent {parent_id} "
+                f"(children {bad}) — refusing to treat missing data as zero"
+            )
+        totals = windowed.groupby("region_id")["case_count"].sum()
+        totals = totals.reindex(child_ids, fill_value=0.0)
+        negative = totals[totals < 0]
+        if not negative.empty:
+            log.warning(
+                "compute_shares: negative case counts for parent %s in children %s "
+                "— clamping to 0",
+                parent_id,
+                sorted(negative.index.tolist()),
+            )
+            totals = totals.clip(lower=0)
+        return totals
 
     present = set(cases_df["region_id"].unique())
     absent = [c for c in child_ids if c not in present]
@@ -132,28 +158,47 @@ def compute_shares(
             sorted(absent),
         )
 
-    totals = windowed.groupby("region_id")["case_count"].sum()
-    totals = totals.reindex(child_ids, fill_value=0.0)
-    negative = totals[totals < 0]
-    if not negative.empty:
-        log.warning(
-            "compute_shares: negative case counts for parent %s in children %s — clamping to 0",
-            parent_id,
-            sorted(negative.index.tolist()),
-        )
-        totals = totals.clip(lower=0)
+    totals = _totals_over(window_weeks)
     grand_total = float(totals.sum())
-    if grand_total <= 0:
-        log.warning(
-            "compute_shares: parent %s has 0 cases in the %d-week window — "
-            "falling back to uniform shares across %d children (downscaled split is "
-            "not data-driven for this parent)",
-            parent_id,
-            window_weeks,
-            len(child_ids),
+    if grand_total > 0:
+        return (
+            {cid: float(totals[cid]) / grand_total for cid in child_ids},
+            "primary",
         )
-        return {cid: 1.0 / len(child_ids) for cid in child_ids}
-    return {cid: float(totals[cid]) / grand_total for cid in child_ids}
+
+    if historical_fallback_weeks is not None:
+        hist_totals = _totals_over(historical_fallback_weeks)
+        hist_grand_total = float(hist_totals.sum())
+        if hist_grand_total > 0:
+            log.warning(
+                "compute_shares: parent %s has 0 cases in the %d-week window — "
+                "using historical fallback (%d-week window, %g cases across %d "
+                "children)",
+                parent_id,
+                window_weeks,
+                historical_fallback_weeks,
+                hist_grand_total,
+                len(child_ids),
+            )
+            return (
+                {cid: float(hist_totals[cid]) / hist_grand_total for cid in child_ids},
+                "historical",
+            )
+
+    log.warning(
+        "compute_shares: parent %s has 0 cases in the %d-week window%s — "
+        "falling back to uniform shares across %d children (downscaled split is "
+        "not data-driven for this parent)",
+        parent_id,
+        window_weeks,
+        (
+            f" and the {historical_fallback_weeks}-week historical fallback"
+            if historical_fallback_weeks is not None
+            else ""
+        ),
+        len(child_ids),
+    )
+    return {cid: 1.0 / len(child_ids) for cid in child_ids}, "uniform"
 
 
 def _child_threshold_params(canonical_method, cases_df, ctx):
@@ -383,6 +428,8 @@ def downscale_diagnostics(
             "n_weeks_children_above_parent": 0,
             "n_weeks_zone_match": 0,
             "conservation_max_abs_err": 0.0,
+            "n_int_conservation_match": 0,
+            "n_int_conservation_total": 0,
         }
 
     # Keyed by thresholdMethod (AP parent rows repeat per method; zones differ by method).
@@ -420,6 +467,25 @@ def downscale_diagnostics(
                 abs(float(child_sum[(parent_id, week, method)]) - float(pp)),
             )
 
+    # Integer conservation (issue #83): sum(predictionInt) == round_half_up(sum(raw))
+    # per (parent, week, method, model). If predictionInt is absent (e.g. legacy
+    # test inputs), skip silently and report 0/0.
+    from pipelines.dengue_downscale.lib.apportionment import round_half_up
+
+    n_int_match = n_int_total = 0
+    if "predictionInt" in child_preds.columns:
+        int_key = ["_parent", "startDatePredictedWeek", "thresholdMethod", "model"]
+        int_grp = child.groupby(int_key)
+        int_sums = int_grp["predictionInt"].sum()
+        raw_sums = int_grp["prediction"].sum()
+        for k in int_sums.index:
+            if pd.isna(int_sums[k]):
+                continue
+            expected = round_half_up(float(raw_sums[k]))
+            n_int_total += 1
+            if int(int_sums[k]) == expected:
+                n_int_match += 1
+
     return {
         "n_parent_weeks": int(len(max_child_zone)),
         "n_parents_uniform": n_parents_uniform,
@@ -427,7 +493,37 @@ def downscale_diagnostics(
         "n_weeks_children_above_parent": above,
         "n_weeks_zone_match": match,
         "conservation_max_abs_err": float(max_cons_err),
+        "n_int_conservation_match": int(n_int_match),
+        "n_int_conservation_total": int(n_int_total),
     }
+
+
+def _apportion_children(
+    child_preds: pd.DataFrame,
+    child_mapping: dict[str, str],
+    recent_cases_by_child: dict[str, float],
+) -> pd.Series:
+    """Apply LRM per (parent, week, thresholdMethod, model) group.
+
+    Returns an int64 Series aligned to ``child_preds.index``. Within each
+    group, ``sum(predictionInt) == round_half_up(sum(prediction))``. See #83.
+
+    ``recent_cases_by_child`` maps child region_id → cases in the primary
+    downscale window; used as the LRM tie-break's secondary key (per Prerna's
+    ask in #86).
+    """
+    from pipelines.dengue_downscale.lib.apportionment import largest_remainder
+
+    ints = pd.Series(pd.NA, index=child_preds.index, dtype="Int64")
+    parent = child_preds["regionID"].map(child_mapping)
+    working = child_preds.assign(_parent=parent)
+    group_cols = ["_parent", "startDatePredictedWeek", "thresholdMethod", "model"]
+    for _, idx in working.groupby(group_cols, dropna=False).groups.items():
+        raws = child_preds.loc[idx, "prediction"].astype(float).tolist()
+        rids = child_preds.loc[idx, "regionID"].astype(str).tolist()
+        cases = [float(recent_cases_by_child.get(rid, 0.0)) for rid in rids]
+        ints.loc[idx] = largest_remainder(raws, rids, recent_cases=cases)
+    return ints
 
 
 def downscale_predictions(
@@ -442,6 +538,7 @@ def downscale_predictions(
     ctx_by_method: dict,
     percentile_cutoffs: list[float] | None = None,
     on_missing_parents: str = "error",
+    historical_fallback_weeks: int | None = None,
 ) -> pd.DataFrame:
     """Disaggregate parent-level predictions to child level.
 
@@ -455,11 +552,12 @@ def downscale_predictions(
     list_alpha, classification_method, and ctx_by_method come from config so the
     child zones match whatever the parent run used.
 
-    on_missing_parents controls what happens when a parent in parent_preds has no
-    children in child_mapping:
-      - "error" (default): raise — the predicted cases would otherwise vanish and
-        child totals would not conserve.
-      - "warn": log a warning and drop those parents' rows (legacy behaviour).
+    ``on_missing_parents`` controls behaviour when a parent has no mapped
+    children ("error" raises, "warn" drops).
+
+    ``historical_fallback_weeks`` (issue #86): when set, and a parent has zero
+    child-cases in the primary ``window_weeks``, retry share computation over
+    this longer window before falling back to uniform-split.
     """
     if on_missing_parents not in ("error", "warn"):
         raise ValueError(
@@ -486,12 +584,35 @@ def downscale_predictions(
             raise ValueError(msg)
         log.warning(msg)
 
-    shares_by_parent: dict[str, dict[str, float]] = {
-        parent_id: compute_shares(
-            cases_df, parent_id, child_ids, as_of_date, window_weeks
+    shares_by_parent: dict[str, dict[str, float]] = {}
+    tier_by_parent: dict[str, str] = {}
+    for parent_id, child_ids in parent_to_children.items():
+        shares, tier = compute_shares(
+            cases_df,
+            parent_id,
+            child_ids,
+            as_of_date,
+            window_weeks,
+            historical_fallback_weeks=historical_fallback_weeks,
         )
-        for parent_id, child_ids in parent_to_children.items()
-    }
+        shares_by_parent[parent_id] = shares
+        tier_by_parent[parent_id] = tier
+
+    n_primary = sum(1 for t in tier_by_parent.values() if t == "primary")
+    n_historical = sum(1 for t in tier_by_parent.values() if t == "historical")
+    n_uniform = sum(1 for t in tier_by_parent.values() if t == "uniform")
+
+    # Recent-case counts per child in the primary window — LRM tie-break.
+    dates_full = pd.to_datetime(cases_df["date"])
+    primary_start = as_of_date - pd.Timedelta(weeks=window_weeks)
+    primary_mask = (dates_full > primary_start) & (dates_full <= as_of_date)
+    recent_cases_by_child = (
+        cases_df.loc[primary_mask]
+        .groupby("region_id")["case_count"]
+        .sum()
+        .clip(lower=0)
+        .to_dict()
+    )
 
     rows = []
     for _, row in parent_preds.iterrows():
@@ -505,6 +626,7 @@ def downscale_predictions(
                     "startDatePredictedWeek": row["startDatePredictedWeek"],
                     "regionID": child_id,
                     "prediction": float(row["prediction"]) * share,
+                    "predictionInt": pd.NA,  # apportioned below via LRM
                     "thresholdMethod": row["thresholdMethod"],
                     "predictionZone": pd.NA,  # re-derived below, never inherited
                     "model": row["model"],
@@ -524,5 +646,14 @@ def downscale_predictions(
         ctx_by_method=ctx_by_method,
         percentile_cutoffs=percentile_cutoffs,
     )
+    child_preds["predictionInt"] = _apportion_children(
+        child_preds, child_mapping, recent_cases_by_child
+    )
     check_numeric_sanity(parent_preds, child_preds, child_mapping)
+    # Surface tier stats to the calling step via DataFrame attrs.
+    child_preds.attrs["tier_stats"] = {
+        "primary": n_primary,
+        "historical_fallback": n_historical,
+        "uniform": n_uniform,
+    }
     return child_preds

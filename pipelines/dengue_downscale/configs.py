@@ -30,6 +30,10 @@ class DownscaleConfig:
     cases_csv: str
     geojson_base_path: str
     on_missing_parents: str = "error"  # "error" | "warn" — parents with no children
+    # When the primary window has zero cases across all children, try this
+    # longer window before falling back to uniform-split. None = disabled,
+    # byte-identical to previous behaviour. See issue #86.
+    historical_fallback_weeks: int | None = None
 
     @property
     def parent_level_plural(self) -> str:
@@ -54,6 +58,18 @@ class DownscaleConfig:
         window_weeks = int(raw.get("window_weeks", 4))
         if window_weeks <= 0:
             raise ValueError(f"downscale.window_weeks must be > 0, got {window_weeks}")
+        hfw_raw = raw.get("historical_fallback_weeks")
+        historical_fallback_weeks: int | None
+        if hfw_raw is None:
+            historical_fallback_weeks = None
+        else:
+            historical_fallback_weeks = int(hfw_raw)
+            if historical_fallback_weeks <= window_weeks:
+                raise ValueError(
+                    f"downscale.historical_fallback_weeks "
+                    f"({historical_fallback_weeks}) must be > window_weeks "
+                    f"({window_weeks}) to be a longer fallback window"
+                )
         return cls(
             parent_level=parent_level,
             child_level=child_level,
@@ -67,6 +83,7 @@ class DownscaleConfig:
             on_missing_parents=_validated_on_missing(
                 raw.get("on_missing_parents", "error")
             ),
+            historical_fallback_weeks=historical_fallback_weeks,
         )
 
 

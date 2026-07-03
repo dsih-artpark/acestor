@@ -75,8 +75,13 @@ def test_missing_parent_warn_mode_does_not_raise(caplog):
     preds = pd.DataFrame([_parent_row("d1", 100.0, 1), _parent_row("d2", 80.0, 1)])
     with caplog.at_level(logging.WARNING):
         out = downscale_predictions(
-            preds, mapping, cases, pd.Timestamp("2026-03-01"), 4,
-            on_missing_parents="warn", **_zone_kwargs(),
+            preds,
+            mapping,
+            cases,
+            pd.Timestamp("2026-03-01"),
+            4,
+            on_missing_parents="warn",
+            **_zone_kwargs(),
         )
     assert "d2" in caplog.text
     assert set(out["regionID"]) == {"m1"}
@@ -133,8 +138,18 @@ def test_assign_child_zones_is_per_region():
     # different zones (proves zone comes from the child, not a shared label).
     preds = pd.DataFrame(
         [
-            {"regionID": "hi", "prediction": 50.0, "startDatePredictedWeek": "2026-03-08", "thresholdMethod": "prev_nweeks"},
-            {"regionID": "lo", "prediction": 50.0, "startDatePredictedWeek": "2026-03-08", "thresholdMethod": "prev_nweeks"},
+            {
+                "regionID": "hi",
+                "prediction": 50.0,
+                "startDatePredictedWeek": "2026-03-08",
+                "thresholdMethod": "prev_nweeks",
+            },
+            {
+                "regionID": "lo",
+                "prediction": 50.0,
+                "startDatePredictedWeek": "2026-03-08",
+                "thresholdMethod": "prev_nweeks",
+            },
         ]
     )
     cases = pd.concat(
@@ -145,9 +160,10 @@ def test_assign_child_zones_is_per_region():
         preds, cases, pd.Timestamp("2026-03-01"), **_zone_kwargs()
     )
     # same prediction (50): well above hi's small baseline, around lo's large one
-    assert zones.loc[preds["regionID"] == "hi"].iloc[0] > zones.loc[
-        preds["regionID"] == "lo"
-    ].iloc[0]
+    assert (
+        zones.loc[preds["regionID"] == "hi"].iloc[0]
+        > zones.loc[preds["regionID"] == "lo"].iloc[0]
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -162,9 +178,7 @@ def test_validate_cases_df_raises_on_empty():
 
 
 def test_validate_cases_df_raises_on_all_nat_dates():
-    df = pd.DataFrame(
-        {"region_id": ["m1"], "date": [pd.NaT], "case_count": [1]}
-    )
+    df = pd.DataFrame({"region_id": ["m1"], "date": [pd.NaT], "case_count": [1]})
     with pytest.raises(ValueError, match="date"):
         validate_cases_df(df)
 
@@ -184,7 +198,11 @@ def test_validate_cases_df_raises_on_some_unparseable_dates():
 def test_compute_shares_raises_on_nan_counts_in_window():
     cases = pd.DataFrame(
         [
-            {"region_id": "m1", "date": pd.Timestamp("2026-02-15"), "case_count": float("nan")},
+            {
+                "region_id": "m1",
+                "date": pd.Timestamp("2026-02-15"),
+                "case_count": float("nan"),
+            },
             {"region_id": "m2", "date": pd.Timestamp("2026-02-15"), "case_count": 5.0},
         ]
     )
@@ -200,8 +218,11 @@ def test_compute_shares_warns_on_zero_window(caplog):
         ]
     )
     with caplog.at_level(logging.WARNING):
-        shares = compute_shares(cases, "d1", ["m1", "m2"], pd.Timestamp("2026-03-01"), 4)
+        shares, tier = compute_shares(
+            cases, "d1", ["m1", "m2"], pd.Timestamp("2026-03-01"), 4
+        )
     assert shares == {"m1": 0.5, "m2": 0.5}
+    assert tier == "uniform"
     assert any(r.levelno >= logging.WARNING for r in caplog.records)
 
 
@@ -321,7 +342,11 @@ def test_three_thresholdmethods_conserve_per_method():
     out = downscale_predictions(
         preds, mapping, cases, pd.Timestamp("2026-03-01"), 4, **_zone_kwargs()
     )
-    assert set(out["thresholdMethod"]) == {"historical", "previousNweeks", "weightedBaseline"}
+    assert set(out["thresholdMethod"]) == {
+        "historical",
+        "previousNweeks",
+        "weightedBaseline",
+    }
     for meth in ("historical", "previousNweeks", "weightedBaseline"):
         s = out.loc[out["thresholdMethod"] == meth, "prediction"].sum()
         assert s == pytest.approx(90.0, abs=1e-9), meth
@@ -348,26 +373,51 @@ def test_downscale_ap_shaped_frame_with_extra_columns_runs():
     rows = []
     for d in ("d1", "d2"):
         for wk in ("2026-03-08", "2026-03-15"):
-            for meth, zone in (("historical", 2), ("previousNweeks", 3), ("weightedBaseline", 1)):
-                rows.append({
-                    "dateOfComputingPrediction": "2026-03-01",
-                    "startDatePredictedWeek": wk, "regionID": d, "prediction": 80.0,
-                    "thresholdMethod": meth, "predictionZone": float(zone),
-                    "model": "ensembleModel", "whoZone": float(zone), "icmrZone": 2.0,
-                    "Mean": 10.0, "StdDev": 5.0, "T0.00": 10.0, "T1.00": 15.0, "T2.00": 20.0,
-                })
+            for meth, zone in (
+                ("historical", 2),
+                ("previousNweeks", 3),
+                ("weightedBaseline", 1),
+            ):
+                rows.append(
+                    {
+                        "dateOfComputingPrediction": "2026-03-01",
+                        "startDatePredictedWeek": wk,
+                        "regionID": d,
+                        "prediction": 80.0,
+                        "thresholdMethod": meth,
+                        "predictionZone": float(zone),
+                        "model": "ensembleModel",
+                        "whoZone": float(zone),
+                        "icmrZone": 2.0,
+                        "Mean": 10.0,
+                        "StdDev": 5.0,
+                        "T0.00": 10.0,
+                        "T1.00": 15.0,
+                        "T2.00": 20.0,
+                    }
+                )
     preds = pd.DataFrame(rows)
     out = downscale_predictions(
         preds, mapping, cases, pd.Timestamp("2026-03-01"), 4, **_zone_kwargs()
     )
     # extra cols (whoZone/icmrZone/Mean/...) dropped to the prediction contract
     assert set(out.columns) == {
-        "dateOfComputingPrediction", "startDatePredictedWeek", "regionID",
-        "prediction", "thresholdMethod", "predictionZone", "model",
+        "dateOfComputingPrediction",
+        "startDatePredictedWeek",
+        "regionID",
+        "prediction",
+        "predictionInt",
+        "thresholdMethod",
+        "predictionZone",
+        "model",
     }
     # 2 districts x 2 weeks x 3 methods x (children of that district) all present
     assert set(out["regionID"]) == {"m1", "m2", "m3"}
-    assert set(out["thresholdMethod"]) == {"historical", "previousNweeks", "weightedBaseline"}
+    assert set(out["thresholdMethod"]) == {
+        "historical",
+        "previousNweeks",
+        "weightedBaseline",
+    }
 
 
 def test_downscale_raises_on_unknown_thresholdmethod():
@@ -396,8 +446,12 @@ def test_downscale_mixed_method_counts_across_parents():
         preds, mapping, cases, pd.Timestamp("2026-03-01"), 4, **_zone_kwargs()
     )
     d1 = out[out["regionID"].isin(["m1", "m2"])]
-    assert d1.loc[d1.thresholdMethod == "historical", "prediction"].sum() == pytest.approx(100.0)
-    assert d1.loc[d1.thresholdMethod == "previousNweeks", "prediction"].sum() == pytest.approx(100.0)
+    assert d1.loc[
+        d1.thresholdMethod == "historical", "prediction"
+    ].sum() == pytest.approx(100.0)
+    assert d1.loc[
+        d1.thresholdMethod == "previousNweeks", "prediction"
+    ].sum() == pytest.approx(100.0)
     d2 = out[out["regionID"] == "m3"]
     assert set(d2["thresholdMethod"]) == {"historical"}
     assert d2["prediction"].sum() == pytest.approx(50.0)
