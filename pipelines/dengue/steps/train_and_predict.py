@@ -30,6 +30,33 @@ from pipelines.dengue.results import (
 )
 
 
+def _add_prediction_range(
+    ensembled: pd.DataFrame, per_model_dfs: list[pd.DataFrame]
+) -> pd.DataFrame:
+    """Attach predictionMin / predictionMax to an ensemble DataFrame.
+
+    For each row in ``ensembled``, the min and max are taken across the
+    corresponding rows in ``per_model_dfs``. Grouping keys are every column
+    of the per-model frames except ``prediction`` and ``model`` (and the range
+    columns themselves, in case they were pre-populated by a caller).
+
+    Semantic: extremes across ensemble members — not a confidence interval,
+    not std, not bootstrap. See issue #84.
+    """
+    combined = pd.concat(per_model_dfs, ignore_index=True)
+    range_group_cols = [
+        c
+        for c in combined.columns
+        if c not in ("prediction", "model", "predictionMin", "predictionMax")
+    ]
+    agg = (
+        combined.groupby(range_group_cols, dropna=False)["prediction"]
+        .agg(predictionMin="min", predictionMax="max")
+        .reset_index()
+    )
+    return ensembled.merge(agg, on=range_group_cols, how="left")
+
+
 def _resolve_predictions_paths(
     *,
     output_mode: str,
@@ -228,6 +255,15 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
             )
             if len(prediction_dfs) == 1 and "model" in prediction_dfs[0].columns:
                 ensembled["model"] = prediction_dfs[0]["model"].iloc[0]
+
+        # predictionMin / predictionMax — see issue #84 and _add_prediction_range.
+        # For per-model output files: min == max == prediction (single model).
+        # For the ensemble file: extremes of the members for the same group.
+        for df in per_model_dfs.values():
+            df["predictionMin"] = df["prediction"]
+            df["predictionMax"] = df["prediction"]
+        if ensembled is not None and prediction_dfs:
+            ensembled = _add_prediction_range(ensembled, prediction_dfs)
 
         run_date = pd.Timestamp(inputs.identify_cutoff_dates.run_date).normalize()
 
