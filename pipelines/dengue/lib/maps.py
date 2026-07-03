@@ -41,6 +41,7 @@ MODEL_FULL_NAME = {
     "xgb": "xgboostRegression",
     "rf": "randomForestRegression",
     "tse": "timeSeriesExtrapolation",
+    "timesfm": "timesFoundationModel",
     "ensemble": "ensembleModel",
 }
 THRESHOLD_LABEL = {
