@@ -130,6 +130,7 @@ class DownscalePredictionsStep(BaseStep[DownscalePredictionsInputs, DownscaleRes
             ctx_by_method=ctx_by_method,
             percentile_cutoffs=percentile_cutoffs,
             on_missing_parents=cfg.on_missing_parents,
+            historical_fallback_weeks=cfg.historical_fallback_weeks,
         )
 
         # Parents present in the predictions but with no children in the mapping.
@@ -144,16 +145,28 @@ class DownscalePredictionsStep(BaseStep[DownscalePredictionsInputs, DownscaleRes
             )
 
         diag = downscale_diagnostics(parent_preds, child_preds, child_mapping)
+        tier_stats = child_preds.attrs.get("tier_stats", {})
+        context.log.info(
+            "downscale_predictions: share tiers — primary=%d, historical_fallback=%d, "
+            "uniform=%d",
+            tier_stats.get("primary", 0),
+            tier_stats.get("historical_fallback", 0),
+            tier_stats.get("uniform", 0),
+        )
         context.log.info(
             "downscale_predictions: sanity — conservation_max_abs_err=%.3g; "
             "%d parent(s) uniform-split (no-data fallback); "
-            "risk vs parent over %d parent-week(s): %d below / %d above / %d match",
+            "risk vs parent over %d parent-week(s): %d below / %d above / %d match; "
+            "sum(predictionInt) vs round_half_up(sum(prediction)): "
+            "%d/%d parent-weeks match",
             diag["conservation_max_abs_err"],
             diag["n_parents_uniform"],
             diag["n_parent_weeks"],
             diag["n_weeks_children_below_parent"],
             diag["n_weeks_children_above_parent"],
             diag["n_weeks_zone_match"],
+            diag["n_int_conservation_match"],
+            diag["n_int_conservation_total"],
         )
         if diag["n_parents_uniform"]:
             context.log.warning(

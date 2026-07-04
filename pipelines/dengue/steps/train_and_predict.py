@@ -28,6 +28,7 @@ from pipelines.dengue.results import (
     PredictionResult,
     ThresholdsResult,
 )
+from pipelines.dengue_downscale.lib.apportionment import round_half_up
 
 
 def _add_prediction_range(
@@ -276,6 +277,13 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
             classified = zones.classify_into_zones(df, spatial_col=cfg.spatial_res)
             # WHO zones are already in predictionZone from classify_into_zones — preserve as whoZone
             classified["whoZone"] = classified["predictionZone"]
+
+            # Rounded-integer display column (issue #83). Dashboards render this;
+            # raw `prediction` stays unchanged for backtesting / calibration /
+            # downscale, which multiplies the raw float by child case-shares.
+            classified["predictionInt"] = (
+                classified["prediction"].astype(float).apply(round_half_up)
+            )
 
             # Degenerate WHO check: Mean=0 & StdDev=0 → meaningless threshold → NaN
             if "Mean" in classified.columns and "StdDev" in classified.columns:
