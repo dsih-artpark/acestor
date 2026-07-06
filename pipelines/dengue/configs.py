@@ -577,9 +577,7 @@ class TrainPredictConfig:
                 if raw.get("clip_multiplier") is not None
                 else None
             ),
-            freeze_weather_at_origin=bool(
-                raw.get("freeze_weather_at_origin", False)
-            ),
+            freeze_weather_at_origin=bool(raw.get("freeze_weather_at_origin", False)),
         )
 
 
@@ -717,3 +715,36 @@ class ReportConfig:
             primary=primary,
             threshold_method_for_report=tmr,
         )
+
+
+def validate_model_configs(model_configs: Mapping[str, Any], models: list[str]) -> None:
+    """Fail fast if ``model_configs`` names a model not in ``model.models``.
+
+    Called at pipeline construction (``build_pipeline``) so misconfigured
+    runs die before any step executes — no wasted prep / thresholds / weather
+    download when the user has a stale ``model_configs.xgb`` block on a run
+    that dropped xgb from ``model.models``.
+
+    The message names both fixes explicitly, including the CLI-``--set`` trap
+    that re-creates a ``model_configs`` key on the command line even after
+    it's been removed from the YAML.
+    """
+    unknown = set(model_configs) - set(models)
+    if not unknown:
+        return
+    keys = sorted(unknown)
+    example = keys[0]
+    raise ValueError(
+        f"model_configs has {len(keys)} key(s) not listed in "
+        f"model.models: {keys}\n"
+        f"  model.models  = {models}\n"
+        f"  model_configs = {sorted(model_configs)}\n"
+        f"Fix by one of:\n"
+        f"  1. Add the model to model.models "
+        f"(e.g. model.models = {models + [example]!r})\n"
+        f"  2. Remove `model_configs.{example}:` from the YAML config "
+        f"AND drop any '--set model_configs.{example}...' overrides "
+        f"on the CLI — a --set on an absent key re-creates it.\n"
+        f"     `--set model_configs.{example}=null` also works to "
+        f"drop the key at runtime without editing the YAML."
+    )
