@@ -71,6 +71,15 @@ class DownscalePredictionsStep(BaseStep[DownscalePredictionsInputs, DownscaleRes
         cfg = DownscaleConfig.from_raw(context.config.get("downscale") or {})
 
         parent_preds = pd.read_csv(inputs.load_predictions.predictions_csv_path)
+        # CSV-boundary reverse rename: parent CSVs from the main pipeline expose
+        # `prediction` = display int and `predictionRaw` = the model float. All
+        # internal downscale math needs the float, so swap them back on read.
+        # Old parent CSVs (no predictionRaw column) pass through unchanged for
+        # backward compatibility.
+        if "predictionRaw" in parent_preds.columns:
+            parent_preds = parent_preds.rename(
+                columns={"prediction": "predictionInt", "predictionRaw": "prediction"}
+            )
 
         cases_path = Path(cfg.cases_csv)
         if not cases_path.exists():
@@ -178,6 +187,11 @@ class DownscalePredictionsStep(BaseStep[DownscalePredictionsInputs, DownscaleRes
         state = require_state(context.config)
         child_preds = add_lgd_column(
             child_preds, state=state, spatial_res=cfg.child_level
+        )
+        # CSV-boundary rename — same convention as the main pipeline: `prediction`
+        # in the CSV is the display integer; `predictionRaw` is the model float.
+        child_preds = child_preds.rename(
+            columns={"prediction": "predictionRaw", "predictionInt": "prediction"}
         )
         dest = context.artifact_path("outputs/predictions.csv")
         context.artifacts.write_text(child_preds.to_csv(index=False), dest)

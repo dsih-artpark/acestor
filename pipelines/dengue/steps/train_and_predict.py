@@ -350,6 +350,12 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
             classified = add_lgd_column(
                 classified, state=state, spatial_res=cfg.spatial_res
             )
+            # CSV-boundary rename: consumers reading `prediction` get the display
+            # integer; the raw model float is written as `predictionRaw`. Internal
+            # code above this line still treats `prediction` as the float.
+            classified = classified.rename(
+                columns={"prediction": "predictionRaw", "predictionInt": "prediction"}
+            )
             dest = context.artifact_path(dest_key)
             context.artifacts.write_text(classified.to_csv(index=False), dest)
             context.log.info(
