@@ -14,9 +14,8 @@ hard policy gate.
 Standalone, backtest-gated: integration into the scheduled ensemble
 happens after a separate validation gate.
 
-Settings live under ``model_configs.timesfm`` in YAML and are threaded
-onto :class:`pipelines.dengue.lib.models.ModelContext.model_params` by
-``train_and_predict``:
+Settings live under ``model_configs.timesfm`` in YAML. **All keys are
+optional** — sensible defaults are baked in so the minimum config is:
 
 .. code-block:: yaml
 
@@ -25,21 +24,36 @@ onto :class:`pipelines.dengue.lib.models.ModelContext.model_params` by
       spatial_res: district           # any spatial_res the pipeline supports
       ensemble: none
       output: per_model
+    # model_configs.timesfm can be omitted entirely; defaults apply.
+
+Any key can still be overridden explicitly if needed:
+
+.. code-block:: yaml
+
     model_configs:
       timesfm:
-        huggingface_repo_id: google/timesfm-2.5-200m-pytorch
-        revision: "<full 40-hex commit SHA>"
-        cache_dir: <gitignored project-local path>
-        max_context: 1024
-        per_core_batch_size: 32
-        min_context_weeks: 52
-        timeout_s: 300
-        max_regions_per_batch: 128
+        min_context_weeks: 26         # e.g. lower context floor for a small state
+
+Defaults:
+
+    huggingface_repo_id: google/timesfm-2.5-200m-pytorch
+    revision:            (env ``TIMESFM_REVISION``, else pinned SHA below)
+    cache_dir:           .cache/timesfm          (project-local, gitignored)
+    max_context:         1024
+    per_core_batch_size: 32
+    min_context_weeks:   52
+    timeout_s:           300
+    max_regions_per_batch: 128
+
+The ``revision`` default is intentionally overridable via the
+``TIMESFM_REVISION`` environment variable so ops can roll the pinned
+checkpoint without a code change.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import re
 import tempfile
 from dataclasses import dataclass
@@ -56,6 +70,22 @@ log = logging.getLogger(__name__)
 
 _WORKER_MODULE = "pipelines.dengue.lib._timesfm_worker"
 _REVISION_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+
+# --- Defaults -------------------------------------------------------------
+# Overridable via YAML (``model_configs.timesfm.<key>``) or, for ``revision``,
+# via the ``TIMESFM_REVISION`` env var.
+_DEFAULT_HF_REPO_ID = "google/timesfm-2.5-200m-pytorch"
+_DEFAULT_REVISION = "1d952420fba87f3c6dee4f240de0f1a0fbc790e3"
+_DEFAULT_CACHE_DIR = ".cache/timesfm"
+_DEFAULT_MAX_CONTEXT = 1024
+_DEFAULT_PER_CORE_BATCH_SIZE = 32
+_DEFAULT_MIN_CONTEXT_WEEKS = 52
+_DEFAULT_TIMEOUT_S = 300.0
+_DEFAULT_MAX_REGIONS_PER_BATCH = 128
+
+
+def _default_revision() -> str:
+    return os.environ.get("TIMESFM_REVISION", _DEFAULT_REVISION).strip().lower()
 
 
 # ---------------------------------------------------------------------------
@@ -76,46 +106,48 @@ class TimesFmParams:
 
     @classmethod
     def from_raw(cls, raw: dict[str, Any]) -> TimesFmParams:
-        required = (
-            "huggingface_repo_id",
-            "revision",
-            "cache_dir",
-            "max_context",
-            "per_core_batch_size",
-            "min_context_weeks",
-            "timeout_s",
-            "max_regions_per_batch",
-        )
-        missing = [k for k in required if raw.get(k) in (None, "")]
-        if missing:
-            raise ValueError(
-                f"model_configs.timesfm missing required keys: {missing}. "
-                f"See pipelines/dengue/lib/models/timesfm.py docstring."
-            )
+        """Build ``TimesFmParams`` from a (possibly empty) YAML dict.
 
-        revision = str(raw["revision"]).strip().lower()
+        Every key is optional: missing / blank values fall back to defaults
+        (see module docstring). ``revision`` additionally honours the
+        ``TIMESFM_REVISION`` env var when not explicitly set in YAML.
+        """
+
+        def _get(key: str, default: Any) -> Any:
+            v = raw.get(key)
+            return default if v in (None, "") else v
+
+        revision = str(_get("revision", _default_revision())).strip().lower()
         if not _REVISION_PATTERN.fullmatch(revision):
             raise ValueError(
                 f"model_configs.timesfm.revision must be a full 40-hex commit SHA; "
-                f"got {raw['revision']!r}. Pinning a tag/branch is unsafe — the "
+                f"got {raw.get('revision')!r}. Pinning a tag/branch is unsafe — the "
                 f"checkpoint can move under you."
             )
 
         positives = {
-            "max_context": int(raw["max_context"]),
-            "per_core_batch_size": int(raw["per_core_batch_size"]),
-            "min_context_weeks": int(raw["min_context_weeks"]),
-            "timeout_s": float(raw["timeout_s"]),
-            "max_regions_per_batch": int(raw["max_regions_per_batch"]),
+            "max_context": int(_get("max_context", _DEFAULT_MAX_CONTEXT)),
+            "per_core_batch_size": int(
+                _get("per_core_batch_size", _DEFAULT_PER_CORE_BATCH_SIZE)
+            ),
+            "min_context_weeks": int(
+                _get("min_context_weeks", _DEFAULT_MIN_CONTEXT_WEEKS)
+            ),
+            "timeout_s": float(_get("timeout_s", _DEFAULT_TIMEOUT_S)),
+            "max_regions_per_batch": int(
+                _get("max_regions_per_batch", _DEFAULT_MAX_REGIONS_PER_BATCH)
+            ),
         }
         for k, v in positives.items():
             if v <= 0:
                 raise ValueError(f"model_configs.timesfm.{k} must be > 0; got {v}")
 
         return cls(
-            huggingface_repo_id=str(raw["huggingface_repo_id"]).strip(),
+            huggingface_repo_id=str(
+                _get("huggingface_repo_id", _DEFAULT_HF_REPO_ID)
+            ).strip(),
             revision=revision,
-            cache_dir=str(raw["cache_dir"]).strip(),
+            cache_dir=str(_get("cache_dir", _DEFAULT_CACHE_DIR)).strip(),
             max_context=positives["max_context"],
             per_core_batch_size=positives["per_core_batch_size"],
             min_context_weeks=positives["min_context_weeks"],
