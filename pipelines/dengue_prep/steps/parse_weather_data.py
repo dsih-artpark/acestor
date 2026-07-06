@@ -211,6 +211,46 @@ class PrepParseWeatherDataStep(
             len(daily),
             dest,
         )
+
+        # ── End-of-step summary — rich terminal + append to markdown report ──
+        from pipelines.dengue_prep.lib.ihip import (
+            _region_id_to_name,
+            _valid_region_ids,
+        )
+        from pipelines.dengue_prep.lib.summary import (
+            WeatherParseStats,
+            render_weather_parse_summary,
+            write_markdown_report,
+        )
+
+        geojson_base = str(
+            ((context.config.get("data") or {}).get("geojson") or {}).get(
+                "base_path", ""
+            )
+        ).strip()
+        wps = WeatherParseStats(
+            region_type=cfg.region_type,
+            files_loaded=len(files),
+            rows_total=total,
+            output_path=str(dest.resolve()),
+        )
+        if not daily.empty:
+            wps.span_start = pd.Timestamp(daily["date"].min())
+            wps.span_end = pd.Timestamp(daily["date"].max())
+            wps.covered_region_ids = set(daily["region_id"].astype(str).unique())
+            wps.variables = [c for c in daily.columns if c not in ("date", "region_id")]
+        if geojson_base:
+            wps.target_region_ids = _valid_region_ids(geojson_base, cfg.region_type)
+            wps.region_names = _region_id_to_name(geojson_base, cfg.region_type)
+        run_date_ts = (
+            pd.Timestamp(context.config.get("run", {}).get("run_date"))
+            if context.config.get("run", {}).get("run_date")
+            else pd.Timestamp.now().normalize()
+        )
+        render_weather_parse_summary(wps, run_date=run_date_ts)
+        report_path = Path(context.artifact_fs_path("outputs/prep_summary.md"))
+        write_markdown_report(report_path, weather_parse=wps, run_date=run_date_ts)
+
         return PrepWeatherParseResult(
             region_type=cfg.region_type,
             prepared_data_path=str(dest.resolve()),

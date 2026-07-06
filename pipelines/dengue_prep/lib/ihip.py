@@ -29,6 +29,7 @@ If the same (region_id, date) appears across files, the last-processed value win
 from __future__ import annotations
 
 import logging
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +38,7 @@ import pandas as pd
 from shapely.geometry import Point
 
 from pipelines.dengue_prep.configs import PrepGeocodingConfig
+from pipelines.dengue_prep.lib.summary import CaseParseStats, FileParseStats
 from pipelines.dengue_prep.lib.geocoding import (
     DEFAULT_STOPWORDS,
     resolve_via_geocode,
@@ -213,7 +215,115 @@ def _load_geojson(geojson_base: str, region_type: str) -> gpd.GeoDataFrame:
         )
 
     gdfs = [gpd.read_file(f) for f in files]
-    return gpd.GeoDataFrame(pd.concat(gdfs, ignore_index=True), crs=gdfs[0].crs)
+    # Reproject every gdf onto the first one's CRS before concat. Two files can
+    # both declare "WGS 84" yet fail the concat's common-CRS check because
+    # their WKT strings differ (files exported at different times / by different
+    # tools). Normalising via to_crs() collapses those into a single instance.
+    target_crs = gdfs[0].crs
+    gdfs = [g.to_crs(target_crs) for g in gdfs]
+    return gpd.GeoDataFrame(pd.concat(gdfs, ignore_index=True), crs=target_crs)
+
+
+@lru_cache(maxsize=32)
+def _valid_region_ids(geojson_base: str, region_type: str) -> frozenset[str]:
+    """Return the frozen set of region_ids present in the ``region_type`` geojsons.
+
+    Cached across calls (per geojson_base + region_type) because prep parses
+    many raw files and we don't want to re-scan the geojson tree for each one.
+    """
+    try:
+        gdf = _load_geojson(geojson_base, region_type)
+    except FileNotFoundError:
+        # If no geojson exists for this region_type the caller can decide;
+        # returning an empty set makes the allowlist a no-op.
+        return frozenset()
+    if "region_id" not in gdf.columns:
+        return frozenset()
+    return frozenset(gdf["region_id"].dropna().astype(str).unique().tolist())
+
+
+@lru_cache(maxsize=32)
+def _region_id_to_name(geojson_base: str, region_type: str) -> dict[str, str]:
+    """Return ``{region_id: name}`` for every region in the ``region_type`` geojsons.
+
+    Cached alongside :func:`_valid_region_ids`. Used by the prep-summary
+    renderer to display human-readable names next to bare IDs.
+    """
+    try:
+        gdf = _load_geojson(geojson_base, region_type)
+    except FileNotFoundError:
+        return {}
+    if "region_id" not in gdf.columns or "name" not in gdf.columns:
+        return {}
+    return {
+        str(rid): str(n)
+        for rid, n in zip(gdf["region_id"], gdf["name"])
+        if pd.notna(rid) and pd.notna(n)
+    }
+
+
+@lru_cache(maxsize=8)
+def _scan_geojson_hierarchy(geojson_base: str) -> dict[str, dict[str, str]]:
+    """Scan every ``*.geojson`` subdirectory under ``geojson_base`` and return
+    a global lookup: ``{region_id: {"name", "parent_id", "region_type"}}``.
+
+    ``region_type`` is derived from the containing subdirectory name (with
+    a trailing ``'s'`` stripped if plural — matches the ``_load_geojson``
+    convention).  This is state-agnostic: same code handles GBA's
+    ``corp / zone / ward`` and Odisha's ``district / block / ulb / ulb_ward``
+    without any hard-coded labels.
+    """
+    base = Path(geojson_base)
+    out: dict[str, dict[str, str]] = {}
+    if not base.exists():
+        return out
+    for subdir in sorted(base.iterdir()):
+        if not subdir.is_dir():
+            continue
+        region_type = subdir.name[:-1] if subdir.name.endswith("s") else subdir.name
+        for f in subdir.rglob("*.geojson"):
+            try:
+                gdf = gpd.read_file(f)
+            except Exception:
+                continue
+            if "region_id" not in gdf.columns:
+                continue
+            for _, row in gdf.iterrows():
+                rid = row.get("region_id")
+                if pd.isna(rid):
+                    continue
+                parent = row.get("parent")
+                out[str(rid)] = {
+                    "name": (
+                        str(row.get("name", "")) if pd.notna(row.get("name")) else ""
+                    ),
+                    "parent_id": str(parent) if pd.notna(parent) else "",
+                    "region_type": region_type,
+                }
+    return out
+
+
+def _walk_hierarchy(
+    region_id: str, hierarchy: dict[str, dict[str, str]]
+) -> list[dict[str, str]]:
+    """Walk parents from ``region_id`` up to the root.
+
+    Returns a list ordered **root → leaf**. Each entry has
+    ``{"region_type", "id", "name"}``. Empty list if ``region_id`` isn't in
+    ``hierarchy``.
+    """
+    chain: list[dict[str, str]] = []
+    seen: set[str] = set()
+    cur = region_id
+    while cur and cur in hierarchy and cur not in seen:
+        seen.add(cur)
+        info = hierarchy[cur]
+        chain.append(
+            {"region_type": info["region_type"], "id": cur, "name": info["name"]}
+        )
+        cur = info["parent_id"]
+    chain.reverse()
+    return chain
 
 
 def _resolve_via_region_id_column(
@@ -471,7 +581,7 @@ def parse_ihip_files(
     folder: str,
     region_type: str,
     geojson_base: str,
-    date_column: str = DEFAULT_DATE_COLUMN,
+    date_column: str | list[str] = DEFAULT_DATE_COLUMN,
     lgd_code_column: str | None = None,
     lat_column: str = DEFAULT_LATITUDE_COLUMN,
     lon_column: str = DEFAULT_LONGITUDE_COLUMN,
@@ -479,6 +589,7 @@ def parse_ihip_files(
     geocoding_cfg: PrepGeocodingConfig | None = None,
     header_row: int = 0,
     region_id_column: str | None = None,
+    stats: "CaseParseStats | None" = None,
 ) -> pd.DataFrame:
     """Read all IHIP files from folder, aggregate to (date, region_id, case_count).
 
@@ -526,10 +637,25 @@ def parse_ihip_files(
         str(folder_path),
         [f.name for f in files],
     )
+    # Normalise date_column to a list of candidates. String → single-element list.
+    date_column_candidates: list[str] = (
+        [date_column] if isinstance(date_column, str) else list(date_column)
+    )
+    if not date_column_candidates:
+        raise ValueError(
+            "parse_ihip_files: date_column must be a non-empty string or list of strings"
+        )
+
     for path in files:
         df = _read_file(path, header_row=header_row)
         log.info("ihip parser: file %r → read %d rows", path.name, len(df))
-        _validate_columns(df, date_column, path)
+
+        # Per-file stats accumulator (populated at each stage below).
+        fstats = (
+            FileParseStats(filename=path.name, read=len(df))
+            if stats is not None
+            else None
+        )
 
         # Row filters — AND across entries, OR within each entry's values list
         for f in filters or []:
@@ -551,6 +677,13 @@ def parse_ihip_files(
                 len(df),
                 before,
             )
+        if fstats is not None:
+            fstats.after_filter = len(df)
+            if stats is not None and fstats.read > fstats.after_filter:
+                stats.drop_reasons["Filtered out by row filters (e.g. non-Dengue)"] += (
+                    fstats.read - fstats.after_filter
+                )
+
         method = _detect_resolution_method(
             df,
             lgd_code_column,
@@ -560,29 +693,85 @@ def parse_ihip_files(
             geocoding_cfg,
             region_id_column=region_id_column,
         )
+        if fstats is not None:
+            fstats.resolution_method = method
 
-        # Parse dates per file. IHIP linelists are dd/mm/yyyy; dashboard exports
-        # are ISO yyyy-mm-dd. Pick the parse that yields fewer NaNs.
-        raw_dates = df[date_column]
-        parsed_dayfirst = pd.to_datetime(raw_dates, dayfirst=True, errors="coerce")
-        parsed_iso = pd.to_datetime(raw_dates, errors="coerce")
-        df["date"] = (
-            parsed_iso
-            if parsed_iso.notna().sum() >= parsed_dayfirst.notna().sum()
-            else parsed_dayfirst
-        )
+        # Parse dates per file. Walk the candidate list top-to-bottom and pick
+        # the first column that yields any parseable rows. IHIP linelists are
+        # dd/mm/yyyy; dashboard exports are ISO yyyy-mm-dd — try both formats
+        # for each candidate and keep whichever gives more successes.
+        chosen_col: str | None = None
+        parsed_series: pd.Series | None = None
+        candidate_summary: list[tuple[str, str, int]] = []  # (col, why, n_parseable)
+        for candidate in date_column_candidates:
+            if candidate not in df.columns:
+                candidate_summary.append((candidate, "missing", 0))
+                continue
+            raw_dates = df[candidate]
+            parsed_dayfirst = pd.to_datetime(raw_dates, dayfirst=True, errors="coerce")
+            parsed_iso = pd.to_datetime(raw_dates, errors="coerce")
+            parsed = (
+                parsed_iso
+                if parsed_iso.notna().sum() >= parsed_dayfirst.notna().sum()
+                else parsed_dayfirst
+            )
+            n_parseable = int(parsed.notna().sum())
+            candidate_summary.append((candidate, "present", n_parseable))
+            if n_parseable > 0:
+                chosen_col = candidate
+                parsed_series = parsed
+                break
 
+        if chosen_col is None or parsed_series is None:
+            # No candidate yielded any parseable rows — that's a hard failure,
+            # not a silent drop. Surface which candidates were tried and how
+            # many rows parsed for each so the operator can fix the source.
+            detail = "; ".join(
+                f"{c!r}:{why}({n} parseable)" for c, why, n in candidate_summary
+            )
+            raise ValueError(
+                f"ihip parser: file {path.name!r} has no usable date column. "
+                f"Tried candidates in order — {detail}. "
+                f"Available columns in file: {sorted(df.columns.tolist())}."
+            )
+
+        if chosen_col != date_column_candidates[0]:
+            log.info(
+                "ihip parser: file %r using date candidate %r (earlier "
+                "candidates absent or empty: %s)",
+                path.name,
+                chosen_col,
+                [c for c, _, _ in candidate_summary if c != chosen_col],
+            )
+        else:
+            log.info(
+                "ihip parser: file %r using date column %r",
+                path.name,
+                chosen_col,
+            )
+
+        if fstats is not None:
+            fstats.date_column_used = chosen_col
+            fstats.date_column_was_fallback = chosen_col != date_column_candidates[0]
+
+        df["date"] = parsed_series
         n_before_dropna = len(df)
         df = df.dropna(subset=["date"])
         n_dropped_dates = n_before_dropna - len(df)
         if n_dropped_dates:
             log.warning(
                 "ihip parser: file %r dropped %d row(s) with unparseable/missing dates "
-                "(original date column %r — check for blank or malformed date values)",
+                "(chose date column %r — remaining rows without parseable dates in that column)",
                 path.name,
                 n_dropped_dates,
-                date_column,
+                chosen_col,
             )
+            if stats is not None:
+                stats.drop_reasons[
+                    "Date column blank / unparseable in chosen candidate"
+                ] += n_dropped_dates
+        if fstats is not None:
+            fstats.after_date_parse = len(df)
 
         if method == "region_id":
             assert region_id_column is not None
@@ -601,6 +790,10 @@ def parse_ihip_files(
                     n_dropped,
                     region_id_column,
                 )
+                if stats is not None:
+                    stats.drop_reasons[
+                        "region_id resolver: parent-chain didn't reach target level"
+                    ] += n_dropped
         elif method == "lgd":
             df["region_id"] = _resolve_via_lgd(df, lgd_code_column, region_type)
         elif method == "geocode":
@@ -623,6 +816,10 @@ def parse_ihip_files(
                     lat_column,
                     lon_column,
                 )
+                if stats is not None:
+                    stats.drop_reasons[
+                        "Spatial resolver: missing latitude/longitude"
+                    ] += n_dropped_coords
             if df.empty:
                 continue
             df["region_id"] = _resolve_via_spatial_join(
@@ -639,6 +836,46 @@ def parse_ihip_files(
                     n_dropped_oob,
                     region_type,
                 )
+                if stats is not None:
+                    stats.drop_reasons[
+                        f"Spatial resolver: point outside every {region_type} polygon"
+                    ] += n_dropped_oob
+
+        if fstats is not None:
+            fstats.after_region_resolve = len(df)
+
+        # Universal allowlist: keep only rows whose region_id exists in the
+        # target geojson. Resolvers can produce region_ids for scopes we don't
+        # actually model (e.g. LGD code 348 → 'district_348' when Odisha's
+        # geojson holds 8 specific districts; a rolled-up parent chain landing
+        # on a scope we don't own). Enforce the guard here so no downstream
+        # step (train_and_predict, downscale) has to defend against unknown
+        # regions.
+        if not df.empty:
+            valid_ids = _valid_region_ids(geojson_base, region_type)
+            if valid_ids:
+                keep = df["region_id"].isin(valid_ids)
+                n_dropped_oos = int((~keep).sum())
+                if n_dropped_oos:
+                    dropped_ids = sorted(df.loc[~keep, "region_id"].unique().tolist())
+                    log.warning(
+                        "ihip parser: file %r dropping %d row(s) with region_id "
+                        "not present in %s geojson (out of scope): %s",
+                        path.name,
+                        n_dropped_oos,
+                        region_type,
+                        dropped_ids[:10] + (["..."] if len(dropped_ids) > 10 else []),
+                    )
+                    df = df[keep].copy()
+                    if stats is not None:
+                        stats.drop_reasons[
+                            f"Out-of-scope region_id (not in {region_type} geojson)"
+                        ] += n_dropped_oos
+
+        if fstats is not None:
+            fstats.after_scope_check = len(df)
+            fstats.kept = len(df)
+            stats.files.append(fstats)  # type: ignore[union-attr]
 
         log.info(
             "ihip parser: file %r → %d rows, method=%s",

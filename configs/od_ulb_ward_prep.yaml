@@ -1,12 +1,12 @@
 pipeline:
   name: dengue_prep
-  title: "Dengue Data Prep — Odisha (district)"
+  title: "Dengue Data Prep — Odisha (ULB ward, cases only)"
 
 run:
   run_date: ""
 
 data:
-  region_type: "district"
+  region_type: "ulb_ward"
 
   prepared_data:
     base_dir: "od_datasets/prepared_data"
@@ -23,26 +23,23 @@ data:
 
   case_parse:
     region_types:
-      - "district"
+      - "ulb_ward"
     date_column: ["Sample Collected Date", "Test Performed Date", "Date Of Onset"]
+    # The IHIP export attaches a resolved region_id per row (values like
+    # "ulb_ward_250520-8793"). Trust it — skip lat/lon geocoding.
     region_id_column: "region_id"
     filters:
       - column: "Confirmed Diagnosis"
         values: ["Dengue"]
 
   weather_download:
-    enabled: true
-    source_mode: "openmeteo"
-    source_path: "od_datasets/weather"
-    parsed_output_path: "od_datasets/weather"
-    temperature_unit: "kelvin"
-    precipitation_unit: "m"
+    enabled: false   # no ward-level weather; downscale uses parent (ULB) weather
 
 logging:
-  level: DEBUG
+  level: INFO
 
 storages:
   artifacts:
     kind: filesystem
     filesystem:
-      base_path: "./artifacts/od_prep"
+      base_path: "./artifacts/od_ulb_ward_prep"
