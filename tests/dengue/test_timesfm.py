@@ -106,9 +106,31 @@ def test_params_rejects_short_sha():
         _params(revision="a" * 12)
 
 
-def test_params_rejects_missing_required_keys():
-    with pytest.raises(ValueError, match="missing required keys"):
-        TimesFmParams.from_raw({"revision": VALID_SHA})
+def test_params_empty_dict_applies_all_defaults():
+    p = TimesFmParams.from_raw({})
+    assert p.huggingface_repo_id == "google/timesfm-2.5-200m-pytorch"
+    assert p.cache_dir == ".cache/timesfm"
+    assert p.max_context == 1024
+    assert p.per_core_batch_size == 32
+    assert p.min_context_weeks == 52
+    assert p.timeout_s == 300.0
+    assert p.max_regions_per_batch == 128
+    # revision default is the pinned SHA (or TIMESFM_REVISION env); either way,
+    # must satisfy the 40-hex validator.
+    assert len(p.revision) == 40 and all(c in "0123456789abcdef" for c in p.revision)
+
+
+def test_params_revision_overridable_via_env(monkeypatch):
+    monkeypatch.setenv("TIMESFM_REVISION", "b" * 40)
+    p = TimesFmParams.from_raw({})
+    assert p.revision == "b" * 40
+
+
+def test_params_yaml_overrides_win_over_env_and_defaults(monkeypatch):
+    monkeypatch.setenv("TIMESFM_REVISION", "b" * 40)
+    p = TimesFmParams.from_raw({"revision": "c" * 40, "min_context_weeks": 26})
+    assert p.revision == "c" * 40
+    assert p.min_context_weeks == 26
 
 
 def test_params_rejects_non_positive_numeric():

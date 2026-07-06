@@ -65,7 +65,7 @@ thresholds:
 
 model:
   spatial_res: "zone"
-  models: [rf, xgb]
+  models: [rf, xgb, timesfm]
   ensemble: mean
   output: both
   debug: false
