@@ -115,12 +115,8 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
         raw_model_configs: dict[str, Any] = dict(
             context.config.get("model_configs") or {}
         )
-        unknown = set(raw_model_configs) - set(cfg.models)
-        if unknown:
-            raise ValueError(
-                f"model_configs contains keys not in model.models: {sorted(unknown)}. "
-                f"model.models = {cfg.models}"
-            )
+        # Consistency of model_configs vs model.models is validated at pipeline
+        # construction (build_pipeline) — see pipelines/dengue/configs.py.
         report_cfg = ReportConfig.from_raw(
             _section(context.config, "report"),
             pipeline=_section(context.config, "pipeline"),

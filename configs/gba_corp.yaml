@@ -65,24 +65,13 @@ thresholds:
 
 model:
   spatial_res: "corp"
-  models: [rf, xgb, timesfm]
+  models: [rf, timesfm, tse]
   ensemble: mean
   output: both
   debug: false
 
 model_configs:
   rf:
-    lag:
-      lag_temp: [4, 5, 6, 7, 8, 9, 10, 11, 12]
-      lag_rainfall: [4]
-      lag_humidity: [4]
-      lag_cases: [1, 2, 3, 4, 5]
-    years_to_exclude: []
-    years_to_include: []
-    tune: false
-    n_trials: 100
-
-  xgb:
     lag:
       lag_temp: [4, 5, 6, 7, 8, 9, 10, 11, 12]
       lag_rainfall: [4]
