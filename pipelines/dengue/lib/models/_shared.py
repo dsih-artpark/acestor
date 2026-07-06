@@ -50,12 +50,16 @@ def recursive_forecast(
     clip_multiplier: float | None = None,
     train_max: float | None = None,
     debug: bool = False,
+    freeze_weather_at_origin: bool = False,
 ) -> tuple[pd.DataFrame, list[dict]]:
     """Roll a one-step model forward over multiple weeks (recursive multi-step).
 
-    For each future week, the non-case features (weather/iso lags) are taken
-    frozen from that week's precomputed row in ``df0`` — they're known ahead of
-    time. The ``case_lag_*`` features are filled hybrid-Y: a lag pointing at an
+    For each future week, the non-case features (weather/iso lags) are known
+    ahead of time and taken from a precomputed row in ``df0``: by default each
+    future week uses its own row (advancing); when ``freeze_weather_at_origin``
+    is True they are instead frozen at the forecast origin (the last observed
+    week) for every future week. The ``case_lag_*`` features are filled
+    hybrid-Y: a lag pointing at an
     already-forecast future week uses that prediction, one pointing at an observed
     week uses the observed value, and one before the series start is zero-padded.
     Each week's prediction is written back so later weeks' case lags see it.
@@ -64,8 +68,9 @@ def recursive_forecast(
     capped at ``clip_multiplier * train_max`` (off by default — parity with the
     reference; a cap firing is recorded in ``was_clipped``).
 
-    A region is skipped entirely if any of its frozen (non-case) features are NaN
-    for a future week (no weather coverage), mirroring the prior valid-mask drop.
+    A region is skipped entirely if any of its non-case features are NaN where
+    they are read: at each future week (default), or at the origin row when
+    ``freeze_weather_at_origin`` is True. Mirrors the prior valid-mask drop.
 
     Returns ``(predictions_df, debug_records)``. predictions_df columns:
     ``spatial_col``, ``recordDate``, ``prediction``, ``was_clipped``. debug_records
@@ -102,19 +107,33 @@ def recursive_forecast(
         first_date = g["recordDate"].min()
         rowmap = {r["recordDate"]: r for r in g.to_dict("records")}
 
-        # Skip region if any frozen feature is missing for a future week.
-        if any(
+        # Persistence: freeze weather/exogenous lags at the forecast origin's row
+        # for every forecast week. Otherwise each future week advances to its own
+        # precomputed row (requires lag >= horizon so the referenced week is
+        # observed).
+        if freeze_weather_at_origin:
+            if origin not in rowmap or any(
+                pd.isna(rowmap[origin][c]) for c in non_case_cols
+            ):
+                log.debug(
+                    "recursive_forecast: skipping region %s — NaN non-case "
+                    "features at origin",
+                    rid,
+                )
+                continue
+        elif any(
             d not in rowmap or any(pd.isna(rowmap[d][c]) for c in non_case_cols)
             for d in future
         ):
+            # Skip region if any frozen feature is missing for a future week.
             log.debug(
                 "recursive_forecast: skipping region %s — NaN non-case features", rid
             )
             continue
 
         for d in future:
-            row = rowmap[d]
-            x = {c: row[c] for c in feature_cols}
+            src_row = rowmap[origin] if freeze_weather_at_origin else rowmap[d]
+            x = {c: src_row[c] for c in non_case_cols}
             lag_trace: dict = {}
             for lg, col in case_lag_cols.items():
                 zdate = d - pd.Timedelta(weeks=lg)

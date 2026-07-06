@@ -528,6 +528,13 @@ class TrainPredictConfig:
     # Recursive-forecast upper clip: None = floor at 0 only (default, parity with
     # reference); a value M caps each step at M * max(train cases).
     clip_multiplier: float | None = None
+    # When True, weather/exogenous lag features for the forecast weeks are frozen
+    # at the forecast origin (last observed week) instead of advancing per week —
+    # a persistence assumption (future weather is unknown at forecast time), which
+    # also lets weather lags shorter than the forecast horizon be used without
+    # hitting future (NaN) weather. Default False preserves the existing
+    # advancing-observed-lag behaviour.
+    freeze_weather_at_origin: bool = False
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any]) -> TrainPredictConfig:
@@ -570,6 +577,9 @@ class TrainPredictConfig:
                 if raw.get("clip_multiplier") is not None
                 else None
             ),
+            freeze_weather_at_origin=bool(
+                raw.get("freeze_weather_at_origin", False)
+            ),
         )
 
 
@@ -607,6 +617,7 @@ def resolve_model_config(
         "n_trials": base.n_trials,
         "debug": base.debug,
         "clip_multiplier": base.clip_multiplier,
+        "freeze_weather_at_origin": base.freeze_weather_at_origin,
     }
 
     for key in (
@@ -617,6 +628,7 @@ def resolve_model_config(
         "n_trials",
         "debug",
         "clip_multiplier",
+        "freeze_weather_at_origin",
     ):
         if key in raw_overrides:
             merged[key] = raw_overrides[key]
