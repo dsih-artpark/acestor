@@ -85,7 +85,7 @@ model_configs:
     years_to_exclude: []
     years_to_include: []
     tune: false       # true → retune and overwrite artifacts/ap/hp/rf_best_params.json
-    n_trials: 50
+    n_trials: 100
 
   xgb:
     lag:
@@ -100,7 +100,7 @@ model_configs:
     years_to_exclude: []
     years_to_include: []
     tune: false       # true → retune and overwrite artifacts/ap/hp/xgb_best_params.json
-    n_trials: 50
+    n_trials: 100
 
 assess:
   total_district_regions: 26

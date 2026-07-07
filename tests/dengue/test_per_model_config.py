@@ -94,9 +94,9 @@ def test_tune_override():
 
 def test_n_trials_override():
     base = _base_cfg()
-    result = resolve_model_config(base, {"n_trials": 100})
-    assert result.n_trials == 100
-    assert base.n_trials == 50  # base unchanged
+    result = resolve_model_config(base, {"n_trials": 200})
+    assert result.n_trials == 200
+    assert base.n_trials == 100  # base unchanged (default)
 
 
 def test_resolve_model_config_only_affects_target_model():
