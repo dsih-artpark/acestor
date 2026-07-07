@@ -28,6 +28,34 @@ from pipelines.dengue.results import (
     PredictionResult,
     ThresholdsResult,
 )
+from pipelines.dengue_downscale.lib.apportionment import round_half_up
+
+
+def _add_prediction_range(
+    ensembled: pd.DataFrame, per_model_dfs: list[pd.DataFrame]
+) -> pd.DataFrame:
+    """Attach predictionMin / predictionMax to an ensemble DataFrame.
+
+    For each row in ``ensembled``, the min and max are taken across the
+    corresponding rows in ``per_model_dfs``. Grouping keys are every column
+    of the per-model frames except ``prediction`` and ``model`` (and the range
+    columns themselves, in case they were pre-populated by a caller).
+
+    Semantic: extremes across ensemble members — not a confidence interval,
+    not std, not bootstrap. See issue #84.
+    """
+    combined = pd.concat(per_model_dfs, ignore_index=True)
+    range_group_cols = [
+        c
+        for c in combined.columns
+        if c not in ("prediction", "model", "predictionMin", "predictionMax")
+    ]
+    agg = (
+        combined.groupby(range_group_cols, dropna=False)["prediction"]
+        .agg(predictionMin="min", predictionMax="max")
+        .reset_index()
+    )
+    return ensembled.merge(agg, on=range_group_cols, how="left")
 
 
 def _resolve_predictions_paths(
@@ -87,12 +115,8 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
         raw_model_configs: dict[str, Any] = dict(
             context.config.get("model_configs") or {}
         )
-        unknown = set(raw_model_configs) - set(cfg.models)
-        if unknown:
-            raise ValueError(
-                f"model_configs contains keys not in model.models: {sorted(unknown)}. "
-                f"model.models = {cfg.models}"
-            )
+        # Consistency of model_configs vs model.models is validated at pipeline
+        # construction (build_pipeline) — see pipelines/dengue/configs.py.
         report_cfg = ReportConfig.from_raw(
             _section(context.config, "report"),
             pipeline=_section(context.config, "pipeline"),
@@ -171,6 +195,10 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
                 artifacts=context.artifacts,
                 run_id=context.run_id,
                 log=context.log,
+                model_params=dict(raw_model_configs.get(model_name, {}) or {}),
+                prediction_dates=list(
+                    inputs.identify_cutoff_dates.prediction_dates or []
+                ),
             )
             model = get_model(model_name)
             pred = model.predict(ctx)
@@ -225,6 +253,15 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
             if len(prediction_dfs) == 1 and "model" in prediction_dfs[0].columns:
                 ensembled["model"] = prediction_dfs[0]["model"].iloc[0]
 
+        # predictionMin / predictionMax — see issue #84 and _add_prediction_range.
+        # For per-model output files: min == max == prediction (single model).
+        # For the ensemble file: extremes of the members for the same group.
+        for df in per_model_dfs.values():
+            df["predictionMin"] = df["prediction"]
+            df["predictionMax"] = df["prediction"]
+        if ensembled is not None and prediction_dfs:
+            ensembled = _add_prediction_range(ensembled, prediction_dfs)
+
         run_date = pd.Timestamp(inputs.identify_cutoff_dates.run_date).normalize()
 
         def _classify_and_write(
@@ -236,6 +273,13 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
             classified = zones.classify_into_zones(df, spatial_col=cfg.spatial_res)
             # WHO zones are already in predictionZone from classify_into_zones — preserve as whoZone
             classified["whoZone"] = classified["predictionZone"]
+
+            # Rounded-integer display column (issue #83). Dashboards render this;
+            # raw `prediction` stays unchanged for backtesting / calibration /
+            # downscale, which multiplies the raw float by child case-shares.
+            classified["predictionInt"] = (
+                classified["prediction"].astype(float).apply(round_half_up)
+            )
 
             # Degenerate WHO check: Mean=0 & StdDev=0 → meaningless threshold → NaN
             if "Mean" in classified.columns and "StdDev" in classified.columns:
@@ -301,6 +345,12 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
             state = require_state(context.config)
             classified = add_lgd_column(
                 classified, state=state, spatial_res=cfg.spatial_res
+            )
+            # CSV-boundary rename: consumers reading `prediction` get the display
+            # integer; the raw model float is written as `predictionRaw`. Internal
+            # code above this line still treats `prediction` as the float.
+            classified = classified.rename(
+                columns={"prediction": "predictionRaw", "predictionInt": "prediction"}
             )
             dest = context.artifact_path(dest_key)
             context.artifacts.write_text(classified.to_csv(index=False), dest)

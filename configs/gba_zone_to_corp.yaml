@@ -1,0 +1,46 @@
+state: "GBA"
+
+pipeline:
+  name: dengue_rollup
+  title: "Dengue Rollup — Greater Bengaluru Authority (Zone → Corp)"
+
+run:
+  source_run_id: "latest"
+  # Zone (source) and corp (target) live in different per-level artifact bases,
+  # so `latest` needs to know where to look. Without this the load step scans
+  # ./artifacts/gba_corp for a zone_* run and finds nothing.
+  source_artifacts_dir: "artifacts/gba_zone"
+
+rollup:
+  source_level: zone
+  target_level: corp
+  cases_csv: "gba_datasets/prepared_data/corp/cases_daily.csv"
+  geojson_base_path: "gba_datasets/geojsons/geojsons_GBA"
+
+# Parent-level (corp) thresholds. Zones re-derived at this scale so the
+# corp CSV matches what a native corp-level main-pipeline run would emit.
+thresholds:
+  region_type: corp
+  list_alpha: [1.0, 2.0]
+  classification_method: percentile
+  methods: [historical, prev_nweeks, weighted_baseline]
+  method_configs:
+    prev_nweeks:
+      n_weeks: 4
+    historical:
+      historical_n_years: 4
+      excluded_years: []
+      included_years: []
+
+report:
+  document_title: "GBA — Dengue Corp Forecast (rolled up from zones)"
+  threshold_method_for_report: historical
+
+storages:
+  artifacts:
+    kind: filesystem
+    filesystem:
+      base_path: "artifacts/gba_corp"
+
+logging:
+  level: INFO

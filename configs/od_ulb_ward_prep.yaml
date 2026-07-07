@@ -1,0 +1,45 @@
+pipeline:
+  name: dengue_prep
+  title: "Dengue Data Prep — Odisha (ULB ward, cases only)"
+
+run:
+  run_date: ""
+
+data:
+  region_type: "ulb_ward"
+
+  prepared_data:
+    base_dir: "od_datasets/prepared_data"
+
+  date_range:
+    start: "2016-01-01"
+
+  geojson:
+    base_path: "od_datasets/geojsons/geojsons_OD"
+
+  case_download:
+    enabled: true
+    source_path: "od_datasets/raw_case"
+
+  case_parse:
+    region_types:
+      - "ulb_ward"
+    date_column: ["Sample Collected Date", "Test Performed Date", "Date Of Onset"]
+    # The IHIP export attaches a resolved region_id per row (values like
+    # "ulb_ward_250520-8793"). Trust it — skip lat/lon geocoding.
+    region_id_column: "region_id"
+    filters:
+      - column: "Confirmed Diagnosis"
+        values: ["Dengue"]
+
+  weather_download:
+    enabled: false   # no ward-level weather; downscale uses parent (ULB) weather
+
+logging:
+  level: INFO
+
+storages:
+  artifacts:
+    kind: filesystem
+    filesystem:
+      base_path: "./artifacts/od_ulb_ward_prep"

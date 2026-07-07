@@ -60,3 +60,6 @@ docs/EVALUATION_*
 *.log
 logs/
 .DS_Store
+
+# TimesFM (and other model) checkpoint cache — project-local, ~800 MB
+.cache/

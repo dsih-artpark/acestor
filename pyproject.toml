@@ -16,6 +16,7 @@ dependencies = [
     "pandas>=2.3.3",
     "python-dotenv>=1.2.2",
     "pyyaml",
+    "rich>=13",
     "tqdm>=4.0",
     "xarray>=2025.6.1",
 ]
@@ -43,6 +44,12 @@ cds = [
     "cdsapi",
     "xarray",
     "netcdf4",
+]
+# TimesFM 2.5 forecasting model (issue #46). Heavy: pulls torch + the model
+# checkpoint at first use, and runs in an isolated subprocess to keep torch's
+# runtime away from xgboost's OpenMP. Core install stays light without it.
+timesfm = [
+    "timesfm[torch]==2.0.0",
 ]
 dev = [
     "ruff",

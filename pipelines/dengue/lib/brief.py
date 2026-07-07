@@ -43,14 +43,31 @@ def load_region_names(geojson_dir: Path) -> dict[str, str]:
 def load_child_geojson_combined(
     geojson_dir: Path,
     *,
-    simplify_tolerance: float = 0.005,
+    simplify_tolerance: float = 0.0015,
 ) -> dict:
     """Combine per-region geojsons into a single FeatureCollection, simplified.
 
     Keeps only essential properties: region_id, name, parent, parent_name.
     Simplifies polygon geometry to keep inlined JSON manageable.
     """
-    from shapely.geometry import mapping, shape
+    from shapely.geometry import MultiPolygon, Polygon, mapping, shape
+    from shapely.geometry.polygon import orient
+
+    def _d3_wind(g):
+        """Force exterior rings clockwise (sign=-1.0).
+
+        d3-geo uses a spherical convention where CCW exterior rings are
+        interpreted as 'everything OUTSIDE this ring' (the antimeridian-spanning
+        complement). With CCW exterior rings, d3.geoBounds returns global
+        bounds, projection.fitSize falls back to the default world view, and
+        every path renders a viewBox-spanning rectangle (solid-coloured-block
+        bug). CW exterior rings are what d3 expects — opposite to RFC 7946's
+        cartesian convention."""
+        if isinstance(g, Polygon):
+            return orient(g, sign=-1.0)
+        if isinstance(g, MultiPolygon):
+            return MultiPolygon([orient(p, sign=-1.0) for p in g.geoms])
+        return g
 
     features = []
     for p in sorted(Path(geojson_dir).glob("*.geojson")):
@@ -64,6 +81,7 @@ def load_child_geojson_combined(
             geom = shape(f["geometry"])
             if simplify_tolerance > 0:
                 geom = geom.simplify(simplify_tolerance, preserve_topology=True)
+            geom = _d3_wind(geom)
             features.append(
                 {
                     "type": "Feature",
@@ -76,19 +94,32 @@ def load_child_geojson_combined(
     return {"type": "FeatureCollection", "features": features}
 
 
-def compute_parent_lookup(feature_collection: dict) -> dict:
-    """Return {parent_id: {"name": str, "bbox": [minLon, minLat, maxLon, maxLat], "child_ids": [str]}}."""
+def compute_parent_lookup(
+    feature_collection: dict,
+    region_names: dict[str, str] | None = None,
+) -> dict:
+    """Return ``{parent_id: {"name": str, "bbox": [...], "child_ids": [str]}}``.
+
+    Parent name fallback order:
+      1. The child feature's ``parent_name`` property (baked into the geojson)
+      2. ``region_names[parent_id]`` (if the caller supplied a name lookup —
+         typically loaded from the parent-level geojsons where the real name
+         lives)
+      3. Raw ``parent_id`` (last resort, keeps the UI navigable)
+    """
     from shapely.geometry import shape
 
+    region_names = region_names or {}
     by_parent: dict = {}
     for f in feature_collection.get("features", []):
         props = f["properties"]
         pid = props.get("parent")
         if not pid:
             continue
+        display_name = props.get("parent_name") or region_names.get(pid) or pid
         entry = by_parent.setdefault(
             pid,
-            {"name": props.get("parent_name") or pid, "bboxes": [], "child_ids": []},
+            {"name": display_name, "bboxes": [], "child_ids": []},
         )
         entry["child_ids"].append(props.get("region_id"))
         b = shape(f["geometry"]).bounds  # (minx, miny, maxx, maxy)

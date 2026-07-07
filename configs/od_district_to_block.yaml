@@ -17,7 +17,7 @@ downscale:
 thresholds:
   region_type: block
   list_alpha: [1.0, 2.0]
-  classification_method: who
+  classification_method: percentile
   methods: [historical, prev_nweeks]
   method_configs:
     prev_nweeks:

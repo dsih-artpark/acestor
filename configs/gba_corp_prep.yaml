@@ -1,0 +1,52 @@
+pipeline:
+  name: dengue_prep
+  title: "Dengue Data Prep — Greater Bengaluru Authority (Corp)"
+
+run:
+  run_date: ""
+
+data:
+  region_type: "corp"
+
+  prepared_data:
+    base_dir: "gba_datasets/prepared_data"
+
+  date_range:
+    start: "2022-01-01"
+
+  geojson:
+    base_path: "gba_datasets/geojsons/geojsons_GBA"
+    # Wards live under <base>/ward/ or <base>/wards/. The geocoding resolver
+    # auto-detects either layout.
+
+  case_download:
+    enabled: true
+    source_path: "gba_datasets/raw_case"
+
+  case_parse:
+    region_types:
+      - "corp"
+    date_column: "Test Performed Date"
+    # The dashboard's GBA export already attaches a resolved ward ID to every
+    # row in the "Region Id" column (e.g. "ward_gba-63") via its own pipeline.
+    # Trust it — skip geocoding / spatial join entirely.
+    region_id_column: "Region Id"
+    filters:
+      - column: "Confirmed Diagnosis"
+        values: ["Dengue"]
+
+  weather_download:
+    enabled: true
+    source_mode: "openmeteo"
+    parsed_output_path: "gba_datasets/weather"
+    temperature_unit: "celsius"
+    precipitation_unit: "mm"
+
+logging:
+  level: INFO
+
+storages:
+  artifacts:
+    kind: filesystem
+    filesystem:
+      base_path: "./artifacts/gba_corp_prep"

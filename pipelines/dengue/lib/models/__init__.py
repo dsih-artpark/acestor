@@ -11,7 +11,7 @@ Then set ``model.models: [name]`` (or add to the list) in any pipeline YAML.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import pandas as pd
@@ -36,6 +36,14 @@ class ModelContext:
     )
     run_id: str = ""  # Pipeline run ID — used for scoping debug output paths
     log: Any = None  # Pipeline logger — None in unit tests, set in train_and_predict
+    # Raw per-model dict from ``model_configs.<name>`` — threaded directly so
+    # models with their own non-whitelisted knobs (e.g. timesfm) can read them
+    # without going through ``resolve_model_config``. Issue #46.
+    model_params: dict[str, Any] = field(default_factory=dict)
+    # Weekly target dates from the cutoff step — already capped to ≤4
+    # entries in ``(cutoff_case, pred_upto]``. Models that forecast on the
+    # weekly grid (timesfm) read this rather than re-deriving. Issue #46.
+    prediction_dates: list[str] = field(default_factory=list)
 
 
 @runtime_checkable
@@ -68,3 +76,4 @@ from pipelines.dengue.lib.models import nbr as _nbr_mod  # noqa: F401, E402
 from pipelines.dengue.lib.models import tse as _tse_mod  # noqa: F401, E402
 from pipelines.dengue.lib.models import rf as _rf_mod  # noqa: F401, E402
 from pipelines.dengue.lib.models import xgb as _xgb_mod  # noqa: F401, E402
+from pipelines.dengue.lib.models import timesfm as _timesfm_mod  # noqa: F401, E402

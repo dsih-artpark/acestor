@@ -24,8 +24,8 @@ data:
   case_parse:
     region_types:
       - "district"
-    date_column: "Sample Collected Date"
-    lgd_code_column: "District Code"
+    date_column: ["Sample Collected Date", "Test Performed Date", "Date Of Onset"]
+    region_id_column: "region_id"
     filters:
       - column: "Confirmed Diagnosis"
         values: ["Dengue"]

@@ -7,6 +7,11 @@ from __future__ import annotations
 
 from acestor import PipelineConfig, PipelineDAG, PipelineStep
 
+from pipelines.dengue.configs import (
+    TrainPredictConfig,
+    _section,
+    validate_model_configs,
+)
 from pipelines.dengue.steps.identify_sampling_day import IdentifySamplingDayStep
 from pipelines.dengue.steps.load_prepared_case_data import LoadPreparedCaseDataStep
 from pipelines.dengue.steps.load_prepared_weather_data import (
@@ -47,6 +52,12 @@ def build_pipeline(config: PipelineConfig) -> PipelineDAG:
                                      identify_cutoff_dates ┘
     """
     fs_sources.configure_from_yaml(config.raw)
+
+    # Fail fast on config mismatch — do it here (at DAG construction) rather
+    # than inside train_and_predict.run(), so misconfig doesn't waste the
+    # prep / weather / thresholds work that runs first.
+    _cfg = TrainPredictConfig.from_raw(_section(config.raw, "model"))
+    validate_model_configs(dict(config.raw.get("model_configs") or {}), _cfg.models)
 
     identify_sampling_day = PipelineStep(
         name="identify_sampling_day", impl=IdentifySamplingDayStep()

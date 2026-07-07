@@ -24,7 +24,7 @@ data:
   case_parse:
     region_types:
       - "block"
-    date_column: "Sample Collected Date"
+    date_column: ["Sample Collected Date", "Test Performed Date", "Date Of Onset"]
     # No lgd_code_column → acestor falls back to lat/lon spatial join
     lat_column: "Latitude"
     lon_column: "Longitude"

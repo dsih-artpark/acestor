@@ -115,23 +115,42 @@ class GenerateDownscaleBriefStep(
 
         ds_cfg = DownscaleConfig.from_raw(context.config.get("downscale") or {})
 
-        # Load child-level geojson names (e.g. mandal_05511 → "Hindupur").
+        # Load child-level geojson names (e.g. mandal_05511 → "Hindupur"),
+        # AND parent-level names (e.g. district_344 → "ANGUL"). The report
+        # groups children under their parent — without parent names the
+        # parent columns/headings fall back to raw region IDs.
         region_names: dict[str, str] = {}
         child_geojson_dir = Path(ds_cfg.geojson_base_path) / ds_cfg.child_level_plural
+        parent_geojson_dir = Path(ds_cfg.geojson_base_path) / ds_cfg.parent_level_plural
         if child_geojson_dir.exists():
-            region_names = load_region_names(child_geojson_dir)
+            region_names.update(load_region_names(child_geojson_dir))
         else:
             context.log.warning(
                 "generate_downscale_brief: child geojson dir not found at %s — table will show raw region IDs",
                 child_geojson_dir,
+            )
+        if parent_geojson_dir.exists():
+            region_names.update(load_region_names(parent_geojson_dir))
+        else:
+            context.log.warning(
+                "generate_downscale_brief: parent geojson dir not found at %s — parent headings will show raw region IDs",
+                parent_geojson_dir,
             )
 
         # Build interactive map data: combined + simplified GeoJSON + parent lookup + weekly zones.
         interactive_map_data: dict | None = None
         if child_geojson_dir.exists():
             try:
-                geojson_fc = load_child_geojson_combined(child_geojson_dir)
-                parent_lookup = compute_parent_lookup(geojson_fc)
+                # Tighter tolerance for downscale: child polygons are smaller
+                # than the parent dengue brief's, so the same simplification
+                # ratio is visibly choppier here. 0.0005 ≈ ~55m at the equator —
+                # well below ward-level perception thresholds.
+                geojson_fc = load_child_geojson_combined(
+                    child_geojson_dir, simplify_tolerance=0.0005
+                )
+                parent_lookup = compute_parent_lookup(
+                    geojson_fc, region_names=region_names
+                )
                 # weekly_zones: {week_idx (str, 1-based): {region_id: zone_int}}
                 weekly_zones: dict[str, dict[str, int]] = {}
                 for i, wk in enumerate(weeks, start=1):

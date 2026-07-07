@@ -41,6 +41,7 @@ MODEL_FULL_NAME = {
     "xgb": "xgboostRegression",
     "rf": "randomForestRegression",
     "tse": "timeSeriesExtrapolation",
+    "timesfm": "timesFoundationModel",
     "ensemble": "ensembleModel",
 }
 THRESHOLD_LABEL = {
@@ -133,7 +134,16 @@ def gen_plot(
     if not gdf_list:
         return ""
 
+    # Reproject every gdf onto the first one's CRS before concat. Two files
+    # may both declare "WGS 84" yet fail the common-CRS check because their
+    # WKT strings differ (files exported by different tools / at different
+    # times). Normalising via to_crs() collapses those into one instance so
+    # the concat succeeds without a fake CRS mismatch. Same fix that was
+    # applied in dengue_prep/lib/ihip.py._load_geojson.
+    target_crs = gdf_list[0].crs
+    gdf_list = [g.to_crs(target_crs) for g in gdf_list]
     gdf_all = pd.concat(gdf_list, ignore_index=True)
+    gdf_all = gpd.GeoDataFrame(gdf_all, geometry="geometry", crs=target_crs)
     gdf_dissolved = gdf_all.dissolve(by="name")
 
     fig, ax = plt.subplots(1, 1, figsize=(8, 10), dpi=140)

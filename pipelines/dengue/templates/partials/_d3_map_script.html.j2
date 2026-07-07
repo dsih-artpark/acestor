@@ -35,10 +35,17 @@ window.__BRIEF_DATA = {{ interactive_map_data | tojson }};
   const projection = d3.geoMercator();
   const path = d3.geoPath().projection(projection);
 
+  // Treat any rect dim below 1px as "not yet laid out" so we don't
+  // fitSize() into a sub-pixel box — that produces a degenerate path
+  // covering the whole SVG with no visible boundaries.
+  function dim(rect, key) {
+    return rect[key] >= 1 ? rect[key] : 360;
+  }
+
   function renderWeek(svg, weekIdx) {
     const zones = weekly[weekIdx] || {};
     const rect = svg.getBoundingClientRect();
-    const w = rect.width || 360, h = rect.height || 360;
+    const w = dim(rect, "width"), h = dim(rect, "height");
     svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
     projection.fitSize([w, h], geo);
     const sel = d3.select(svg);
@@ -67,7 +74,7 @@ window.__BRIEF_DATA = {{ interactive_map_data | tojson }};
       };
       svgs.forEach(svg => {
         const rect = svg.getBoundingClientRect();
-        const w = rect.width || 360, h = rect.height || 360;
+        const w = dim(rect, "width"), h = dim(rect, "height");
         svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
         projection.fitSize([w, h], subset);
         const sel = d3.select(svg);
@@ -100,8 +107,29 @@ window.__BRIEF_DATA = {{ interactive_map_data | tojson }};
     });
   }
 
-  // Initial render
-  svgs.forEach(svg => renderWeek(svg, svg.dataset.weekIdx));
+  // Initial render — defer until after first paint so the SVGs have
+  // real dimensions. Without this the SVGs are projected into a
+  // sub-pixel viewBox and render as solid colored blocks.
+  function initialRender() {
+    svgs.forEach(svg => renderWeek(svg, svg.dataset.weekIdx));
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => {
+      requestAnimationFrame(initialRender);
+    });
+  } else {
+    requestAnimationFrame(initialRender);
+  }
+
+  // Re-fit on window resize so the projection stays right.
+  let resizeTimer = null;
+  window.addEventListener("resize", () => {
+    if (resizeTimer) cancelAnimationFrame(resizeTimer);
+    resizeTimer = requestAnimationFrame(() => {
+      const pid = picker ? picker.value : "__all__";
+      if (pid && pid !== "__all__") zoomTo(pid); else initialRender();
+    });
+  });
 
   // Dropdown wiring
   if (picker) {

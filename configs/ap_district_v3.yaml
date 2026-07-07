@@ -65,7 +65,7 @@ thresholds:
 
 model:
   spatial_res: "district"
-  models: [rf, xgb]           # models to run; predictions are combined via ensemble
+  models: [rf, xgb, timesfm, tse]   # models to run; predictions are combined via ensemble
   ensemble: mean               # mean | none
   output: both                 # ensemble | per_model | both
   debug: false                 # true → saves X_train, X_test+predictions, feature_importance to artifacts/debug/

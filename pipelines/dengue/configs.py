@@ -485,6 +485,23 @@ def resolve_threshold_config(
 # ---------------------------------------------------------------------------
 
 
+def _parse_tune(raw: Any) -> bool | str:
+    """Accept bool or the sentinel string 'never'. Anything else is an error."""
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        s = raw.strip().lower()
+        if s in ("true", "yes", "1"):
+            return True
+        if s in ("false", "no", "0", ""):
+            return False
+        if s == "never":
+            return "never"
+    raise ValueError(
+        f"model_configs.<model>.tune must be true, false, or 'never'; got {raw!r}"
+    )
+
+
 @dataclass(frozen=True)
 class TrainPredictConfig:
     spatial_res: str
@@ -498,12 +515,26 @@ class TrainPredictConfig:
     models: list[str]
     ensemble: str  # registered ensemble strategy name, or "none"
     output: str  # "ensemble" | "per_model" | "both"
-    tune: bool  # False = use cache; True = force Optuna retune
+    # Tuning behavior:
+    #   True        — always Optuna-retune
+    #   False       — use cache when fingerprint matches, otherwise retune (default)
+    #   "never"     — trust the cache regardless of fingerprint, fail loud if no cache
+    # The "never" mode is the hindcast/production path: tune once on a representative
+    # window, then run many vintages without re-tuning. Matches what production deploys
+    # would do — they don't retune per inference run.
+    tune: bool | str
     n_trials: int  # Optuna trials when tuning runs
     debug: bool  # True = save intermediate CSVs to artifacts/debug/<model>/
     # Recursive-forecast upper clip: None = floor at 0 only (default, parity with
     # reference); a value M caps each step at M * max(train cases).
     clip_multiplier: float | None = None
+    # When True, weather/exogenous lag features for the forecast weeks are frozen
+    # at the forecast origin (last observed week) instead of advancing per week —
+    # a persistence assumption (future weather is unknown at forecast time), which
+    # also lets weather lags shorter than the forecast horizon be used without
+    # hitting future (NaN) weather. Default False preserves the existing
+    # advancing-observed-lag behaviour.
+    freeze_weather_at_origin: bool = False
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any]) -> TrainPredictConfig:
@@ -546,6 +577,7 @@ class TrainPredictConfig:
                 if raw.get("clip_multiplier") is not None
                 else None
             ),
+            freeze_weather_at_origin=bool(raw.get("freeze_weather_at_origin", False)),
         )
 
 
@@ -583,6 +615,7 @@ def resolve_model_config(
         "n_trials": base.n_trials,
         "debug": base.debug,
         "clip_multiplier": base.clip_multiplier,
+        "freeze_weather_at_origin": base.freeze_weather_at_origin,
     }
 
     for key in (
@@ -593,6 +626,7 @@ def resolve_model_config(
         "n_trials",
         "debug",
         "clip_multiplier",
+        "freeze_weather_at_origin",
     ):
         if key in raw_overrides:
             merged[key] = raw_overrides[key]
@@ -681,3 +715,36 @@ class ReportConfig:
             primary=primary,
             threshold_method_for_report=tmr,
         )
+
+
+def validate_model_configs(model_configs: Mapping[str, Any], models: list[str]) -> None:
+    """Fail fast if ``model_configs`` names a model not in ``model.models``.
+
+    Called at pipeline construction (``build_pipeline``) so misconfigured
+    runs die before any step executes — no wasted prep / thresholds / weather
+    download when the user has a stale ``model_configs.xgb`` block on a run
+    that dropped xgb from ``model.models``.
+
+    The message names both fixes explicitly, including the CLI-``--set`` trap
+    that re-creates a ``model_configs`` key on the command line even after
+    it's been removed from the YAML.
+    """
+    unknown = set(model_configs) - set(models)
+    if not unknown:
+        return
+    keys = sorted(unknown)
+    example = keys[0]
+    raise ValueError(
+        f"model_configs has {len(keys)} key(s) not listed in "
+        f"model.models: {keys}\n"
+        f"  model.models  = {models}\n"
+        f"  model_configs = {sorted(model_configs)}\n"
+        f"Fix by one of:\n"
+        f"  1. Add the model to model.models "
+        f"(e.g. model.models = {models + [example]!r})\n"
+        f"  2. Remove `model_configs.{example}:` from the YAML config "
+        f"AND drop any '--set model_configs.{example}...' overrides "
+        f"on the CLI — a --set on an absent key re-creates it.\n"
+        f"     `--set model_configs.{example}=null` also works to "
+        f"drop the key at runtime without editing the YAML."
+    )

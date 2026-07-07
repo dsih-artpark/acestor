@@ -12,7 +12,7 @@ data:
     base_dir: "gba_datasets/prepared_data"
 
   date_range:
-    start: "2024-01-01"
+    start: "2022-01-01"
 
   geojson:
     base_path: "gba_datasets/geojsons/geojsons_GBA"
@@ -26,47 +26,17 @@ data:
   case_parse:
     region_types:
       - "ward"
-    date_column: "Sample Collected Date"
-    header_row: 1   # BBMP weekly exports have a banner / title row at row 0
-    # No LGD code column for BBMP wards in IHIP data — use geocoding instead.
-    # If a future file has lat/lon directly, the spatial-join fallback would
-    # kick in automatically; for now the IHIP files only carry Patient Address.
-    geocoding:
-      enabled: true
-      address_fields:
-        # Primary composition — joined as "v1, v2, v3, v4".
-        # First field is also the "primary identifier" for require_address.
-        - "Patient Address"   # specific but can be cross-state (e.g. Jhansi, UP)
-        - "Village Or Ward"   # specific area token (e.g. "Ward No.21(Hebbala)")
-        - "Sub District"      # e.g. "Bengaluru North"
-        - "Ulb"               # "Greater Bengaluru Authority" — broad, mostly stopworded
-      fallback_address_fields:
-        # Tried only for rows that didn't produce a usable ward on the primary
-        # composition. Facility names are well-known to Google AND always in
-        # BBMP, so this recovers cross-state-patient cases like the Jhansi one.
-        - "Facility Name Lform"
-        - "Village Or Ward"
-        - "Sub District"
-        - "Ulb"
-      cache_file: "cache/gba_geocode_cache.json"
-      # Viewport-bias Google toward Greater Bengaluru. Soft only — pairs
-      # with restrict_admin_area_tokens (below) to hard-reject anything
-      # that still lands outside Karnataka (e.g. cross-state Patient
-      # Addresses like "jhansi, uttar pradesh").
-      # [min_lat, min_lon, max_lat, max_lon]
-      bounds: [12.7, 77.3, 13.3, 77.9]
-      restrict_admin_area_tokens:
-        - "Karnataka"
-      # require_address: true   (default) — drop rows where the first
-      #                                     address_field column is empty.
-      # require_validation: true (default) — drop rows where BOTH passes
-      #                                     failed (no ward attached).
+    date_column: "Test Performed Date"
+    # The dashboard's GBA export already attaches a resolved ward ID to every
+    # row in the "Region Id" column (e.g. "ward_gba-63") via its own pipeline.
+    # Trust it — skip geocoding / spatial join entirely.
+    region_id_column: "Region Id"
     filters:
       - column: "Confirmed Diagnosis"
         values: ["Dengue"]
 
   weather_download:
-    enabled: false   # set to true + configure source when GBA weather is ready
+    enabled: false
 
 logging:
   level: INFO
@@ -75,4 +45,4 @@ storages:
   artifacts:
     kind: filesystem
     filesystem:
-      base_path: "./artifacts/gba_prep"
+      base_path: "./artifacts/gba_ward_prep"

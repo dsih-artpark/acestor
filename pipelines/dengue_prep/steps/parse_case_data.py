@@ -90,6 +90,9 @@ class PrepParseCaseDataStep(BaseStep[PrepParseCaseDataInputs, PrepCaseParseResul
         last_result: PrepCaseParseResult | None = None
 
         for region_type in cfg.region_types:
+            from pipelines.dengue_prep.lib.summary import CaseParseStats
+
+            stats = CaseParseStats(region_type=region_type)
             daily = parse_ihip_files(
                 folder=source_folder,
                 region_type=region_type,
@@ -101,6 +104,8 @@ class PrepParseCaseDataStep(BaseStep[PrepParseCaseDataInputs, PrepCaseParseResul
                 filters=cfg.filters or None,
                 geocoding_cfg=cfg.geocoding,
                 header_row=cfg.header_row,
+                region_id_column=cfg.region_id_column or None,
+                stats=stats,
             )
 
             # Apply date range filter — only if set in config
@@ -140,6 +145,50 @@ class PrepParseCaseDataStep(BaseStep[PrepParseCaseDataInputs, PrepCaseParseResul
                 total,
                 dest,
             )
+
+            # ── End-of-step summary — rich table to terminal + markdown record ──
+            from pipelines.dengue_prep.lib.ihip import (
+                _region_id_to_name,
+                _scan_geojson_hierarchy,
+                _valid_region_ids,
+                _walk_hierarchy,
+            )
+            from pipelines.dengue_prep.lib.summary import (
+                render_case_parse_summary,
+                write_markdown_report,
+            )
+
+            stats.output_path = str(dest.resolve())
+            stats.output_rows = total
+            stats.target_region_ids = _valid_region_ids(geojson_base, region_type)
+            stats.region_names = _region_id_to_name(geojson_base, region_type)
+            _hier = _scan_geojson_hierarchy(geojson_base)
+            stats.region_hierarchy = {
+                rid: _walk_hierarchy(rid, _hier) for rid in stats.target_region_ids
+            }
+            if not daily.empty:
+                stats.covered_region_ids = set(daily["region_id"].astype(str).unique())
+                stats.latest_date = pd.Timestamp(daily["date"].max())
+                per_region = daily.groupby("region_id").agg(
+                    latest=("date", "max"),
+                    cases=("case_count", "sum"),
+                )
+                stats.per_region_latest = {
+                    str(k): pd.Timestamp(v) for k, v in per_region["latest"].items()
+                }
+                stats.per_region_case_count = {
+                    str(k): int(v) for k, v in per_region["cases"].items()
+                }
+            run_date_ts = (
+                pd.Timestamp(context.config.get("run", {}).get("run_date"))
+                if context.config.get("run", {}).get("run_date")
+                else pd.Timestamp.now().normalize()
+            )
+            render_case_parse_summary(stats, run_date=run_date_ts)
+            report_path = Path(context.artifact_fs_path("outputs/prep_summary.md"))
+            write_markdown_report(report_path, case=stats, run_date=run_date_ts)
+            context.log.info("parse_case_data: summary written to %s", report_path)
+
             last_result = PrepCaseParseResult(
                 region_type=region_type,
                 prepared_data_path=str(dest.resolve()),

@@ -1,0 +1,44 @@
+pipeline:
+  name: dengue_prep
+  title: "Dengue Data Prep — Odisha (ULB, cases only)"
+
+run:
+  run_date: ""
+
+data:
+  region_type: "ulb"
+
+  prepared_data:
+    base_dir: "od_datasets/prepared_data"
+
+  date_range:
+    start: "2016-01-01"
+
+  geojson:
+    base_path: "od_datasets/geojsons/geojsons_OD"
+
+  case_download:
+    enabled: true
+    source_path: "od_datasets/raw_case"
+
+  case_parse:
+    region_types:
+      - "ulb"
+    date_column: ["Sample Collected Date", "Test Performed Date", "Date Of Onset"]
+    lat_column: "Latitude"
+    lon_column: "Longitude"
+    filters:
+      - column: "Confirmed Diagnosis"
+        values: ["Dengue"]
+
+  weather_download:
+    enabled: false   # no ULB-level weather; downscale uses parent (district) weather
+
+logging:
+  level: DEBUG
+
+storages:
+  artifacts:
+    kind: filesystem
+    filesystem:
+      base_path: "./artifacts/od_ulb_prep"
