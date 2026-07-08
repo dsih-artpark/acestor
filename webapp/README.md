@@ -13,3 +13,8 @@ Web interface for the acestor forecasting pipeline.
 ## Tests
 
     ./scripts/test.sh
+
+## Prod run
+
+    cp .env.example .env  # edit values
+    docker compose up -d --build
