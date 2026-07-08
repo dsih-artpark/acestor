@@ -120,9 +120,11 @@ def random_forest_regression(
         ),
         train_max=float(np.nanmax(y_train)) if len(y_train) else None,
         debug=debug_on,
-        freeze_weather_at_origin=getattr(ctx.cfg, "freeze_weather_at_origin", False)
-        if ctx is not None
-        else False,
+        freeze_weather_at_origin=(
+            getattr(ctx.cfg, "freeze_weather_at_origin", True)
+            if ctx is not None
+            else True
+        ),
     )
 
     if preds.empty:
