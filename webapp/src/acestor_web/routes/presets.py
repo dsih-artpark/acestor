@@ -90,6 +90,14 @@ def update_preset(
     preset = session.get(ConfigPreset, preset_id)
     if preset is None:
         raise HTTPException(status_code=404, detail="preset not found")
+    if "name" in payload.model_dump(exclude_unset=True):
+        dup = (
+            session.query(ConfigPreset)
+            .filter(ConfigPreset.name == payload.name, ConfigPreset.id != preset_id)
+            .one_or_none()
+        )
+        if dup:
+            raise HTTPException(status_code=409, detail="preset name already exists")
     before = _snapshot(preset)
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(preset, field, value)

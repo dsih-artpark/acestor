@@ -7,7 +7,7 @@ from acestor_web.storage import S3Client
 
 @pytest.fixture
 def s3_client() -> S3Client:
-    bucket = os.environ.get("S3_TEST_BUCKET", "acestor-test")
+    bucket = os.environ.get("S3_BUCKET", "acestor-test")
     c = S3Client(
         bucket=bucket,
         endpoint_url=os.environ.get("S3_ENDPOINT_URL", "http://localhost:9000"),

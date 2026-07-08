@@ -82,3 +82,14 @@ def test_404_on_missing(db_session):
     client = _client(db_session)
     r = client.get("/api/presets/00000000-0000-0000-0000-000000000000", headers=HEADERS)
     assert r.status_code == 404
+
+
+def test_update_to_duplicate_name_conflicts(db_session):
+    client = _client(db_session)
+    client.post("/api/presets", json={"name": "a", "yaml_text": "x\n"}, headers=HEADERS)
+    r = client.post(
+        "/api/presets", json={"name": "b", "yaml_text": "y\n"}, headers=HEADERS
+    )
+    bid = r.json()["id"]
+    r = client.patch(f"/api/presets/{bid}", json={"name": "a"}, headers=HEADERS)
+    assert r.status_code == 409
