@@ -65,7 +65,7 @@ thresholds:
 
 model:
   spatial_res: "corp"
-  models: [rf, timesfm, tse]
+  models: [rf, timesfm]
   ensemble: mean
   output: both
   debug: false
