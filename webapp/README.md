@@ -9,3 +9,7 @@ Web interface for the acestor forecasting pipeline.
     docker compose -f docker-compose.dev.yml up -d postgres minio
     uv run alembic upgrade head
     uv run uvicorn acestor_web.main:app --reload
+
+## Tests
+
+    ./scripts/test.sh
