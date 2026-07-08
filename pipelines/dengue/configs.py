@@ -528,13 +528,14 @@ class TrainPredictConfig:
     # Recursive-forecast upper clip: None = floor at 0 only (default, parity with
     # reference); a value M caps each step at M * max(train cases).
     clip_multiplier: float | None = None
-    # When True, weather/exogenous lag features for the forecast weeks are frozen
-    # at the forecast origin (last observed week) instead of advancing per week —
-    # a persistence assumption (future weather is unknown at forecast time), which
-    # also lets weather lags shorter than the forecast horizon be used without
-    # hitting future (NaN) weather. Default False preserves the existing
-    # advancing-observed-lag behaviour.
-    freeze_weather_at_origin: bool = False
+    # When True (default, matches upstream vbd-modelbench predict_rt.py), weather/
+    # exogenous lag features for the forecast weeks are frozen at the forecast
+    # origin (last observed week) — a persistence assumption (future weather is
+    # unknown at forecast time). This also lets weather lags shorter than the
+    # forecast horizon be used without hitting future (NaN) weather. Set to False
+    # to advance weather lags per week instead — only useful for hindcasts where
+    # you deliberately want to leak observed future weather into the model.
+    freeze_weather_at_origin: bool = True
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any]) -> TrainPredictConfig:
@@ -577,7 +578,7 @@ class TrainPredictConfig:
                 if raw.get("clip_multiplier") is not None
                 else None
             ),
-            freeze_weather_at_origin=bool(raw.get("freeze_weather_at_origin", False)),
+            freeze_weather_at_origin=bool(raw.get("freeze_weather_at_origin", True)),
         )
 
 
