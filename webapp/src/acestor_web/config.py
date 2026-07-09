@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     # Auth
     auth_provider: str = "local"
     auth_session_secret: str
+    session_cookie_secure: bool = False
     auth_google_client_id: str = ""
     auth_google_client_secret: str = ""
     auth_allowed_domains: Annotated[list[str], NoDecode] = Field(default_factory=list)
