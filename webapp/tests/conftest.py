@@ -1,4 +1,7 @@
 import os
+
+os.environ.setdefault("AUTH_PROVIDER", "devstub")
+
 import re
 import subprocess
 
@@ -40,6 +43,24 @@ def _migrated_engine(_db_url):
     engine = create_engine(_db_url, future=True)
     yield engine
     engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def _reset_auth_provider():
+    """Restore AUTH_PROVIDER and clear settings cache after every test.
+
+    Tests that mutate AUTH_PROVIDER (e.g. test_local_auth.py) must not bleed
+    into subsequent tests that rely on the devstub default.
+    """
+    original = os.environ.get("AUTH_PROVIDER")
+    yield
+    if original is None:
+        os.environ.pop("AUTH_PROVIDER", None)
+    else:
+        os.environ["AUTH_PROVIDER"] = original
+    from acestor_web.config import get_settings
+
+    get_settings.cache_clear()
 
 
 @pytest.fixture
