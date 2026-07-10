@@ -46,3 +46,31 @@ def test_allowed_domains_single_value(monkeypatch):
     s = Settings()
 
     assert s.auth_allowed_domains == ["artpark.in"]
+
+
+def test_auth_provider_rejects_unknown(monkeypatch):
+    monkeypatch.setenv("POSTGRES_URL", "postgresql+psycopg://u:p@h/db")
+    monkeypatch.setenv("AUTH_SESSION_SECRET", "s")
+    monkeypatch.setenv("AUTH_PROVIDER", "banana")
+    monkeypatch.setenv("S3_BUCKET", "b")
+    monkeypatch.setenv("S3_REGION", "us-east-1")
+
+    import pytest
+    from pydantic import ValidationError
+
+    from acestor_web.config import Settings
+
+    with pytest.raises(ValidationError):
+        Settings()
+
+
+def test_auth_provider_accepts_google(monkeypatch):
+    monkeypatch.setenv("POSTGRES_URL", "postgresql+psycopg://u:p@h/db")
+    monkeypatch.setenv("AUTH_SESSION_SECRET", "s")
+    monkeypatch.setenv("AUTH_PROVIDER", "google")
+    monkeypatch.setenv("S3_BUCKET", "b")
+    monkeypatch.setenv("S3_REGION", "us-east-1")
+
+    from acestor_web.config import Settings
+
+    assert Settings().auth_provider == "google"

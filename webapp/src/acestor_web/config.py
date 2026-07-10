@@ -42,6 +42,13 @@ class Settings(BaseSettings):
     # Locale
     default_timezone: str = "UTC"
 
+    @field_validator("auth_provider")
+    @classmethod
+    def _validate_auth_provider(cls, v):
+        if v not in {"local", "google", "devstub"}:
+            raise ValueError("AUTH_PROVIDER must be one of: local, google, devstub")
+        return v
+
     @field_validator("auth_allowed_domains", mode="before")
     @classmethod
     def _split_csv(cls, v):
