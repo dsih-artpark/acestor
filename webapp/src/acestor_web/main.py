@@ -5,6 +5,7 @@ from acestor_web.auth import google as google_auth
 from acestor_web.auth import local as local_auth
 from acestor_web.config import get_settings
 from acestor_web.routes import auth, health, presets
+from acestor_web.routes import users as users_route
 
 settings = get_settings()
 
@@ -17,6 +18,7 @@ app.include_router(auth.router)
 app.include_router(local_auth.router)
 app.include_router(google_auth.router)
 app.include_router(presets.router)
+app.include_router(users_route.router)
 
 
 @app.on_event("startup")

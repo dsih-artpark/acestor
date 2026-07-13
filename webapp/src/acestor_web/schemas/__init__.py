@@ -5,6 +5,12 @@ from acestor_web.schemas.config_preset import (
     ConfigPresetOut,
     ConfigPresetUpdate,
 )
+from acestor_web.schemas.user import (
+    ResetPasswordRequest,
+    UserCreate,
+    UserOut,
+    UserUpdate,
+)
 
 __all__ = [
     "ConfigPresetCreate",
@@ -14,4 +20,8 @@ __all__ = [
     "LoginRequest",
     "ChangePasswordRequest",
     "MeOut",
+    "UserCreate",
+    "UserUpdate",
+    "UserOut",
+    "ResetPasswordRequest",
 ]
