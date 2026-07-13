@@ -9,6 +9,8 @@ def test_settings_reads_env(monkeypatch):
     monkeypatch.setenv("AUTH_PROVIDER", "google")
     monkeypatch.setenv("AUTH_SESSION_SECRET", "s")
     monkeypatch.setenv("AUTH_ALLOWED_DOMAINS", "artpark.in,partner.org")
+    monkeypatch.setenv("AUTH_GOOGLE_CLIENT_ID", "test-id")
+    monkeypatch.setenv("AUTH_GOOGLE_CLIENT_SECRET", "test-secret")
     monkeypatch.setenv("S3_BUCKET", "b")
     monkeypatch.setenv("S3_REGION", "us-east-1")
 
@@ -68,6 +70,8 @@ def test_auth_provider_accepts_google(monkeypatch):
     monkeypatch.setenv("POSTGRES_URL", "postgresql+psycopg://u:p@h/db")
     monkeypatch.setenv("AUTH_SESSION_SECRET", "s")
     monkeypatch.setenv("AUTH_PROVIDER", "google")
+    monkeypatch.setenv("AUTH_GOOGLE_CLIENT_ID", "test-id")
+    monkeypatch.setenv("AUTH_GOOGLE_CLIENT_SECRET", "test-secret")
     monkeypatch.setenv("S3_BUCKET", "b")
     monkeypatch.setenv("S3_REGION", "us-east-1")
 

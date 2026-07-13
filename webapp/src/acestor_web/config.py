@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Annotated
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -55,6 +55,19 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             return [item.strip() for item in v.split(",") if item.strip()]
         return v
+
+    @model_validator(mode="after")
+    def _validate_google_credentials(self) -> "Settings":
+        if self.auth_provider == "google":
+            if not self.auth_google_client_id:
+                raise ValueError(
+                    "AUTH_GOOGLE_CLIENT_ID must be set when AUTH_PROVIDER=google"
+                )
+            if not self.auth_google_client_secret:
+                raise ValueError(
+                    "AUTH_GOOGLE_CLIENT_SECRET must be set when AUTH_PROVIDER=google"
+                )
+        return self
 
 
 @lru_cache
