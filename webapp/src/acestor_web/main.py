@@ -17,3 +17,10 @@ app.include_router(auth.router)
 app.include_router(local_auth.router)
 app.include_router(google_auth.router)
 app.include_router(presets.router)
+
+
+@app.on_event("startup")
+def _startup() -> None:
+    from acestor_web.auth.bootstrap import bootstrap_admin_if_needed
+
+    bootstrap_admin_if_needed()
