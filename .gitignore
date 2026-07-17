@@ -29,6 +29,10 @@ build/
 !CONTRIBUTING.md
 !docs/
 !docs/*.md
+!webapp/README.md
+!webapp/docs/
+!webapp/docs/*.md
+!webapp/docs/**/*.md
 configs-example/
 *prepared_data/
 diagnostic_report/
