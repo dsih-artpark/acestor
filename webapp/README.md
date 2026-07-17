@@ -14,6 +14,10 @@ Web interface for the acestor forecasting pipeline.
 
     ./scripts/test.sh
 
+## Smoke tests
+
+    ./scripts/smoke-local-auth.sh   # local password provider end-to-end
+
 ## Prod run
 
     cp .env.example .env  # edit values
