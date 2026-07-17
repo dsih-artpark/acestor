@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Annotated
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     # Auth
     auth_provider: str = "local"
     auth_session_secret: str
+    session_cookie_secure: bool = False
     auth_google_client_id: str = ""
     auth_google_client_secret: str = ""
     auth_allowed_domains: Annotated[list[str], NoDecode] = Field(default_factory=list)
@@ -41,12 +42,32 @@ class Settings(BaseSettings):
     # Locale
     default_timezone: str = "UTC"
 
+    @field_validator("auth_provider")
+    @classmethod
+    def _validate_auth_provider(cls, v):
+        if v not in {"local", "google", "devstub"}:
+            raise ValueError("AUTH_PROVIDER must be one of: local, google, devstub")
+        return v
+
     @field_validator("auth_allowed_domains", mode="before")
     @classmethod
     def _split_csv(cls, v):
         if isinstance(v, str):
             return [item.strip() for item in v.split(",") if item.strip()]
         return v
+
+    @model_validator(mode="after")
+    def _validate_google_credentials(self) -> "Settings":
+        if self.auth_provider == "google":
+            if not self.auth_google_client_id:
+                raise ValueError(
+                    "AUTH_GOOGLE_CLIENT_ID must be set when AUTH_PROVIDER=google"
+                )
+            if not self.auth_google_client_secret:
+                raise ValueError(
+                    "AUTH_GOOGLE_CLIENT_SECRET must be set when AUTH_PROVIDER=google"
+                )
+        return self
 
 
 @lru_cache

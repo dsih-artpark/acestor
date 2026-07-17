@@ -50,15 +50,17 @@ def recursive_forecast(
     clip_multiplier: float | None = None,
     train_max: float | None = None,
     debug: bool = False,
-    freeze_weather_at_origin: bool = False,
+    freeze_weather_at_origin: bool = True,
 ) -> tuple[pd.DataFrame, list[dict]]:
     """Roll a one-step model forward over multiple weeks (recursive multi-step).
 
     For each future week, the non-case features (weather/iso lags) are known
-    ahead of time and taken from a precomputed row in ``df0``: by default each
-    future week uses its own row (advancing); when ``freeze_weather_at_origin``
-    is True they are instead frozen at the forecast origin (the last observed
-    week) for every future week. The ``case_lag_*`` features are filled
+    ahead of time and taken from a precomputed row in ``df0``: by default
+    (``freeze_weather_at_origin=True``, matches upstream vbd-modelbench
+    predict_rt.py) they are frozen at the forecast origin (the last observed
+    week) for every future week — a persistence assumption. Set to False to
+    advance per week using each future row instead (leaks observed future
+    weather; only useful in hindcasts). The ``case_lag_*`` features are filled
     hybrid-Y: a lag pointing at an
     already-forecast future week uses that prediction, one pointing at an observed
     week uses the observed value, and one before the series start is zero-padded.

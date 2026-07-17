@@ -1,6 +1,15 @@
 from acestor_web.models.audit_log import AuditLog
 from acestor_web.models.base import Base, TimestampMixin
 from acestor_web.models.config_preset import ConfigPreset
+from acestor_web.models.login_attempt import LoginAttempt
 from acestor_web.models.user import AuthProvider, User
 
-__all__ = ["Base", "TimestampMixin", "User", "AuthProvider", "ConfigPreset", "AuditLog"]
+__all__ = [
+    "Base",
+    "TimestampMixin",
+    "User",
+    "AuthProvider",
+    "ConfigPreset",
+    "AuditLog",
+    "LoginAttempt",
+]
