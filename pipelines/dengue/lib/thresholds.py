@@ -363,6 +363,30 @@ def icmr_quartile_zones(
     return pd.concat(parts, ignore_index=True) if parts else df.copy()
 
 
+def _aggregate_cases_to_weekly(
+    case_data: pd.DataFrame,
+    *,
+    spatial_col: str,
+    case_col: str,
+) -> pd.DataFrame:
+    """Sum cases per (region, ISO week). Missing weeks are NOT zero-filled —
+    the caller uses ``.dropna()`` on the case series, so zero-fill would just
+    add ``0`` rows that swing the p50 down. Keeping only weeks with observed
+    cases matches prod's ``date_trunc('week', date_of_onset)`` semantics."""
+    if "date" not in case_data.columns:
+        return case_data
+    df = case_data[[spatial_col, "date", case_col]].copy()
+    df["date"] = pd.to_datetime(df["date"])
+    # ISO week: Mon-anchored. `W-SUN` = weeks ending Sunday = Mon..Sun bins.
+    df["week"] = df["date"].dt.to_period("W-SUN").dt.start_time
+    weekly = (
+        df.groupby([spatial_col, "week"], as_index=False)[case_col]
+        .sum()
+        .rename(columns={"week": "date"})
+    )
+    return weekly
+
+
 def percentile_historical_zones(
     df_predictions: pd.DataFrame,
     case_data: pd.DataFrame,
@@ -381,6 +405,14 @@ def percentile_historical_zones(
     band 1 = lowest, band ``N+1`` = highest. Regions with no history get
     ``predictionZone = pd.NA``.
 
+    Predictions are weekly totals, so cutoffs are computed on **weekly** case
+    aggregates per region — not on raw daily rows. ``cases_daily.csv`` is
+    sparse (rows exist only where ``case_count > 0``); computing percentiles
+    over those raw rows is a conditional-on-hot-days statistic and inflates
+    band assignments. If ``case_data`` has a ``date`` column, rows are summed
+    per (region, ISO week) before percentile computation. Without a ``date``
+    column the input is treated as already at the target granularity.
+
     Differs fundamentally from :func:`icmr_quartile_zones`:
       * ICMR cuts cross-sectionally per date (across all regions).
       * This cuts per-region across the region's own history.
@@ -394,8 +426,14 @@ def percentile_historical_zones(
     cutoffs_sorted = sorted(percentile_cutoffs)
     n_bands = len(cutoffs_sorted) + 1
 
+    history_source = _aggregate_cases_to_weekly(
+        case_data, spatial_col=spatial_col, case_col=case_col
+    )
+
     for region, region_preds in out.groupby(spatial_col, sort=False):
-        history = case_data.loc[case_data[spatial_col] == region, case_col].dropna()
+        history = history_source.loc[
+            history_source[spatial_col] == region, case_col
+        ].dropna()
         if history.empty:
             continue
         cuts = np.percentile(history.values, cutoffs_sorted)
