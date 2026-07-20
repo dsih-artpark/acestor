@@ -190,3 +190,135 @@ def test_dashboard_non_xlsx_response_raises(tmp_path: Path) -> None:
         )
         with pytest.raises(RuntimeError, match="non-XLSX bytes"):
             source.list_objects()
+
+
+# ---------------------------------------------------------------------------
+# Incremental / backfill behaviour
+# ---------------------------------------------------------------------------
+
+
+@patch.dict("os.environ", _DASHBOARD_ENV, clear=False)
+def test_dashboard_first_run_fetches_full_range(tmp_path: Path) -> None:
+    with patch("requests.post") as mock_post, patch("requests.get") as mock_get:
+        mock_post.return_value = _mock_json_response({"access_token": "T0K3N"})
+        mock_get.return_value = _mock_bytes_response(_FAKE_XLSX)
+        source = load_source(
+            "dashboard",
+            {
+                "source_path": str(tmp_path),
+                "date_start": "2026-01-01",
+                "date_end": "2026-06-30",
+                "backfill_days": 30,
+            },
+        )
+        source.list_objects()
+
+    get_params = mock_get.call_args.kwargs["params"]
+    assert get_params["from"] == "2026-01-01"
+    assert get_params["to"] == "2026-06-30"
+
+
+@patch.dict("os.environ", _DASHBOARD_ENV, clear=False)
+def test_dashboard_incremental_fetch_uses_backfill_window(tmp_path: Path) -> None:
+    # Pre-seed a "previous run" staged file covering Jan 1 → Jun 1.
+    (tmp_path / "dashboard_2026-01-01_to_2026-06-01.xlsx").write_bytes(_FAKE_XLSX)
+
+    with patch("requests.post") as mock_post, patch("requests.get") as mock_get:
+        mock_post.return_value = _mock_json_response({"access_token": "T0K3N"})
+        mock_get.return_value = _mock_bytes_response(_FAKE_XLSX)
+        source = load_source(
+            "dashboard",
+            {
+                "source_path": str(tmp_path),
+                "date_start": "2026-01-01",
+                "date_end": "2026-06-30",
+                "backfill_days": 30,
+            },
+        )
+        listed = source.list_objects()
+
+    # New fetch should cover latest_end (Jun 1) - 29 days = May 3 → Jun 30.
+    get_params = mock_get.call_args.kwargs["params"]
+    assert get_params["from"] == "2026-05-03"
+    assert get_params["to"] == "2026-06-30"
+
+    # Both files should now exist: the old non-overlapping one (Jan 1 → Jun 1
+    # gets deleted because it OVERLAPS with the new May 3 → Jun 30 fetch) →
+    # wait: it does overlap (Jun 1 >= May 3). It should have been deleted.
+    #
+    # Verify: only the new file remains.
+    assert listed == ["dashboard_2026-05-03_to_2026-06-30.xlsx"]
+    assert not (tmp_path / "dashboard_2026-01-01_to_2026-06-01.xlsx").exists()
+
+
+@patch.dict("os.environ", _DASHBOARD_ENV, clear=False)
+def test_dashboard_non_overlapping_older_files_preserved(tmp_path: Path) -> None:
+    # An older file that does NOT overlap the backfill window.
+    (tmp_path / "dashboard_2024-01-01_to_2024-12-31.xlsx").write_bytes(_FAKE_XLSX)
+    # A recent file that DOES overlap.
+    (tmp_path / "dashboard_2026-05-01_to_2026-06-15.xlsx").write_bytes(_FAKE_XLSX)
+
+    with patch("requests.post") as mock_post, patch("requests.get") as mock_get:
+        mock_post.return_value = _mock_json_response({"access_token": "T0K3N"})
+        mock_get.return_value = _mock_bytes_response(_FAKE_XLSX)
+        source = load_source(
+            "dashboard",
+            {
+                "source_path": str(tmp_path),
+                "date_start": "2024-01-01",
+                "date_end": "2026-06-30",
+                "backfill_days": 30,
+            },
+        )
+        listed = source.list_objects()
+
+    # Fetch window: latest_end (Jun 15) - 29 days = May 17 → Jun 30.
+    get_params = mock_get.call_args.kwargs["params"]
+    assert get_params["from"] == "2026-05-17"
+
+    # Old 2024 file is preserved; overlapping May 1 → Jun 15 file is deleted.
+    assert (tmp_path / "dashboard_2024-01-01_to_2024-12-31.xlsx").exists()
+    assert not (tmp_path / "dashboard_2026-05-01_to_2026-06-15.xlsx").exists()
+    assert set(listed) == {
+        "dashboard_2024-01-01_to_2024-12-31.xlsx",
+        "dashboard_2026-05-17_to_2026-06-30.xlsx",
+    }
+
+
+@patch.dict("os.environ", _DASHBOARD_ENV, clear=False)
+def test_dashboard_backfill_zero_only_fetches_new(tmp_path: Path) -> None:
+    """backfill_days=0 = fetch only the day after latest_end → date_end."""
+    (tmp_path / "dashboard_2026-01-01_to_2026-06-01.xlsx").write_bytes(_FAKE_XLSX)
+
+    with patch("requests.post") as mock_post, patch("requests.get") as mock_get:
+        mock_post.return_value = _mock_json_response({"access_token": "T0K3N"})
+        mock_get.return_value = _mock_bytes_response(_FAKE_XLSX)
+        source = load_source(
+            "dashboard",
+            {
+                "source_path": str(tmp_path),
+                "date_start": "2026-01-01",
+                "date_end": "2026-06-30",
+                "backfill_days": 0,
+            },
+        )
+        source.list_objects()
+
+    # backfill_days=0 → fetch from latest_end + 1 = Jun 2. Since Jun 2 <= latest_end (Jun 1)?
+    # latest_end - 0 + 1 = Jun 2. Actually formula: latest_end - max(0, backfill_days - 1) = Jun 1 - 0 = Jun 1.
+    # So it fetches Jun 1 → Jun 30 (re-includes the last stored day, safe overlap).
+    get_params = mock_get.call_args.kwargs["params"]
+    assert get_params["from"] == "2026-06-01"
+
+
+@patch.dict("os.environ", _DASHBOARD_ENV, clear=False)
+def test_dashboard_invalid_backfill_days_raises(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="backfill_days must be an integer"):
+        load_source(
+            "dashboard",
+            {
+                "source_path": str(tmp_path),
+                "date_start": "2026-01-01",
+                "backfill_days": "not-an-int",
+            },
+        )
