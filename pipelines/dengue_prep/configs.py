@@ -45,6 +45,9 @@ class PrepOutputConfig:
 @dataclass(frozen=True)
 class PrepCaseDownloadConfig:
     enabled: bool
+    # source_mode selects a case-source plugin (see pipelines/dengue_prep/lib/case_sources).
+    # Empty falls back to source_backend for backwards compatibility.
+    source_mode: str
     source_backend: str
     source_path: str
     cache_enabled: bool
@@ -66,6 +69,7 @@ class PrepCaseDownloadConfig:
             source_path = os.getenv("DENGUE_PREP_CASE_SOURCE", "").strip()
         return cls(
             enabled=bool(raw.get("enabled", False)),
+            source_mode=str(raw.get("source_mode", "")).strip(),
             source_backend=str(raw.get("source_backend", "filesystem")).strip().lower()
             or "filesystem",
             source_path=source_path,

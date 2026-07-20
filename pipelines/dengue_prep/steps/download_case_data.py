@@ -1,12 +1,52 @@
 from __future__ import annotations
 
-import os
+import warnings
 from typing import Any, ClassVar
 
 from acestor import BaseStep, NoInputs, PipelineContext
-from acestor.core.sources import FileSystemSource, S3Source
 from pipelines.dengue_prep.configs import PrepCaseDownloadConfig, _section
+from pipelines.dengue_prep.lib.case_sources import load_source
 from pipelines.dengue_prep.results import PrepCaseDownloadResult
+
+
+# Legacy source_backend values map to their equivalent case-source plugin name.
+# Anything else in source_backend is treated as-is (dotted module / file path).
+_LEGACY_BACKEND_TO_MODE = {
+    "filesystem": "filesystem",
+    "s3": "s3",  # not yet ported — see issue #99
+}
+
+
+def _resolve_source_mode(cfg: PrepCaseDownloadConfig) -> str:
+    """Resolve which source plugin to load.
+
+    Preference order:
+    1. Explicit ``source_mode`` in config.
+    2. Legacy ``source_backend`` — emits DeprecationWarning if it's the only signal.
+    3. Default to ``filesystem``.
+    """
+    if cfg.source_mode:
+        return cfg.source_mode
+    backend = (cfg.source_backend or "").strip().lower()
+    if backend and backend not in _LEGACY_BACKEND_TO_MODE:
+        # Unknown legacy value — try as-is (could be a dotted path someone set here).
+        warnings.warn(
+            "prep download_case_data: 'source_backend' is deprecated; use 'source_mode' "
+            f"in data.case_download to select a case-source plugin. Passing "
+            f"{backend!r} through as-is.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        return backend
+    if backend in _LEGACY_BACKEND_TO_MODE:
+        warnings.warn(
+            "prep download_case_data: 'source_backend' is deprecated; "
+            "use 'source_mode' in data.case_download instead.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        return _LEGACY_BACKEND_TO_MODE[backend]
+    return "filesystem"
 
 
 class PrepDownloadCaseDataStep(BaseStep[NoInputs, PrepCaseDownloadResult]):
@@ -14,38 +54,6 @@ class PrepDownloadCaseDataStep(BaseStep[NoInputs, PrepCaseDownloadResult]):
 
     def __init__(self, source: Any | None = None) -> None:
         self.source = source
-
-    def _build_source(self, cfg: PrepCaseDownloadConfig) -> Any | None:
-        backend = (cfg.source_backend or "filesystem").strip().lower()
-        source_path = (cfg.source_path or "").strip()
-
-        if source_path and backend == "s3" and source_path.startswith("s3://"):
-            bucket_and_prefix = source_path[len("s3://") :]
-            bucket, _, prefix = bucket_and_prefix.partition("/")
-            return S3Source(
-                bucket=bucket,
-                base_prefix=prefix,
-                aws_profile=(os.getenv("AWS_PROFILE", "").strip() or None),
-                region=(os.getenv("AWS_REGION", "").strip() or None),
-                cache_enabled=cfg.cache_enabled,
-                cache_dir=cfg.cache_dir,
-                strategy=cfg.cache_strategy,
-            )
-        if source_path and backend == "filesystem":
-            return FileSystemSource(base_path=source_path)
-        if backend == "s3" and cfg.s3_bucket:
-            return S3Source(
-                bucket=cfg.s3_bucket,
-                base_prefix=cfg.s3_prefix,
-                aws_profile=(os.getenv("AWS_PROFILE", "").strip() or None),
-                region=(os.getenv("AWS_REGION", "").strip() or None),
-                cache_enabled=cfg.cache_enabled,
-                cache_dir=cfg.cache_dir,
-                strategy=cfg.cache_strategy,
-            )
-        if cfg.filesystem_base_path:
-            return FileSystemSource(base_path=cfg.filesystem_base_path)
-        return None
 
     def run(self, context: PipelineContext, inputs: NoInputs) -> PrepCaseDownloadResult:
         cfg = PrepCaseDownloadConfig.from_raw(
@@ -55,25 +63,32 @@ class PrepDownloadCaseDataStep(BaseStep[NoInputs, PrepCaseDownloadResult]):
             context.log.info("prep download_case_data: disabled")
             return PrepCaseDownloadResult(enabled=False)
 
-        source = self.source or self._build_source(cfg)
-        if source is None:
-            if not cfg.source_storage:
-                raise ValueError(
-                    "prep download_case_data: no case source configured. "
-                    "Set the DENGUE_PREP_CASE_SOURCE environment variable to the path "
-                    "of your raw case data directory, or set data.case_download.source_path "
-                    "in the pipeline config."
-                )
-            context.log.info(
-                "prep download_case_data: no direct source built — using storage %r",
-                cfg.source_storage,
-            )
-            source = context.require_storage(cfg.source_storage)
+        if self.source is not None:
+            source = self.source
+            source_mode = "injected"
+        else:
+            source_mode = _resolve_source_mode(cfg)
+            try:
+                source = load_source(source_mode, _dict_from_cfg(cfg))
+            except ValueError as exc:
+                # If plugin build fails and legacy source_storage is set, fall back
+                # to the pipeline storage — preserves prior behaviour.
+                if cfg.source_storage:
+                    context.log.info(
+                        "prep download_case_data: plugin %r not configured (%s) — "
+                        "using storage %r",
+                        source_mode,
+                        exc,
+                        cfg.source_storage,
+                    )
+                    source = context.require_storage(cfg.source_storage)
+                    source_mode = f"storage:{cfg.source_storage}"
+                else:
+                    raise
 
-        backend = (cfg.source_backend or "filesystem").strip().lower()
         context.log.info(
-            "prep download_case_data: backend=%s source_path=%r prefix=%r",
-            backend,
+            "prep download_case_data: source_mode=%s source_path=%r prefix=%r",
+            source_mode,
             cfg.source_path or "",
             cfg.source_prefix or "",
         )
@@ -96,17 +111,30 @@ class PrepDownloadCaseDataStep(BaseStep[NoInputs, PrepCaseDownloadResult]):
             except FileNotFoundError as exc:
                 raise FileNotFoundError(
                     f"prep download_case_data: source file not found: {src!r} "
-                    f"(backend={backend})"
+                    f"(source_mode={source_mode})"
                 ) from exc
             if not data:
                 raise ValueError(
                     f"prep download_case_data: source file is empty: {src!r}"
                 )
-            copied.append(f"{backend}://{src}")
+            copied.append(f"{source_mode}://{src}")
 
         context.log.info(
-            "prep download_case_data: validated %d files (backend=%s)",
+            "prep download_case_data: validated %d files (source_mode=%s)",
             len(copied),
-            backend,
+            source_mode,
         )
         return PrepCaseDownloadResult(enabled=True, copied_files=copied)
+
+
+def _dict_from_cfg(cfg: PrepCaseDownloadConfig) -> dict[str, Any]:
+    """Flatten the config dataclass to a dict for the plugin's ``build`` method."""
+    return {
+        "source_path": cfg.source_path,
+        "filesystem_base_path": cfg.filesystem_base_path,
+        "s3_bucket": cfg.s3_bucket,
+        "s3_prefix": cfg.s3_prefix,
+        "cache_enabled": cfg.cache_enabled,
+        "cache_dir": cfg.cache_dir,
+        "cache_strategy": cfg.cache_strategy,
+    }
