@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any, Mapping
 from unittest.mock import MagicMock, patch
 
-import pandas as pd
 import pytest
 
 from pipelines.dengue_prep.lib.case_sources import CaseSource, load_source
@@ -86,14 +85,17 @@ def test_load_source_source_not_subclass_raises(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 _DASHBOARD_ENV = {
-    "DASHBOARD_CLIENT_ID": "test-client",
-    "DASHBOARD_CLIENT_SECRET": "test-secret",
-    "DASHBOARD_URL": "https://dashboard.example.com/api/cases",
-    "DASHBOARD_TOKEN_URL": "https://dashboard.example.com/oauth/token",
+    "DASHBOARD_CLIENT_ID": "operator@example.com",
+    "DASHBOARD_CLIENT_SECRET": "hunter2",
+    "DASHBOARD_URL": "https://dashboard.example.com",
 }
 
+# XLSX magic bytes ("PK" at start of a ZIP archive) — enough to pass the source's
+# XLSX sanity check without building a real workbook.
+_FAKE_XLSX = b"PK\x03\x04" + b"\x00" * 128
 
-def _mock_response(json_body: dict, status: int = 200) -> MagicMock:
+
+def _mock_json_response(json_body: dict, status: int = 200) -> MagicMock:
     m = MagicMock()
     m.status_code = status
     m.raise_for_status = MagicMock()
@@ -101,61 +103,48 @@ def _mock_response(json_body: dict, status: int = 200) -> MagicMock:
     return m
 
 
+def _mock_bytes_response(content: bytes, status: int = 200) -> MagicMock:
+    m = MagicMock()
+    m.status_code = status
+    m.raise_for_status = MagicMock()
+    m.content = content
+    return m
+
+
 @patch.dict("os.environ", _DASHBOARD_ENV, clear=False)
-def test_dashboard_source_fetches_and_stages_csv(tmp_path: Path) -> None:
+def test_dashboard_source_logs_in_and_stages_xlsx(tmp_path: Path) -> None:
     with patch("requests.post") as mock_post, patch("requests.get") as mock_get:
-        mock_post.return_value = _mock_response({"access_token": "T0K3N"})
-        mock_get.side_effect = [
-            _mock_response(
-                {
-                    "results": [
-                        {
-                            "sample_collection_date": "2026-06-01",
-                            "date_of_onset": "2026-05-30",
-                            "region_id": "ward_gba-63",
-                            "test_result": "Positive",
-                            "patient_id": "p1",
-                        },
-                        {
-                            "sample_collection_date": "2026-06-02",
-                            "date_of_onset": "2026-05-31",
-                            "region_id": "ward_gba-64",
-                            "test_result": "Positive",
-                            "patient_id": "p2",
-                        },
-                    ]
-                }
-            ),
-            _mock_response({"results": []}),  # end of pagination
-        ]
+        mock_post.return_value = _mock_json_response({"access_token": "T0K3N"})
+        mock_get.return_value = _mock_bytes_response(_FAKE_XLSX)
 
         source = load_source(
             "dashboard",
             {
                 "source_path": str(tmp_path / "staging"),
+                "date_start": "2026-01-01",
                 "date_end": "2026-06-30",
             },
         )
         listed = source.list_objects()
 
-    assert listed == ["dashboard_2026-06-30.csv"]
+    assert listed == ["dashboard_2026-01-01_to_2026-06-30.xlsx"]
     staged = tmp_path / "staging" / listed[0]
-    df = pd.read_csv(staged)
-    # renamed columns are present, source keys are gone
-    assert "Date Of Onset" in df.columns
-    assert "Region Id" in df.columns
-    assert "Sample Collected Date" in df.columns
-    assert list(df["Region Id"]) == ["ward_gba-63", "ward_gba-64"]
+    assert staged.read_bytes() == _FAKE_XLSX
 
-    # OAuth token was fetched with client-credentials grant
-    post_kwargs = mock_post.call_args.kwargs
-    assert post_kwargs["data"]["grant_type"] == "client_credentials"
-    assert post_kwargs["data"]["client_id"] == "test-client"
-    assert post_kwargs["data"]["client_secret"] == "test-secret"
+    # /api/auth/login called with email/password (env vars mapped)
+    post_call = mock_post.call_args
+    assert post_call.args[0].endswith("/api/auth/login")
+    assert post_call.kwargs["json"] == {
+        "email": "operator@example.com",
+        "password": "hunter2",
+    }
 
-    # API was called with the bearer token
-    for call in mock_get.call_args_list:
-        assert call.kwargs["headers"]["Authorization"] == "Bearer T0K3N"
+    # /api/cases/export.xlsx called with bearer + from/to
+    get_call = mock_get.call_args
+    assert get_call.args[0].endswith("/api/cases/export.xlsx")
+    assert get_call.kwargs["headers"]["Authorization"] == "Bearer T0K3N"
+    assert get_call.kwargs["params"]["from"] == "2026-01-01"
+    assert get_call.kwargs["params"]["to"] == "2026-06-30"
 
 
 @patch.dict("os.environ", {}, clear=True)
@@ -164,18 +153,40 @@ def test_dashboard_missing_credentials_raises(tmp_path: Path) -> None:
         load_source(
             "dashboard",
             {
-                "api_url": "https://x/api",
-                "token_url": "https://x/oauth",
+                "base_url": "https://x",
                 "source_path": str(tmp_path),
+                "date_start": "2026-01-01",
             },
         )
 
 
 @patch.dict("os.environ", _DASHBOARD_ENV, clear=False)
-def test_dashboard_zero_rows_raises(tmp_path: Path) -> None:
+def test_dashboard_missing_date_start_raises(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="date_start is required"):
+        load_source("dashboard", {"source_path": str(tmp_path)})
+
+
+@patch.dict("os.environ", _DASHBOARD_ENV, clear=False)
+def test_dashboard_empty_response_raises(tmp_path: Path) -> None:
     with patch("requests.post") as mock_post, patch("requests.get") as mock_get:
-        mock_post.return_value = _mock_response({"access_token": "T0K3N"})
-        mock_get.return_value = _mock_response({"results": []})
-        source = load_source("dashboard", {"source_path": str(tmp_path)})
-        with pytest.raises(RuntimeError, match="zero rows"):
+        mock_post.return_value = _mock_json_response({"access_token": "T0K3N"})
+        mock_get.return_value = _mock_bytes_response(b"")
+        source = load_source(
+            "dashboard",
+            {"source_path": str(tmp_path), "date_start": "2026-01-01"},
+        )
+        with pytest.raises(RuntimeError, match="zero bytes"):
+            source.list_objects()
+
+
+@patch.dict("os.environ", _DASHBOARD_ENV, clear=False)
+def test_dashboard_non_xlsx_response_raises(tmp_path: Path) -> None:
+    with patch("requests.post") as mock_post, patch("requests.get") as mock_get:
+        mock_post.return_value = _mock_json_response({"access_token": "T0K3N"})
+        mock_get.return_value = _mock_bytes_response(b"<html>error</html>")
+        source = load_source(
+            "dashboard",
+            {"source_path": str(tmp_path), "date_start": "2026-01-01"},
+        )
+        with pytest.raises(RuntimeError, match="non-XLSX bytes"):
             source.list_objects()
