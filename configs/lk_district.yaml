@@ -1,0 +1,120 @@
+state: "LK"
+
+pipeline:
+  name: dengue
+  title: "Dengue Early Warning System — Sri Lanka"
+
+run:
+  run_date: ""   # blank → use today
+
+data:
+  prepared_data:
+    base_dir: "lk_datasets/prepared_data"
+    region_type: "district"
+
+  case_parse:
+    region_types:
+      - "district"
+    date_start: "2023-01-01"    # extended back with WER Vol 50 extraction
+    date_end: ""
+
+  case_sufficiency:
+    enabled: true
+    min_total_rows: 30
+    min_distinct_regions: 2
+    min_date_span_days: 14
+
+  geojson:
+    base_path: "lk_datasets/geojsons/geojsons_LK"
+
+  weather_parse:
+    region_type: "district"
+    weather_variables:
+      - "2mTemperature"
+      - "totalPrecipitation"
+      - "2mDewpointTemperature"
+    rolling_n_days: 7
+    rolling_agg:
+      - {name: "2mTemperature",         op: "mean"}
+      - {name: "2mDewpointTemperature", op: "mean"}
+      - {name: "totalPrecipitation",    op: "sum"}
+    sampling_rate: 7
+    intermediate_col_rename:
+      "2mTemperature_max": "t2m_max"
+      "2mTemperature_min": "t2m_min"
+      "2mTemperature": "t2m_mean"
+      "2mDewpointTemperature": "d2m_mean"
+      "totalPrecipitation": "tp_sum"
+
+cutoff:
+  case_min_regions: 2
+  weather_min_regions: 5
+
+thresholds:
+  region_type: "district"
+  list_alpha: [1.0, 2.0]
+  methods: [historical, prev_nweeks]
+  classification_method: percentile
+  percentile_cutoffs: [25, 50, 75]   # 3 cutoffs → 4 bands (green/yellow/orange/red)
+  method_configs:
+    prev_nweeks:
+      n_weeks: 4
+    historical:
+      historical_n_years: 3          # LK case data now covers 2023-01 → present (~3+ years)
+      excluded_years: []
+      included_years: []
+
+model:
+  spatial_res: "district"
+  models: [timesfm]    # RF dropped: it can't extrapolate beyond training-max and was dragging the ensemble down during the 2026 surge
+  ensemble: mean       # mean of a single model = same values; needed because output=ensemble requires a combiner
+  output: ensemble     # write one canonical predictions.csv (labelled ensembleModel) that the report picks up
+  data_features:
+    - "case"
+    - "recordDate"
+    - "recordYear"
+    - "recordMonth"
+    - "ISOWeek"
+    - "t2m_mean"
+    - "tp_sum"
+    - "d2m_mean"
+  lag:
+    lag_temp: [12]
+    lag_rainfall: [4]
+    lag_humidity: [4]
+  years_to_exclude: []
+  years_to_include: []
+  list_alpha: [1.0, 2.0]
+
+assess:
+  total_district_regions: 25   # Sri Lanka has 25 civil districts
+
+maps:
+  output_dir: "outputs/maps"
+  figure_title: "Sri Lanka Dengue Risk Map"
+
+report:
+  output_dir: "outputs/report"
+  primary: timesfm             # single-model config — predictions.csv labels rows as 'timesFoundationModel', not 'ensembleModel'
+  threshold_method_for_report: historical    # 3+ years of case history now available
+
+report_distribution:
+  system_name: "Dengue Early Warning System"
+  organization: "ARTPARK, IISc Bengaluru"
+  state: "Sri Lanka"
+  region: "Sri Lanka (25 Districts)"
+  department: "Ministry of Health"
+  contact_email: ""
+  footer_note: ""
+
+logging:
+  level: DEBUG
+
+email:
+  enabled: false
+
+storages:
+  artifacts:
+    kind: filesystem
+    filesystem:
+      base_path: "./artifacts/lk_district"

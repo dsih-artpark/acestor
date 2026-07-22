@@ -48,6 +48,18 @@ class PrepParseCaseDataStep(BaseStep[PrepParseCaseDataInputs, PrepCaseParseResul
     def run(
         self, context: PipelineContext, inputs: PrepParseCaseDataInputs
     ) -> PrepCaseParseResult:
+        # Short-circuit when the upstream download step was disabled — some
+        # scopes (e.g. Sri Lanka) receive aggregated weekly reports and produce
+        # prepared_data/<region_type>/cases_daily.csv out-of-band. In that
+        # case there is no IHIP source folder to parse.
+        if not inputs.download_case_data.enabled:
+            context.log.info(
+                "prep parse_case_data: skipped (upstream download_case_data disabled)"
+            )
+            return PrepCaseParseResult(
+                region_type="", prepared_data_path="", total_rows=0
+            )
+
         data_raw = context.config.get("data") or {}
         top_region_type = str(data_raw.get("region_type", "")).strip()
 
