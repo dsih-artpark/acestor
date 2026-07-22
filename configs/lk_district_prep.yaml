@@ -1,0 +1,41 @@
+pipeline:
+  name: dengue_prep
+  title: "Dengue Data Prep — Sri Lanka"
+
+run:
+  run_date: ""
+
+data:
+  region_type: "district"
+
+  prepared_data:
+    base_dir: "lk_datasets/prepared_data"
+
+  date_range:
+    start: "2024-01-01"
+    # end: ""   # blank → today (ERA5 lag handled internally: today − 5 days)
+
+  geojson:
+    base_path: "lk_datasets/geojsons/geojsons_LK"
+
+  case_download:
+    enabled: false
+    # Sri Lanka cases arrive as weekly RDHS xlsx (not a folder of raw per-record files
+    # like IHIP). Ingest handled separately for now — enable + wire when a per-record
+    # source or reshaped feed exists.
+
+  weather_download:
+    enabled: true
+    source_mode: "openmeteo"
+    parsed_output_path: "lk_datasets/weather"
+    temperature_unit: "celsius"
+    precipitation_unit: "mm"
+
+logging:
+  level: DEBUG
+
+storages:
+  artifacts:
+    kind: filesystem
+    filesystem:
+      base_path: "./artifacts/lk_prep"
