@@ -49,10 +49,29 @@ class GenerateDownscaleBriefStep(
         )
         df = pd.read_csv(io.StringIO(pred_text))
 
-        primary_model = (
-            "ensembleModel"  # downscaler emits one row per parent prediction
+        # Pick the model to drive the report — honor report.primary from
+        # config, fall back to the first available model in the CSV so a
+        # single-model (e.g. timesfm-only) upstream run doesn't produce an
+        # empty-state brief just because it lacks the historical "ensembleModel".
+        primary_model = maps_lib.MODEL_FULL_NAME.get(
+            report_cfg.primary, report_cfg.primary
         )
         thresh_method = report_cfg.threshold_method_for_report
+        available_models = (
+            set(df["model"].dropna().unique().tolist()) if not df.empty else set()
+        )
+        if primary_model not in available_models:
+            fallback = next(iter(sorted(available_models)), None)
+            if fallback:
+                context.log.warning(
+                    "generate_downscale_brief: primary model %r not in predictions "
+                    "(available=%s); falling back to %r for the report.",
+                    primary_model,
+                    sorted(available_models),
+                    fallback,
+                )
+                primary_model = fallback
+
         report_df = df[
             (df["model"] == primary_model) & (df["thresholdMethod"] == thresh_method)
         ].copy()
