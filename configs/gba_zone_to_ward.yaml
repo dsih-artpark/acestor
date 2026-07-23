@@ -17,7 +17,11 @@ downscale:
 thresholds:
   region_type: ward
   list_alpha: [1.0, 2.0]
-  classification_method: icmr
+  classification_method: percentile
+  # Per-region historical percentile cutoffs (issue #62): the current week's
+  # forecast is placed in one of 4 bands relative to the region's own history.
+  # Cutoffs 50/75/90 → 4 bands: ≤p50, (p50,p75], (p75,p90], >p90.
+  percentile_cutoffs: [50.0, 75.0, 90.0]
   methods: [historical, prev_nweeks, weighted_baseline]
   method_configs:
     prev_nweeks:
