@@ -26,7 +26,7 @@ data:
   case_parse:
     region_types:
       - "ward"
-    date_column: "Test Performed Date"
+    date_column: ["Date Of Onset"]
     # The dashboard's GBA export already attaches a resolved ward ID to every
     # row in the "Region Id" column (e.g. "ward_gba-63") via its own pipeline.
     # Trust it — skip geocoding / spatial join entirely.
