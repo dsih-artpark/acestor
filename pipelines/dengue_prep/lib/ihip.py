@@ -342,12 +342,29 @@ def _resolve_via_region_id_column(
     """
     raw = df[region_id_column].astype("string").str.strip()
     raw = raw.where(raw.notna() & (raw != ""), other=pd.NA)
+    # Longest-prefix classification (not naive startswith) so ``ulb_ward_...``
+    # doesn't get misclassified as already-at-``ulb`` for a target=ulb run —
+    # ``ulb_ward`` starts with ``ulb_`` too. Scan the geojson tree once for the
+    # set of known region types (dir names, minus trailing 's') and pick the
+    # longest matching prefix per row.
+    known_types = _scan_known_region_types(geojson_base)
+    known_types_sorted = sorted(known_types, key=len, reverse=True)
+
+    def _classify(rid: str) -> str | None:
+        for t in known_types_sorted:
+            if rid.startswith(f"{t}_"):
+                return t
+        return rid.split("_", 1)[0] if "_" in rid else None
+
+    row_type = raw.map(lambda r: _classify(r) if pd.notna(r) else None)
+    needs_rollup = raw.notna() & (row_type != region_type)
     expected_prefix = f"{region_type}_"
-    needs_rollup = raw.notna() & ~raw.str.startswith(expected_prefix, na=False)
     if needs_rollup.any():
         parent_map = _build_parent_map(geojson_base)
         rolled = raw[needs_rollup].map(
-            lambda rid: _walk_to_prefix(rid, expected_prefix, parent_map)
+            lambda rid: _walk_to_prefix(
+                rid, expected_prefix, parent_map, classify=_classify
+            )
         )
         n_resolved = int(rolled.notna().sum())
         n_unresolvable = int(rolled.isna().sum())
@@ -379,6 +396,25 @@ def _resolve_via_region_id_column(
     return raw
 
 
+def _scan_known_region_types(geojson_base: str) -> list[str]:
+    """Return the region-type names present under ``geojson_base``.
+
+    Dir names in the geojson tree are plural (``ulbs/``, ``ulb_wards/``,
+    ``blocks/`` ...). Strip the trailing 's' so the returned names match the
+    ``region_id`` prefix (``ulb_``, ``ulb_ward_``, ``block_`` ...).
+    """
+    out: list[str] = []
+    try:
+        for sub in Path(geojson_base).iterdir():
+            if not sub.is_dir():
+                continue
+            name = sub.name[:-1] if sub.name.endswith("s") else sub.name
+            out.append(name)
+    except Exception:
+        pass
+    return out
+
+
 def _build_parent_map(geojson_base: str) -> dict[str, str]:
     """Scan every geojson under ``geojson_base`` and return ``{region_id: parent_id}``."""
     import json
@@ -404,13 +440,27 @@ def _walk_to_prefix(
     target_prefix: str,
     parent_map: dict[str, str],
     max_depth: int = 6,
+    classify: Any = None,
 ) -> Any:
-    """Walk the parent chain from ``rid`` until prefix matches, or give up."""
+    """Walk the parent chain from ``rid`` until it matches the target level.
+
+    ``classify`` (optional) is a callable that returns the region_type of a
+    region_id via longest-prefix match against the known types. When provided,
+    match on ``classify(cur) == target_prefix.rstrip('_')`` — avoids the
+    ``ulb_ward_`` vs ``ulb_`` collision. Without it, falls back to naive
+    ``startswith`` (compat).
+    """
+    target_type = target_prefix.rstrip("_")
     cur = rid
     for _ in range(max_depth):
         if not isinstance(cur, str) or not cur:
             return pd.NA
-        if cur.startswith(target_prefix):
+        matched = (
+            classify(cur) == target_type
+            if classify is not None
+            else cur.startswith(target_prefix)
+        )
+        if matched:
             return cur
         nxt = parent_map.get(cur)
         if not nxt or nxt == cur:

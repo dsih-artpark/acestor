@@ -24,11 +24,12 @@ data:
   case_parse:
     region_types:
       - "ulb"
-    date_column: ["Sample Collected Date", "Test Performed Date", "Date Of Onset"]
+    date_column: ["Date Of Onset", "Test Performed Date", "Sample Collected Date"]
+    region_id_column: "Region Id"
     lat_column: "Latitude"
     lon_column: "Longitude"
     filters:
-      - column: "Confirmed Diagnosis"
+      - column: "Test Suspected For"
         values: ["Dengue"]
 
   weather_download:
