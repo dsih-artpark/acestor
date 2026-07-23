@@ -19,15 +19,20 @@ data:
 
   case_download:
     enabled: true
+    source_mode: dashboard
     source_path: "od_datasets/raw_case"
+    base_url: "https://apps.artpark.ai/disease-dashboard"
+    date_start: "2021-01-01"
+    backfill_days: 30
+    disease: "Dengue"
 
   case_parse:
     region_types:
       - "district"
-    date_column: ["Sample Collected Date", "Test Performed Date", "Date Of Onset"]
-    region_id_column: "region_id"
+    date_column: ["Date Of Onset", "Test Performed Date", "Sample Collected Date"]
+    region_id_column: "Region Id"
     filters:
-      - column: "Confirmed Diagnosis"
+      - column: "Test Suspected For"
         values: ["Dengue"]
 
   weather_download:
