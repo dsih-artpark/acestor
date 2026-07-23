@@ -68,8 +68,15 @@ class PrepDownloadCaseDataStep(BaseStep[NoInputs, PrepCaseDownloadResult]):
             source_mode = "injected"
         else:
             source_mode = _resolve_source_mode(cfg)
+            source_cfg = _dict_from_cfg(cfg)
+            # Forward the parser's date_column candidates so content-scanning
+            # sources (e.g. dashboard) know which columns to consult when
+            # reading max-date out of existing xlsx files.
+            parse_section = _section(context.config, "data.case_parse") or {}
+            if parse_section.get("date_column"):
+                source_cfg["date_column"] = parse_section["date_column"]
             try:
-                source = load_source(source_mode, _dict_from_cfg(cfg))
+                source = load_source(source_mode, source_cfg)
             except ValueError as exc:
                 # If plugin build fails and legacy source_storage is set, fall back
                 # to the pipeline storage — preserves prior behaviour.

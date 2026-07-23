@@ -24,12 +24,12 @@ data:
   case_parse:
     region_types:
       - "ulb_ward"
-    date_column: ["Sample Collected Date", "Test Performed Date", "Date Of Onset"]
+    date_column: ["Date Of Onset", "Test Performed Date", "Sample Collected Date"]
     # The IHIP export attaches a resolved region_id per row (values like
     # "ulb_ward_250520-8793"). Trust it — skip lat/lon geocoding.
-    region_id_column: "region_id"
+    region_id_column: "Region Id"
     filters:
-      - column: "Confirmed Diagnosis"
+      - column: "Test Suspected For"
         values: ["Dengue"]
 
   weather_download:

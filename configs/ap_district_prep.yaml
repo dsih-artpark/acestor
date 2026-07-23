@@ -21,18 +21,20 @@ data:
 
   case_download:
     enabled: true
-    source_path: "ap_datasets/raw_case"   # path to folder containing IHIP files (.xlsx/.xls/.csv)
+    source_mode: dashboard
+    source_path: "./cache/dashboard_ap_cases"
 
   case_parse:
     region_types:
       - "district"
     date_column: "Sample Collected Date"          # column in IHIP file to use as case date
+    region_id_column: "Region Id"                 # dashboard export already carries resolved region_id
     lgd_code_column: "District Code"              # if present, use LGD code lookup (skips spatial join)
                                                   # remove/comment out to use lat/lon spatial join instead
     lat_column: "Latitude"  # Default "Latitude"  # latitude column for spatial join fallback
     lon_column: "Longitude" # Defailt "Longitude" # longitude column for spatial join fallback
     filters:                                        # AND across entries, OR within each values list
-      - column: "Confirmed Diagnosis"
+      - column: "Test Suspected For"
         values: ["Dengue"]
 
   weather_download:
