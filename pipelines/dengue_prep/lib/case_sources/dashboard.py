@@ -27,6 +27,7 @@ YAML (data.case_download):
     date_end:      ""                            # empty → today; sent as `?to=`
     backfill_days: 30                            # on repeat runs, re-fetch last N days
     disease:       "Dengue"                      # optional filter passed through
+    chunk_days:    365                           # split fetch window into N-day chunks to avoid 504s
 
 Environment variables:
     DASHBOARD_URL           — base URL (fallback if base_url not in YAML)
@@ -76,6 +77,15 @@ _STAGED_FILENAME_RE = re.compile(
     r"^dashboard_(\d{4}-\d{2}-\d{2})_to_(\d{4}-\d{2}-\d{2})\.xlsx$"
 )
 
+# Default candidate date columns for reading max-date out of pre-existing
+# xlsx files. Ordered so the most-populated column in dashboard exports comes
+# first. Overridden per-run when the step forwards ``case_parse.date_column``.
+_DEFAULT_DATE_CANDIDATE_COLS: tuple[str, ...] = (
+    "Test Performed Date",
+    "Date Of Onset",
+    "Sample Collected Date",
+)
+
 
 def _parse_date(s: str) -> date:
     return datetime.strptime(s, "%Y-%m-%d").date()
@@ -97,6 +107,97 @@ def _scan_staged_files(staging_dir: Path) -> list[tuple[date, date, Path]]:
     return out
 
 
+def _read_max_date_from_xlsx(
+    path: Path, date_cols: tuple[str, ...] = _DEFAULT_DATE_CANDIDATE_COLS
+) -> date | None:
+    """Return the max date across candidate date columns in an xlsx, or None."""
+    import pandas as pd  # noqa: PLC0415
+
+    try:
+        df = pd.read_excel(path)
+    except Exception as exc:
+        log.debug(
+            "case_sources.dashboard: could not read %s to detect max date: %s",
+            path,
+            exc,
+        )
+        return None
+    best: date | None = None
+    for col in date_cols:
+        if col not in df.columns:
+            continue
+        parsed = pd.to_datetime(df[col], errors="coerce")
+        m = parsed.max()
+        if pd.isna(m):
+            continue
+        d = m.date() if hasattr(m, "date") else _parse_date(str(m)[:10])
+        if best is None or d > best:
+            best = d
+    return best
+
+
+def _trim_xlsx_in_place(
+    path: Path, cutoff: date, date_cols: tuple[str, ...] = _DEFAULT_DATE_CANDIDATE_COLS
+) -> tuple[int, int]:
+    """Drop rows whose max(row date) >= cutoff, save via atomic replace.
+
+    Returns (rows_before, rows_after). Rows are dropped when *any* configured
+    date column on that row falls at or after ``cutoff`` — conservative, so
+    the incremental refetch of the [cutoff, today] window can't produce a
+    duplicate. If none of the candidate columns are present, the file is
+    left alone.
+    """
+    import pandas as pd  # noqa: PLC0415
+
+    df = pd.read_excel(path)
+    present = [c for c in date_cols if c in df.columns]
+    if not present:
+        return len(df), len(df)
+    cutoff_ts = pd.Timestamp(cutoff)
+    at_or_after = pd.Series(False, index=df.index)
+    for c in present:
+        parsed = pd.to_datetime(df[c], errors="coerce")
+        at_or_after |= parsed >= cutoff_ts
+    kept = df[~at_or_after]
+    if len(kept) == len(df):
+        return len(df), len(df)
+    tmp = path.with_suffix(path.suffix + ".trimming")
+    kept.to_excel(tmp, index=False)
+    # Sanity-check the write before swapping.
+    try:
+        pd.read_excel(tmp, nrows=1)
+    except Exception as exc:
+        tmp.unlink(missing_ok=True)
+        raise RuntimeError(
+            f"case_sources.dashboard: trimmed xlsx failed re-read at {tmp}: {exc}"
+        ) from exc
+    os.replace(tmp, path)
+    return len(df), len(kept)
+
+
+def _scan_external_xlsx_max_dates(
+    staging_dir: Path, date_cols: tuple[str, ...] = _DEFAULT_DATE_CANDIDATE_COLS
+) -> list[tuple[date, Path]]:
+    """Return (max_date, path) for every non-dashboard-pattern xlsx in staging.
+
+    These are typically files an operator dropped into the dir manually
+    (e.g. an existing raw_case export). We use their content max-date to
+    anchor the next fetch window, but we NEVER delete them.
+    """
+    if not staging_dir.exists():
+        return []
+    out: list[tuple[date, Path]] = []
+    for p in staging_dir.iterdir():
+        if not p.is_file() or p.suffix.lower() != ".xlsx":
+            continue
+        if _STAGED_FILENAME_RE.match(p.name):
+            continue  # owned-by-us files use the fast filename path
+        max_d = _read_max_date_from_xlsx(p, date_cols=date_cols)
+        if max_d is not None:
+            out.append((max_d, p))
+    return out
+
+
 class Source(CaseSource):
     def __init__(
         self,
@@ -108,6 +209,9 @@ class Source(CaseSource):
         date_end: str,
         backfill_days: int = 30,
         disease: str | None = None,
+        selected_region_id: str | None = None,
+        date_cols: tuple[str, ...] = _DEFAULT_DATE_CANDIDATE_COLS,
+        chunk_days: int = 365,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.client_id = client_id
@@ -117,6 +221,9 @@ class Source(CaseSource):
         self.date_end = date_end
         self.backfill_days = max(0, int(backfill_days))
         self.disease = disease
+        self.selected_region_id = selected_region_id
+        self.date_cols = tuple(date_cols) if date_cols else _DEFAULT_DATE_CANDIDATE_COLS
+        self.chunk_days = max(1, int(chunk_days))
         self._staged_paths: list[str] | None = None
         self._access_token: str | None = None
 
@@ -149,14 +256,25 @@ class Source(CaseSource):
         staging = Path(
             str(config.get("source_path", "")).strip() or "./cache/dashboard_cases"
         )
-        date_start = str(config.get("date_start", "")).strip()
+        # Env fallbacks for fields the current step doesn't forward from YAML —
+        # temporary local patch pending upstream fix in _dict_from_cfg (PR #100).
+        date_start = (
+            str(config.get("date_start", "")).strip()
+            or os.getenv("DASHBOARD_DATE_START", "").strip()
+        )
         if not date_start:
             raise ValueError(
                 "case_sources.dashboard: data.case_download.date_start is required "
                 "(the /api/cases/export.xlsx endpoint requires `from`)."
             )
-        date_end = str(config.get("date_end", "")).strip() or date.today().isoformat()
-        backfill_days_raw = config.get("backfill_days", 30)
+        date_end = (
+            str(config.get("date_end", "")).strip()
+            or os.getenv("DASHBOARD_DATE_END", "").strip()
+            or date.today().isoformat()
+        )
+        backfill_days_raw = (
+            config.get("backfill_days") or os.getenv("DASHBOARD_BACKFILL_DAYS") or 30
+        )
         try:
             backfill_days = int(backfill_days_raw)
         except (TypeError, ValueError) as exc:
@@ -173,6 +291,15 @@ class Source(CaseSource):
             date_end=date_end,
             backfill_days=backfill_days,
             disease=str(config.get("disease", "")).strip() or None,
+            selected_region_id=(
+                str(config.get("selected_region_id", "")).strip()
+                or os.getenv("DASHBOARD_SELECTED_REGION_ID", "").strip()
+                or None
+            ),
+            date_cols=tuple(config.get("date_column") or _DEFAULT_DATE_CANDIDATE_COLS),
+            chunk_days=int(
+                config.get("chunk_days") or os.getenv("DASHBOARD_CHUNK_DAYS") or 365
+            ),
         )
 
     # ------------------------------------------------------------------
@@ -209,6 +336,8 @@ class Source(CaseSource):
         params: dict[str, str] = {"from": from_date, "to": to_date}
         if self.disease:
             params["disease"] = self.disease
+        if self.selected_region_id:
+            params["selected_region_id"] = self.selected_region_id
         resp = requests.get(
             self.export_url, headers=headers, params=params, timeout=300, stream=False
         )
@@ -226,6 +355,69 @@ class Source(CaseSource):
                 f"(first 64: {content[:64]!r}). Auth or endpoint issue?"
             )
         return content
+
+    _CHUNK_FLOOR_DAYS = 30  # don't halve below this — deeper indicates a real problem
+
+    def _download_chunked(self, from_date: str, to_date: str) -> None:
+        """Walk [from_date, to_date] in chunks of ``self.chunk_days`` and stage each.
+
+        On timeout / 502 / 503 / 504, halve the current chunk and retry the same
+        start date with the shorter end. Below ``_CHUNK_FLOOR_DAYS`` the failure
+        is re-raised — that indicates a real backend problem, not a size issue.
+        """
+        cur = _parse_date(from_date)
+        end = _parse_date(to_date)
+        while cur <= end:
+            chunk_days = self.chunk_days
+            while True:
+                chunk_end = min(cur + timedelta(days=chunk_days - 1), end)
+                c_from = cur.isoformat()
+                c_to = chunk_end.isoformat()
+                log.info(
+                    "case_sources.dashboard: chunk %s → %s (%d days)",
+                    c_from,
+                    c_to,
+                    chunk_days,
+                )
+                try:
+                    content = self._download_xlsx(c_from, c_to)
+                except (requests.Timeout, requests.HTTPError) as exc:
+                    if isinstance(exc, requests.HTTPError):
+                        code = getattr(exc.response, "status_code", 0)
+                        transient = code in (502, 503, 504)
+                    else:
+                        transient = True
+                    if not transient:
+                        raise
+                    if chunk_days <= self._CHUNK_FLOOR_DAYS:
+                        log.error(
+                            "case_sources.dashboard: chunk %s → %s failed even at "
+                            "floor size %d days — giving up.",
+                            c_from,
+                            c_to,
+                            self._CHUNK_FLOOR_DAYS,
+                        )
+                        raise
+                    chunk_days = max(self._CHUNK_FLOOR_DAYS, chunk_days // 2)
+                    log.warning(
+                        "case_sources.dashboard: chunk %s → %s failed (%s) — "
+                        "halving to %d days and retrying.",
+                        c_from,
+                        c_to,
+                        exc,
+                        chunk_days,
+                    )
+                    continue
+                filename = f"dashboard_{c_from}_to_{c_to}.xlsx"
+                out_path = self.staging_dir / filename
+                out_path.write_bytes(content)
+                log.info(
+                    "case_sources.dashboard: wrote %d bytes → %s",
+                    len(content),
+                    out_path,
+                )
+                cur = chunk_end + timedelta(days=1)
+                break
 
     # ------------------------------------------------------------------
     # CaseSource interface
@@ -246,10 +438,21 @@ class Source(CaseSource):
         """
         end_d = _parse_date(self.date_end)
         start_d = _parse_date(self.date_start)
-        staged = _scan_staged_files(self.staging_dir)
-        if not staged:
+        # Anchor from BOTH sources: dashboard_*.xlsx filenames (cheap) and any
+        # other .xlsx already staged (pandas-read max date). The latter lets
+        # an operator drop their raw_case export into the staging dir and get
+        # incremental fetching without renaming or re-downloading history.
+        staged_ends = [rng[1] for rng in _scan_staged_files(self.staging_dir)]
+        external_ends = [
+            d
+            for d, _ in _scan_external_xlsx_max_dates(
+                self.staging_dir, date_cols=self.date_cols
+            )
+        ]
+        all_ends = staged_ends + external_ends
+        if not all_ends:
             return self.date_start, self.date_end
-        latest_end = max(rng[1] for rng in staged)
+        latest_end = max(all_ends)
         backfill_from = latest_end - timedelta(days=max(0, self.backfill_days - 1))
         fetch_from = max(start_d, backfill_from)
         # Clamp: never fetch a from > date_end.
@@ -311,21 +514,42 @@ class Source(CaseSource):
                 "before writing the new fetch",
                 removed,
             )
+        # For external files (non-dashboard-pattern xlsx dropped in by the
+        # operator), don't delete — trim their rows in the [fetch_from, ...]
+        # window so the fresh refetch doesn't double-count.
+        fetch_from_d = _parse_date(from_date)
+        for _max_d, ext_path in _scan_external_xlsx_max_dates(
+            self.staging_dir, date_cols=self.date_cols
+        ):
+            before, after = _trim_xlsx_in_place(
+                ext_path, cutoff=fetch_from_d, date_cols=self.date_cols
+            )
+            if before != after:
+                log.info(
+                    "case_sources.dashboard: trimmed %s: %d → %d rows (dropped "
+                    "%d rows on/after %s to make room for refetch)",
+                    ext_path.name,
+                    before,
+                    after,
+                    before - after,
+                    from_date,
+                )
 
-        content = self._download_xlsx(from_date, to_date)
-        filename = f"dashboard_{from_date}_to_{to_date}.xlsx"
-        out_path = self.staging_dir / filename
-        out_path.write_bytes(content)
-        log.info(
-            "case_sources.dashboard: wrote %d bytes → %s",
-            len(content),
-            out_path,
-        )
-        # Return every dashboard_*.xlsx now on disk — the parse step reads them
-        # all, so older-untouched files stay in the download step's copied_files list.
-        self._staged_paths = sorted(
-            p.name for _, _, p in _scan_staged_files(self.staging_dir)
-        )
+        # Chunked download: the dashboard export can 504 on multi-year windows.
+        # Walk the [from_date, to_date] range in chunks of self.chunk_days, and
+        # on timeout/504 halve the chunk (down to a floor) and retry.
+        self._download_chunked(from_date, to_date)
+        # Return every xlsx now on disk — both dashboard_*.xlsx (our own writes)
+        # and any operator-provided external xlsx that survived trimming.
+        # parse_case_data reads them all; older files stay untouched.
+        owned = [p.name for _, _, p in _scan_staged_files(self.staging_dir)]
+        external = [
+            p.name
+            for _, p in _scan_external_xlsx_max_dates(
+                self.staging_dir, date_cols=self.date_cols
+            )
+        ]
+        self._staged_paths = sorted(owned + external)
         return self._staged_paths
 
     def list_objects(self, prefix: str = "") -> list[str]:
