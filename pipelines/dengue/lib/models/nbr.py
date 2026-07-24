@@ -183,4 +183,8 @@ class NBRModel:
         )
 
     def threshold_to_date(self, ctx: ModelContext) -> pd.Timestamp:
-        return ctx.pred_upto - pd.Timedelta(days=28)
+        # See rf.threshold_to_date — cutoff_case is the canonical as-of date
+        # for thresholds. The old `pred_upto - 28 days` was byte-identical only
+        # when the horizon was exactly 28 days, and diverged silently on other
+        # horizons. See issue #101.
+        return ctx.cutoff_case

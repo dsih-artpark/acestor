@@ -281,4 +281,11 @@ class RFModel:
         )
 
     def threshold_to_date(self, ctx: ModelContext) -> pd.Timestamp:
-        return ctx.pred_upto - pd.Timedelta(days=28)
+        # Thresholds are computed as of the case-data cutoff, matching TSE and
+        # TimesFM. The old form `pred_upto - 28 days` gave the same answer when
+        # the pipeline horizon was exactly 28 days but silently diverged for
+        # other horizons (e.g. weekday-anchored sampling that produces a 21-day
+        # horizon), causing per-model outputs to carry different threshold
+        # snapshots and breaking ensemble grouping. Direct cutoff_case unifies
+        # all models regardless of horizon. See issue #101.
+        return ctx.cutoff_case
