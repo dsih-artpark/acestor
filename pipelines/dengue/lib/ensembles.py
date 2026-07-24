@@ -52,7 +52,16 @@ class MeanEnsemble:
     def combine(self, dfs: list[pd.DataFrame], *, spatial_col: str) -> pd.DataFrame:
         combined = pd.concat(dfs, ignore_index=True)
         rows_before = len(combined)
-        group_cols = [c for c in combined.columns if c not in ("prediction", "model")]
+        # Exclude ISOWeek from grouping — each model computes it from its own
+        # training tail (RF/XGB use `last_4` recordDates; TSE uses a 14-day-
+        # earlier cutoff), so per-model ISOWeek values diverge for the same
+        # target date. Grouping by it would split what should be one ensemble
+        # row per (region, date, ...) into two, breaking downstream sanity
+        # checks (issue #101). We recompute ISOWeek below from recordDate so
+        # the output reflects the target week's true ISO week.
+        group_cols = [
+            c for c in combined.columns if c not in ("prediction", "model", "ISOWeek")
+        ]
 
         nan_key_cols = [c for c in group_cols if combined[c].isna().any()]
         if nan_key_cols:
@@ -78,6 +87,11 @@ class MeanEnsemble:
                 rows_before,
                 rows_after,
                 nan_key_cols,
+            )
+
+        if "recordDate" in ensembled.columns:
+            ensembled["ISOWeek"] = (
+                pd.to_datetime(ensembled["recordDate"]).dt.isocalendar().week
             )
 
         ensembled["model"] = "ensembleModel"
