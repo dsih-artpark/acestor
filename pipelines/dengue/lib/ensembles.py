@@ -90,8 +90,13 @@ class MeanEnsemble:
             )
 
         if "recordDate" in ensembled.columns:
+            # .astype(int) — match the int64 dtype used elsewhere in the pipeline
+            # (train_and_predict.py:142), rather than the UInt32 that
+            # dt.isocalendar().week returns.
             ensembled["ISOWeek"] = (
-                pd.to_datetime(ensembled["recordDate"]).dt.isocalendar().week
+                pd.to_datetime(ensembled["recordDate"])
+                .dt.isocalendar()
+                .week.astype(int)
             )
 
         ensembled["model"] = "ensembleModel"
