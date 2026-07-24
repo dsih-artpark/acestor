@@ -272,9 +272,13 @@ class Source(CaseSource):
             or os.getenv("DASHBOARD_DATE_END", "").strip()
             or date.today().isoformat()
         )
-        backfill_days_raw = (
-            config.get("backfill_days") or os.getenv("DASHBOARD_BACKFILL_DAYS") or 30
-        )
+        # `or` chain would silently drop backfill_days=0 (falsy). Explicit
+        # None/empty check preserves 0 as a legitimate value.
+        backfill_days_raw = config.get("backfill_days")
+        if backfill_days_raw is None:
+            backfill_days_raw = os.getenv("DASHBOARD_BACKFILL_DAYS") or None
+        if backfill_days_raw is None or backfill_days_raw == "":
+            backfill_days_raw = 30
         try:
             backfill_days = int(backfill_days_raw)
         except (TypeError, ValueError) as exc:
