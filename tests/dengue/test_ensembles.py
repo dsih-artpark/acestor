@@ -49,3 +49,57 @@ def test_mean_takes_arithmetic_mean():
     out = out.sort_values("region").reset_index(drop=True)
     assert out["prediction"].tolist() == [15.0, 30.0]
     assert (out["model"] == "ensembleModel").all()
+
+
+def test_mean_collapses_divergent_isoweek_across_models():
+    """Regression for issue #101 — models tag ISOWeek differently based on their
+    own training tails (RF/XGB use last_4 recordDates; TSE uses a 14-day-earlier
+    cutoff). If MeanEnsemble grouped by ISOWeek, this would produce TWO
+    ensembleModel rows per target date, breaking downstream sanity checks.
+    Both rows should collapse into one, averaging all three models."""
+    target = pd.Timestamp("2026-07-27")  # ISO W31 Monday
+    rf = pd.DataFrame(
+        {
+            "region": ["r0"],
+            "recordDate": [target],
+            "startDatePredictedWeek": [target.date().isoformat()],
+            "thresholdMethod": ["historical"],
+            "ISOWeek": [30],  # RF's training tail
+            "prediction": [1.0],
+            "model": ["rf"],
+        }
+    )
+    xgb = pd.DataFrame(
+        {
+            "region": ["r0"],
+            "recordDate": [target],
+            "startDatePredictedWeek": [target.date().isoformat()],
+            "thresholdMethod": ["historical"],
+            "ISOWeek": [30],  # XGB agrees with RF
+            "prediction": [1.2],
+            "model": ["xgb"],
+        }
+    )
+    tse = pd.DataFrame(
+        {
+            "region": ["r0"],
+            "recordDate": [target],
+            "startDatePredictedWeek": [target.date().isoformat()],
+            "thresholdMethod": ["historical"],
+            "ISOWeek": [29],  # TSE 14-day-earlier
+            "prediction": [0.5],
+            "model": ["tse"],
+        }
+    )
+
+    out = get_ensemble("mean").combine([rf, xgb, tse], spatial_col="region")
+
+    # Must be exactly one row — the divergent ISOWeek must NOT split the group.
+    assert len(out) == 1
+    row = out.iloc[0]
+    # Mean of all three models, not just RF/XGB or just TSE.
+    assert row["prediction"] == pytest.approx((1.0 + 1.2 + 0.5) / 3)
+    # ISOWeek must reflect the target week's true ISO week (31), not any model's
+    # stale tail-week metadata (29 or 30).
+    assert int(row["ISOWeek"]) == 31
+    assert row["model"] == "ensembleModel"
