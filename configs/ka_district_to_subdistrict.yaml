@@ -1,0 +1,47 @@
+state: "KA"
+
+pipeline:
+  name: dengue_downscale
+  title: "Dengue Downscale — Karnataka District → Subdistrict"
+
+run:
+  source_run_id: "latest"
+
+downscale:
+  parent_level: district
+  child_level: subdistrict
+  window_weeks: 4
+
+  cases_csv: "ka_datasets/prepared_data/subdistrict/cases_daily.csv"
+
+  geojson_base_path: "ka_datasets/geojsons"
+
+thresholds:
+  region_type: subdistrict
+
+  list_alpha: [1.0, 2.0]
+
+  classification_method: percentile
+
+  methods:
+    - historical
+    - prev_nweeks
+    - weighted_baseline
+
+  method_configs:
+    prev_nweeks:
+      n_weeks: 4
+
+    historical:
+      historical_n_years: 4
+      excluded_years: []
+      included_years: []
+
+storages:
+  artifacts:
+    kind: filesystem
+    filesystem:
+      base_path: "./artifacts/ka"
+
+logging:
+  level: INFO
