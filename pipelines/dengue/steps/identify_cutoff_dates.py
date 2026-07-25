@@ -93,8 +93,31 @@ class IdentifyCutoffDatesStep(BaseStep[IdentifyCutoffDatesInputs, CutoffDatesRes
             weather_df, min_regions=cfg.weather_min_regions
         )
 
+        # Map the pipeline's sampling day ("W-MON" / "W-TUE" / ...) to a
+        # 0-indexed weekday (Mon=0..Sun=6) so today-anchored horizons can align
+        # pred_upto to the same weekday as everything else.
+        sampling_day = inputs.identify_sampling_day.sampling_day
+        _WEEKDAY_MAP = {
+            "W-MON": 0,
+            "W-TUE": 1,
+            "W-WED": 2,
+            "W-THU": 3,
+            "W-FRI": 4,
+            "W-SAT": 5,
+            "W-SUN": 6,
+        }
+        sampling_dayofweek = (
+            _WEEKDAY_MAP.get(sampling_day.upper()) if sampling_day else None
+        )
+        run_date_ts = pd.Timestamp(inputs.identify_sampling_day.run_date)
+
         cutoff_ts, pred_upto, prediction_dates = cutoffs.identify_cutoff_dates(
-            cutoff_case, cutoff_weather
+            cutoff_case,
+            cutoff_weather,
+            horizon_anchor=cfg.horizon.anchor,
+            horizon_weeks=cfg.horizon.weeks,
+            run_date=run_date_ts,
+            sampling_dayofweek=sampling_dayofweek,
         )
 
         if not prediction_dates:

@@ -184,6 +184,7 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
 
         per_model_dfs: dict[str, pd.DataFrame] = {}
         prediction_dfs: list[pd.DataFrame] = []
+        per_model_threshold_dates: dict[str, str] = {}
         for model_name in cfg.models:
             model_cfg = resolve_model_config(cfg, raw_model_configs.get(model_name, {}))
             ctx = ModelContext(
@@ -214,16 +215,40 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
                     cutoff_case.date(),
                 )
                 continue
+            threshold_date = model.threshold_to_date(ctx)
+            per_model_threshold_dates[model_name] = str(threshold_date.date())
+            context.log.info(
+                "train_and_predict: model=%s threshold_to_date=%s",
+                model_name,
+                threshold_date.date(),
+            )
             out = zones.merge_predictions_thresholds(
                 case_df,
                 pred,
                 spatial_col=cfg.spatial_res,
                 list_alpha=thresh_cfg.list_alpha,
-                to_date=model.threshold_to_date(ctx),
+                to_date=threshold_date,
                 precomputed_thresholds=precomputed_thresholds,
             )
             per_model_dfs[model_name] = out
             prediction_dfs.append(out)
+
+        # Cross-model check: if per-model threshold_to_date values diverge,
+        # per-model outputs will carry different threshold snapshots. The
+        # ensemble step will then split what should be one row per (region,
+        # target-week, method) into multiple rows, and dengue_downscale's
+        # sanity check will refuse to key on a non-unique tuple. WARN loudly
+        # here so the operator sees it at the source, not 5 layers downstream.
+        # See issue #101.
+        distinct_dates = set(per_model_threshold_dates.values())
+        if len(distinct_dates) > 1:
+            context.log.warning(
+                "train_and_predict: per-model threshold_to_date values diverged: "
+                "%s. This will cause per-model outputs to carry different threshold "
+                "snapshots, and the ensemble step cannot cleanly combine them into "
+                "one row per (region, week, method). See issue #101.",
+                per_model_threshold_dates,
+            )
 
         failed_models = [m for m in cfg.models if m not in per_model_dfs]
         if failed_models:
@@ -261,6 +286,29 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
             df["predictionMax"] = df["prediction"]
         if ensembled is not None and prediction_dfs:
             ensembled = _add_prediction_range(ensembled, prediction_dfs)
+
+        # Sanity check: the ensemble output MUST have exactly one row per
+        # (regionID, startDatePredictedWeek, thresholdMethod). Downstream
+        # dengue_downscale's check_numeric_sanity enforces the same key. If
+        # divergent per-model metadata slipped through here, fail loud AT THE
+        # SOURCE — not 5 layers downstream. See issue #101.
+        if ensembled is not None:
+            _key = ["regionID", "startDatePredictedWeek", "thresholdMethod"]
+            if all(c in ensembled.columns for c in _key):
+                dup_counts = ensembled.groupby(_key, dropna=False).size()
+                dup_keys = dup_counts[dup_counts > 1]
+                if not dup_keys.empty:
+                    example = ensembled[
+                        ensembled.set_index(_key).index.isin(dup_keys.index[:3])
+                    ].head(6)
+                    raise RuntimeError(
+                        f"train_and_predict: ensemble output has "
+                        f"{len(dup_keys)} duplicate group(s) on "
+                        f"{_key} — this will break dengue_downscale's "
+                        f"check_numeric_sanity. Check per-model "
+                        f"threshold_to_date values (logged above) for "
+                        f"divergence. Sample dup rows:\n{example.to_string(index=False)}"
+                    )
 
         run_date = pd.Timestamp(inputs.identify_cutoff_dates.run_date).normalize()
 
