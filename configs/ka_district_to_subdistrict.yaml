@@ -11,6 +11,7 @@ downscale:
   parent_level: district
   child_level: subdistrict
   window_weeks: 4
+  historical_fallback_weeks: 52   # #86 — use 52-week window when 4-week is empty
 
   cases_csv: "ka_datasets/prepared_data/subdistrict/cases_daily.csv"
 

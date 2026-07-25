@@ -19,6 +19,7 @@ data:
 
   case_download:
     enabled: true
+    source_mode: dashboard
     source_path: "ka_datasets/raw_case"
 
   case_parse:
@@ -26,15 +27,16 @@ data:
       - "district"
 
     date_column:
+      - "Date Of Onset"
       - "Test Performed Date"
       - "Sample Collected Date"
-      - "Date Of Onset"
 
+    region_id_column: "Region Id"
     lat_column: "Latitude"
     lon_column: "Longitude"
 
     filters:
-      - column: "Confirmed Diagnosis"
+      - column: "Test Suspected For"
         values:
           - "Dengue"
 
