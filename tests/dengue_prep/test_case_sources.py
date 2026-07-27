@@ -242,13 +242,16 @@ def test_dashboard_incremental_fetch_uses_backfill_window(tmp_path: Path) -> Non
     assert get_params["from"] == "2026-05-03"
     assert get_params["to"] == "2026-06-30"
 
-    # Both files should now exist: the old non-overlapping one (Jan 1 → Jun 1
-    # gets deleted because it OVERLAPS with the new May 3 → Jun 30 fetch) →
-    # wait: it does overlap (Jun 1 >= May 3). It should have been deleted.
-    #
-    # Verify: only the new file remains.
-    assert listed == ["dashboard_2026-05-03_to_2026-06-30.xlsx"]
-    assert not (tmp_path / "dashboard_2026-01-01_to_2026-06-01.xlsx").exists()
+    # The old Jan 1 → Jun 1 file PARTIALLY overlaps the new May 3 → Jun 30
+    # fetch but is NOT fully contained in it (existing_start=Jan 1 <
+    # fetch_from=May 3). Per the safer contained-only delete policy, it is
+    # kept — data loss on the Jan–May portion would otherwise be permanent
+    # if the new fetch fails.
+    assert set(listed) == {
+        "dashboard_2026-01-01_to_2026-06-01.xlsx",
+        "dashboard_2026-05-03_to_2026-06-30.xlsx",
+    }
+    assert (tmp_path / "dashboard_2026-01-01_to_2026-06-01.xlsx").exists()
 
 
 @patch.dict("os.environ", _DASHBOARD_ENV, clear=False)
@@ -276,11 +279,21 @@ def test_dashboard_non_overlapping_older_files_preserved(tmp_path: Path) -> None
     get_params = mock_get.call_args.kwargs["params"]
     assert get_params["from"] == "2026-05-17"
 
-    # Old 2024 file is preserved; overlapping May 1 → Jun 15 file is deleted.
+    # Old 2024 file is preserved (no overlap at all). The May 1 → Jun 15 file
+    # partially overlaps the new May 17 → Jun 30 fetch but its start extends
+    # BEFORE the fetch window — so under the safer contained-only delete
+    # policy it is kept (its May 1–16 rows would otherwise be permanently
+    # lost if the new fetch failed).
     assert (tmp_path / "dashboard_2024-01-01_to_2024-12-31.xlsx").exists()
-    assert not (tmp_path / "dashboard_2026-05-01_to_2026-06-15.xlsx").exists()
+    assert (tmp_path / "dashboard_2026-05-01_to_2026-06-15.xlsx").exists()
+    # New gap-fill behavior: the coverage has a hole between 2024-12-31 and
+    # 2026-05-01 (~16 months). The chunked download splits it into
+    # ~365-day chunks: 2025-01-01→2025-12-31 and 2026-01-01→2026-04-30.
     assert set(listed) == {
         "dashboard_2024-01-01_to_2024-12-31.xlsx",
+        "dashboard_2025-01-01_to_2025-12-31.xlsx",
+        "dashboard_2026-01-01_to_2026-04-30.xlsx",
+        "dashboard_2026-05-01_to_2026-06-15.xlsx",
         "dashboard_2026-05-17_to_2026-06-30.xlsx",
     }
 
@@ -304,11 +317,10 @@ def test_dashboard_backfill_zero_only_fetches_new(tmp_path: Path) -> None:
         )
         source.list_objects()
 
-    # backfill_days=0 → fetch from latest_end + 1 = Jun 2. Since Jun 2 <= latest_end (Jun 1)?
-    # latest_end - 0 + 1 = Jun 2. Actually formula: latest_end - max(0, backfill_days - 1) = Jun 1 - 0 = Jun 1.
-    # So it fetches Jun 1 → Jun 30 (re-includes the last stored day, safe overlap).
+    # backfill_days=0 means "no tail re-fetch". The gap after latest_end
+    # (Jun 1) is [Jun 2, Jun 30]. So fetch_from = 2026-06-02.
     get_params = mock_get.call_args.kwargs["params"]
-    assert get_params["from"] == "2026-06-01"
+    assert get_params["from"] == "2026-06-02"
 
 
 @patch.dict("os.environ", _DASHBOARD_ENV, clear=False)

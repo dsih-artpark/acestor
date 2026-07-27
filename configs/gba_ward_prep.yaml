@@ -21,12 +21,18 @@ data:
 
   case_download:
     enabled: true
+    source_mode: dashboard
     source_path: "gba_datasets/raw_case"
+    date_start: "2022-01-01"
+    selected_region_id: "gulb_gba"    # dashboard scope for Greater Bengaluru
 
   case_parse:
     region_types:
       - "ward"
-    date_column: ["Date Of Onset"]
+    date_column:
+      - "Date Of Onset"
+      - "Test Performed Date"
+      - "Sample Collected Date"
     # The dashboard's GBA export already attaches a resolved ward ID to every
     # row in the "Region Id" column (e.g. "ward_gba-63") via its own pipeline.
     # Trust it — skip geocoding / spatial join entirely.

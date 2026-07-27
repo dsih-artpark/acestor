@@ -707,6 +707,19 @@ def parse_ihip_files(
             else None
         )
 
+        # Skip truly empty files (headers only, zero rows). Dashboard exports
+        # for a window with no matching cases come back as ~5 KB xlsx with the
+        # 30 IHIP headers but no data — the caller shouldn't have to filter
+        # these out ahead of time.
+        if df.empty:
+            log.info(
+                "ihip parser: file %r is empty (headers only) — skipping.",
+                path.name,
+            )
+            if fstats is not None and stats is not None:
+                stats.files.append(fstats)
+            continue
+
         # Row filters — AND across entries, OR within each entry's values list
         for f in filters or []:
             col, vals = f["column"], f["values"]

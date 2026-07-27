@@ -68,7 +68,15 @@ class PrepDownloadCaseDataStep(BaseStep[NoInputs, PrepCaseDownloadResult]):
             source_mode = "injected"
         else:
             source_mode = _resolve_source_mode(cfg)
-            source_cfg = _dict_from_cfg(cfg)
+            # Forward the RAW case_download YAML section so plugin-specific
+            # fields (e.g. dashboard's date_start / date_end / backfill_days /
+            # base_url) reach the plugin's build() method. Also merge in the
+            # typed-dataclass fields as a fallback so nothing depending on
+            # them regresses.
+            raw_download_section = dict(
+                _section(context.config, "data.case_download") or {}
+            )
+            source_cfg = {**_dict_from_cfg(cfg), **raw_download_section}
             # Forward the parser's date_column candidates so content-scanning
             # sources (e.g. dashboard) know which columns to consult when
             # reading max-date out of existing xlsx files.
