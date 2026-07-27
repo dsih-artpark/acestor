@@ -33,6 +33,8 @@ _PREDICTION_COLS = [
     "predictionRaw",
     "prediction",
     "predictionInt",
+    "predictionMin",
+    "predictionMax",
     "thresholdMethod",
     "predictionZone",
     "model",
@@ -139,15 +141,39 @@ def rollup_predictions(
     # parent's raw — so the invariant sum(child.prediction) == parent.prediction
     # holds exactly. Individual rounding on children accumulates; re-rounding
     # the parent raw can differ from that sum by ±1.
-    agg = df.groupby(group_cols, dropna=False, as_index=False).agg(
-        predictionRaw=("predictionRaw", "sum"),
-        _int_sum=("_child_int", "sum"),
-    )
+    #
+    # predictionMin / predictionMax: additive by construction. The parent's
+    # min is the sum of children's mins (extreme case where every child
+    # simultaneously hits its lower bound), symmetrically for max. Only
+    # aggregated if every child row carried the columns; otherwise emit NA.
+    agg_kwargs = {
+        "predictionRaw": ("predictionRaw", "sum"),
+        "_int_sum": ("_child_int", "sum"),
+    }
+    has_min = "predictionMin" in df.columns and df["predictionMin"].notna().any()
+    has_max = "predictionMax" in df.columns and df["predictionMax"].notna().any()
+    if has_min:
+        agg_kwargs["predictionMin"] = ("predictionMin", "sum")
+    if has_max:
+        agg_kwargs["predictionMax"] = ("predictionMax", "sum")
+
+    agg = df.groupby(group_cols, dropna=False, as_index=False).agg(**agg_kwargs)
     agg = agg.rename(columns={"_parent": "regionID"})
     agg["predictionRaw"] = agg["predictionRaw"].astype(float)
     agg["prediction"] = agg["_int_sum"].astype(int)
     agg["predictionInt"] = agg["prediction"]
     agg = agg.drop(columns=["_int_sum"])
+    if not has_min:
+        agg["predictionMin"] = pd.NA
+    if not has_max:
+        agg["predictionMax"] = pd.NA
+    # Enforce min ≤ prediction ≤ max. Sum-of-child-ints (the parent's display
+    # int) can drift from sum-of-child-mins/maxes by a rounding tick per child;
+    # widen the bracket so the invariant every consumer expects holds.
+    if has_min:
+        agg["predictionMin"] = agg[["predictionMin", "prediction"]].min(axis=1)
+    if has_max:
+        agg["predictionMax"] = agg[["predictionMax", "prediction"]].max(axis=1)
     agg["predictionZone"] = pd.NA  # re-derived at parent scale by caller
 
     return agg[_PREDICTION_COLS]

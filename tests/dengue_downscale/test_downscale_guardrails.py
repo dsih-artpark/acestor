@@ -407,6 +407,8 @@ def test_downscale_ap_shaped_frame_with_extra_columns_runs():
         "regionID",
         "prediction",
         "predictionInt",
+        "predictionMin",
+        "predictionMax",
         "thresholdMethod",
         "predictionZone",
         "model",
