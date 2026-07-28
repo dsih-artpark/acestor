@@ -1,12 +1,13 @@
 # Understanding Thresholds — From First Principles
 
-> This document builds intuition from scratch.
-> No formulas until we need them. No code at all.
-> Each section only adds one new idea.
+> This document builds intuition from scratch. It is the "why" companion
+> to `threshold-methods-reference.md`, which is the "how".
+> Each section only adds one new idea. No config keys until you need
+> them; no formulas until they help.
 
 ---
 
-## Part 1 — The core problem
+## Part 1 — the core problem
 
 ### Imagine you are a district health officer
 
@@ -16,361 +17,270 @@ It is Monday morning. Your surveillance system reports:
 
 Is that bad? Should you act?
 
-You cannot answer that question with just the number 50. You need context.
+You cannot answer that question with just the number 50. You need
+context. Specifically, you need to know **what "normal" looks like for
+Kurnool in this week of the year**, so you can decide whether 50 is a
+warning shot or Tuesday.
 
-- Is 50 cases normal for Kurnool?
-- Is this the rainy season, when dengue always peaks?
-- Was it 10 last week and 50 this week — a sudden jump?
-- Or has it been 40–60 every week for months?
+That is what a threshold is: a number that separates "normal for here,
+now" from "not normal — investigate". Everything else on this page is
+mechanics.
 
-**The number alone tells you nothing. You need a reference point.**
+### Why a single global number will not do
 
-That reference point is called a **threshold**.
+You cannot pick one national number ("more than 50 cases = emergency").
+50 cases in a rural sub-district with 40,000 residents is a crisis; 50
+cases in urban Bengaluru is a slow Tuesday. Population, seasonality,
+elevation, prior-year outbreak history — all of it means the threshold
+has to be **per region** and **per date**, not global.
 
----
-
-## Part 2 — What a threshold actually is
-
-A threshold is the answer to: **"what is normal here, at this time of year?"**
-
-Once you know what is normal, you can say:
-- Below the threshold → normal, keep monitoring
-- Above the threshold → unusual, investigate or act
-
-A good threshold has two properties:
-
-1. **It is specific to the place.** What is normal in Kurnool is not normal in Srikakulam.
-2. **It is specific to the time of year.** What is normal in July (monsoon peak) is not normal in January.
+The dashboard needs a threshold for every `(region, week)` cell it
+colours. Thousands of them. So we compute them programmatically from
+history, not by hand.
 
 ---
 
-## Part 3 — The simplest approach: historical average
+## Part 2 — from a threshold to a coloured cell
 
-The most natural reference point is the past.
+The dashboard does not show you thresholds. It shows you **coloured
+bands**. Green / yellow / orange / red. Each colour maps to a range of
+prediction values, and the ranges are defined by the thresholds.
 
-> "In the last 4 years, Kurnool in week 28 had an average of 35 cases."
+So the pipeline actually produces two things every week:
 
-So 50 cases this week is higher than the historical average of 35. That is a signal.
+1. **A raw prediction** — a floating-point number, e.g. `predictionRaw =
+   1.566` cases for `district_502` in the forecast week.
+2. **A risk zone** — an integer band `1..N` that says "this prediction
+   sits in the green / yellow / orange / red range". This is the
+   `predictionZone` column.
 
-But averages alone are not enough. Consider two districts:
-
-| District | Historical average, week 28 | Typical range |
-|----------|----------------------------|---------------|
-| Kurnool | 35 | 30 – 40 |
-| Visakhapatnam | 35 | 10 – 60 |
-
-Both have the same average. But 50 cases means something very different in each:
-- In Kurnool, the range is tight. 50 is way above the usual band. Alarming.
-- In Visakhapatnam, the range is wide. 50 is well within normal variation. Not alarming.
-
-**So we also need to measure how much the counts typically vary.** That is the standard deviation (SD). You do not need to know the formula — just think of it as: *how wide is the normal band?*
+The threshold values are the boundaries between the bands. Something
+has to compute them. That "something" is one of the three
+threshold-generation methods (`historical`, `prev_nweeks`,
+`weighted_baseline` — see the reference doc).
 
 ---
 
-## Part 4 — Turning average + variation into a threshold
+## Part 3 — three ways to define "normal"
 
-Combine the average (mean) and the variation (SD) like this:
+There is no single correct definition of "normal for this region right
+now". Three legitimate answers, each answering a slightly different
+question:
+
+### (a) "Same week, past years" — the `historical` method
+
+Look at the same calendar week in previous years, take the mean and
+standard deviation. That is your baseline. This is what public-health
+handbooks usually mean by a threshold.
+
+**Best when:** you have several clean years of history and the seasonal
+cycle is real.
+
+**Fails when:** the last five years include one enormous outbreak that
+inflates the "normal" bar. Excluded-year config lets you drop that.
+
+### (b) "Recent weeks, this year" — the `prev_nweeks` method
+
+Ignore history. Just look at the last handful of weeks in this same
+region. Compute a rolling mean and rolling std.
+
+**Best when:** history is short, dirty, or the disease dynamics have
+shifted (new serotype, new vector control regime).
+
+**Fails when:** the disease is intrinsically seasonal — using July to
+"predict" August is fine, but using December cases to set thresholds for
+July will always underestimate the summer normal.
+
+### (c) "Blend the two" — the `weighted_baseline` method
+
+Weighted average of "recent weeks" (default 70%) and "same weeks last
+year" (default 30%). This is the SOP-recommended approach: recency
+dominates but seasonality still gets a vote.
+
+**Best when:** the SOP says so, or you have ≥ 1 year of history and
+the seasonal signal is present but noisy.
+
+**Fails when:** the seasonal window is dominated by an anomaly year and
+you have not filtered it out.
+
+The pipeline lets you run more than one method in the same run — every
+threshold-generation method is computed for every `(region, date)`. Only
+one method is used to derive the final `whoZone`, but the others are
+retained in the long-form thresholds table for backtesting.
+
+---
+
+## Part 4 — from threshold to risk band
+
+Suppose the pipeline has computed, for `(district_502, 2026-03-17,
+previousNweeks)`:
 
 ```
-Threshold = Mean + (some multiplier × SD)
+Mean   = 1.667
+StdDev = 0.479
 ```
 
-The multiplier controls how sensitive you want to be:
-
-- **× 1** → catches more cases, but also more false alarms
-- **× 2** → a good balance. Only about 5% of weeks would exceed this by chance.
-- **× 3** → very conservative. Only ~0.3% of weeks would exceed this by chance.
-
-This gives you a **risk classification**:
-
-| Predicted cases | Zone | Label |
-|----------------|------|-------|
-| Below Mean | 1 | Low |
-| Mean to Mean + 1×SD | 2 | Moderate |
-| Mean + 1×SD to Mean + 2×SD | 3 | High |
-| Above Mean + 2×SD | 4 | Very High |
-
-This is the **WHO method**. It answers: *"is this district unusual compared to its own past?"*
-
----
-
-## Part 5 — Where does the historical data come from?
-
-To compute Mean and SD for "Kurnool in week 28," you look back at previous years:
-
-- Week 28 of 2024: 32 cases
-- Week 28 of 2023: 38 cases
-- Week 28 of 2022: 34 cases
-- Week 28 of 2021: skip (COVID disrupted surveillance)
-
-Mean ≈ 35. SD ≈ 3. Threshold = 35 + 2×3 = 41.
-
-If this week has 50 cases → above 41 → High risk.
-
-This is what the pipeline calls **`historical`** — the same-week, same-district historical baseline.
-
----
-
-## Part 6 — The cold start problem
-
-The historical method needs at least one prior year of data for the same week.
-
-What if a district is newly added to the system? Or data collection only started 3 months ago?
-
-In that case, there is no historical baseline to compare against. The historical method cannot run.
-
-The fallback is to use **recent data instead of same-season data**:
-
-> "I don't have last year's week 28. But I have the last 4 weeks."
-> Mean = average of the last 4 weeks. SD = variation in those 4 weeks.
-
-This is less ideal — it compares this week to recent weeks, not to the same season last year. But it is far better than having no threshold at all.
-
-This is what the pipeline calls **`prev_nweeks`** — the previous-N-weeks rolling baseline. It is a fallback for cold-start districts.
-
----
-
-## Part 7 — Pause: what we have so far
-
-Both methods above answer the **same question** in slightly different ways:
-
-> "Is this district unusual compared to its own history?"
-
-They are **absolute and time-aware**:
-- Absolute: they compare case counts to a number (Mean + n×SD)
-- Time-aware: what is "normal" changes by week of year
-
-They produce the same 4-tier output: Low / Moderate / High / Very High.
-
-The pipeline computes **both** every run and uses `assess_thresholds` to pick whichever method is performing better for that week.
-
----
-
-## Part 8 — A completely different question
-
-Imagine you are the state health secretary for Andhra Pradesh.
-
-You have 26 districts. You have a budget for emergency response teams. You can deploy to 6–7 districts this week.
-
-The WHO method tells you which districts are **unusual vs their own past**. But it does not directly answer: **"which districts need my attention most, right now, compared to each other?"**
-
-For resource allocation, you do not care whether Kurnool is 1.5 standard deviations above its historical mean. You care that **Kurnool has more cases than 80% of other districts this week.**
-
-This is the **ICMR method**. It answers a different question:
-
-> "Where does this district rank among its peers right now?"
-
----
-
-## Part 9 — How ICMR works
-
-Take all 26 AP districts. Look at their predicted case counts for this week.
-
-Sort them from highest to lowest. Divide them into 4 equal groups:
-
-| Group | Name | Meaning |
-|-------|------|---------|
-| Top ¼ | A1 Critical | Highest burden districts — act now |
-| Next ¼ | A2 High | High burden — prioritise |
-| Next ¼ | A3 Caution | Elevated — monitor closely |
-| Bottom ¼ | A4 Low | Lowest burden this week |
-
-**Worked example:** 26 districts → 6–7 per group.
-
-Kurnool has 50 cases. If 6 other districts have more than 50, Kurnool is A2. If only 2 districts have more than 50, Kurnool is A1.
-
-The 50 cases hasn't changed. But the interpretation changes entirely depending on what the other districts look like.
-
----
-
-## Part 10 — The key difference between WHO and ICMR
-
-This is the most important thing to understand:
-
-| Property | WHO (historical) | ICMR (quartile) |
-|----------|-----------------|-----------------|
-| Compared to | District's own past | Peer districts this week |
-| "High" means | Unusual for this district | In top quartile right now |
-| Is it comparable across weeks? | Yes — High in week 12 = High in week 30 | No — A1 in a quiet week ≠ A1 in peak season |
-| Is it comparable across states? | Yes — Karnataka High = Odisha High | No — AP A1 ≠ Karnataka A1 |
-| Best for | Outbreak detection, forecasting | Resource allocation, ranking |
-
-Both are correct answers — to different questions. That is why the PRISM-H dashboard uses both.
-
----
-
-## Part 11 — Which method does AP use?
-
-From the PRISM-H specification:
-
-- **AP Forecast tab (Risk Class)** → ICMR (A1/A2/A3/A4)
-- **Karnataka and Odisha Forecast tab (Risk Class)** → WHO (Low/Moderate/High/Very High)
-- **High Risk Areas tile (all three states)** → ICMR A1 + A2 AND trend is Rising
-
-The map colours are the same (4 colours). Only the labels and the underlying method change.
-
----
-
-## Part 12 — A third approach: the SOP weighted baseline
-
-The High Risk Districts SOP describes yet another method, used for the operational weekly report.
-
-The problem it is solving is different again:
-
-> "I want a threshold that reflects both what is happening right now AND what usually happens at this time of year — not just one or the other."
-
-The solution is a **weighted average**:
+We construct three cut-points at α ∈ `{0, 1, 2}` — the standard-deviation
+multipliers listed in `list_alpha`:
 
 ```
-Baseline = 70% × (average of last 4 weeks)
-         + 30% × (average of same weeks last year)
+T0.00 = Mean + 0·StdDev = 1.667
+T1.00 = Mean + 1·StdDev = 2.145
+T2.00 = Mean + 2·StdDev = 2.624
 ```
 
-The 70% weight on recent weeks captures what is happening now. The 30% weight on same-season-last-year captures whether this is a seasonal pattern or a genuine anomaly.
+The predicted value is `predictionRaw = 1.566`. That falls in `[Zero,
+T0.00)` — below the mean itself — so `whoZone = 1` (green: "no unusual
+signal, below the baseline").
 
-Then the threshold (Upper Control Limit) is:
+If the same region had a prediction of 3.0, it would fall in `[T2.00,
+Inf)` and get `whoZone = 4` (red: "more than 2σ above baseline").
 
-```
-UCL = Baseline + n × SD
-
-where SD = variation over the past 8 weeks
-```
-
-A district is **High Risk** if the predicted case count exceeds the UCL.
-
-This is a 2-class output (High Risk / Normal), not 4-tier.
-
-**Open question before we implement this:** the SOP has an inconsistency. Section 4.6 says use n = 2. Section 5 says use n = 3. These produce different thresholds. We need the team to confirm the correct value.
+The "α" values (`list_alpha`) are how you tune sensitivity. Smaller α =
+tighter bands = more red cells. Public-health teams generally negotiate
+`list_alpha` empirically until the volume of red cells matches what
+their surveillance team can actually investigate.
 
 ---
 
-## Part 13 — Summary: three methods, three questions
+## Part 5 — three different questions, three different colourings
 
-| Method | Question | Output | Status |
-|--------|----------|--------|--------|
-| `historical` | Is this week unusual vs same-week history? | 4 zones: Low / Moderate / High / Very High | ✅ Implemented |
-| `prev_nweeks` | Is this week unusual vs recent weeks? | 4 zones (fallback for cold-start) | ✅ Implemented |
-| `icmr_quartile` | Where does this district rank among peers? | 4 strata: A1 / A2 / A3 / A4 | ✅ Implemented |
-| `weighted_baseline` | Is this week above the weighted control limit? | 2 classes: High Risk / Normal | ⏳ Pending clarification |
+The pipeline actually paints the dashboard **three ways** and writes all
+three into `predictions.csv`. Which one appears in `predictionZone`
+depends on `classification_method`.
 
----
+### `whoZone` — "unusual for this region?"
 
-## Part 14 — Where each method lives in the pipeline
+Uses the Mean/StdDev thresholds from Part 4. Answers a *within-region*
+question.
 
-The timing matters:
+### `icmrZone` — "highest risk right now compared to peers?"
 
-```
-Step 1: generate_thresholds
-   → Runs BEFORE model predictions
-   → Computes: historical and prev_nweeks baselines
-   → Why here? Because these only need historical case data
+For each week, rank every region's prediction. Cut into 4 equal strata.
+Top stratum = red (A1 Critical), bottom = green (A4 Low). Answers a
+*cross-region* question — no thresholds needed.
 
-Step 2: train_and_predict
-   → Runs model → gets predicted case counts for each district
-   → Applies WHO zone classification by default
-   → If configured for AP: overrides zones with ICMR quartile
-   → Why here? Because ICMR needs to see ALL districts' predictions at once
+Useful when you have limited response capacity and need to prioritise
+between districts *this week*, regardless of whether any of them are
+individually "unusual".
 
-Step 3: assess_thresholds
-   → Looks at which WHO method (historical vs prev_nweeks)
-     correctly identified high-risk districts in the past
-   → Picks the better-performing method for this week's report
-```
+Guard: if the total predicted caseload across all regions on a given
+week is < 10, ICMR zones for that week are `NA` and the dashboard
+renders "insufficient data" — ranking noise around zero would be
+meaningless.
 
-**ICMR cannot run in Step 1** because at that point the model has not yet produced predictions. ICMR needs to rank districts against each other, and those numbers do not exist until Step 2.
+### `percentileZone` — "high vs this region's own past?"
 
----
+For each region, compute percentiles of its own historical weekly case
+totals (default `p50, p75, p90` → 4 bands). Place the prediction in
+the appropriate band.
 
----
-
-## Part 15 — How the SOP weighted baseline differs from the two WHO methods
-
-You now know three threshold methods. Here is the key difference between them, put as simply as possible.
-
-Each method has a different **memory**:
-
-| Method | What it remembers | What it ignores |
-|--------|------------------|-----------------|
-| `prev_nweeks` | Last 4 weeks only | Everything before that |
-| `historical` | Same week in past years | Recent weeks |
-| SOP `weighted_baseline` | Both — but 70% recent, 30% seasonal | Nothing |
-
-**Concrete example:**
-
-It is July. Dengue season is starting. Kurnool had 15 cases/week through June (recent), and 40 cases/week last July (seasonal history).
-
-- `prev_nweeks` baseline: ~15 (only sees June's quiet weeks → threshold too low, will over-alarm as July ramps up)
-- `historical` baseline: ~40 (only sees last July → knows about the season, but doesn't know June was quiet)
-- `weighted_baseline`: 0.7 × 15 + 0.3 × 40 = **22.5** (blends both → more stable, avoids extremes)
-
-The weighted baseline is the most cautious. It won't sound an alarm just because the season is starting (that is expected), but it also doesn't ignore the recent trend entirely.
+Answers a *self-referential* question that is more robust than
+`historical` when the historical distribution is heavy-tailed: instead
+of Mean + α·StdDev (which is sensitive to a single outbreak year),
+`percentile` uses order statistics that survive one big year cleanly.
 
 ---
 
-## Part 16 — Something new in the SOP: prediction intervals
+## Part 6 — the aggregation-consistency trap (PR #98)
 
-The SOP introduces a concept not yet covered: **prediction intervals**.
+`percentileZone` was originally computed off `cases_daily.csv` directly.
+That looked fine but produced badly-inflated bands. The bug:
 
-The model does not predict one exact number. It predicts a range:
+`cases_daily.csv` is **sparse** — rows exist only for days that had at
+least one case. Days with zero cases are simply absent. Computing
+`p50` over those rows gives you the median of positive-case days —
+a *conditional-on-having-cases* statistic. When a region's median
+non-zero day is 3 cases, that becomes the p50 cutoff — and any weekly
+prediction ≥ 3 lands above p50.
 
-> "Kurnool this week: somewhere between 35 and 65 cases, most likely 50."
+The fix: aggregate to **weekly totals per region** first, then compute
+percentiles on that. A weekly total is comparable to a weekly
+prediction; a daily conditional-on-hot-day total is not.
 
-That range is the prediction interval (PI). It exists because:
-- The model is not perfect
-- Case data has reporting noise
-- Weather and environmental factors add uncertainty
-
-Why does this matter for thresholds?
-
-Imagine the UCL is 48 and the predicted mean is 50. You would classify this as High Risk. But if the prediction interval is 35–65, you have low confidence the true value is above 48.
-
-Now imagine the UCL is 48 and the predicted mean is 50, but the interval is 49–51. Very narrow. High confidence the true value is above 48. This is a more reliable High Risk call.
-
-**The SOP says:** use prediction intervals as supporting evidence, especially when a prediction is close to the threshold. Do not over-rely on the point prediction alone.
-
-We currently output point predictions. Adding prediction intervals is on the roadmap.
-
----
-
-## Part 17 — Something entirely new: mandal-level disaggregation
-
-The SOP section 8 describes something that has nothing to do with threshold methods. It is about **spatial scale**.
-
-Our model predicts at the **district level**. But public health responders often need to know: **which mandal within the district should we focus on?**
-
-The SOP's answer is a simple proportional split:
-
-> Predicted mandal cases = District prediction × (mandal's share of recent cases)
-
-Where "mandal's share" is:
-
-```
-mandal's 14-day moving average of cases
-─────────────────────────────────────────────────────────
-sum of all mandals' 14-day moving averages in the district
+```python
+weekly = cases.groupby([region, week]).sum()
+cuts   = np.percentile(weekly[case_col].dropna(), percentile_cutoffs)
 ```
 
-**Example:**
-
-Kurnool district predicted: 50 cases this week.
-
-| Mandal | 14-day avg | Share | Predicted cases |
-|--------|-----------|-------|----------------|
-| Kurnool Urban | 18 | 60% | 30 |
-| Nandyal Rural | 6 | 20% | 10 |
-| Panyam | 6 | 20% | 10 |
-
-The district prediction (50) is split proportionally based on where cases have been occurring recently.
-
-**Risk at mandal level** (SOP section 9): for now, a mandal simply inherits its district's risk label. If Kurnool district is A1 Critical, all its mandals are also A1 Critical. This is called "Homogeneous Inheritance" — it is a simplification, acknowledged as such in the SOP, with finer-grained mandal risk assessment planned for a future version.
-
-This disaggregation work is tracked as a separate issue (issue #18).
+This is now baked into `percentile_historical_zones` — you don't need
+to think about it, but if you're reading old code and wondering why
+p50 cuts look strange, that's the reason.
 
 ---
 
-## Open questions to resolve with the team
+## Part 7 — when thresholds go bad
 
-1. **SOP n_sigma: 2 or 3?** Section 4.6 says 2. Section 5 says 3. Need confirmation.
-2. **SOP seasonal component:** "Same epi-weeks last year" — does this mean exact ISO week numbers, or exactly 52 weeks back? (They can differ by up to 6 days.)
-3. **Is the SOP weighted baseline for the weekly operational report, and ICMR for the dashboard? Or do they overlap?** Knowing this determines whether `weighted_baseline` produces a separate output or replaces one of the existing methods.
-4. **ICMR edge case:** what should the pipeline show when the total cases across all districts in the window is very low (e.g., < 10 total)? The PRISM-H spec says "Insufficient data" — not yet enforced.
+Not every `(region, date)` produces a meaningful threshold. Three
+degenerate cases show up in production:
+
+### The all-zeros region
+
+A region has been reporting zero cases for years — genuinely, or because
+reporting has broken down and we can't distinguish the two.
+`Mean = 0`, `StdDev = 0`. Every threshold `T_α = 0`. Everything gets
+classified as "above the baseline" including a prediction of 0.1. This
+is meaningless.
+
+**Handling:** `train_and_predict` explicitly detects `Mean == 0 and
+StdDev == 0` and sets `whoZone = NA` for those rows. A `WARNING` log
+lists the affected regions.
+
+### The `NaN` region
+
+Historical method with `historical_n_years = 5` and only 3 years of
+data → past window is empty → `Mean = NaN, StdDev = NaN`. `T_α` also
+becomes NaN. Any comparison with the prediction is false, so no zone is
+assigned.
+
+**Handling:** the thresholds module logs a `WARNING` at the point of
+detection so you see exactly which `(year, region)` combinations lack
+usable history.
+
+### The out-of-band prediction
+
+The prediction happens to fall exactly at `T_α` — the half-open
+intervals `[T_i, T_{i+1})` are strict, and the epsilon nudge
+(`+ i · 1e-6`) prevents this in practice, but there's still an edge case
+where `predictionRaw` sits below `Zero` (rare, but possible if a model
+returns a negative value that survives the pipeline). No interval
+matches → no zone assigned.
+
+**Handling (all three cases):** after the classification step, any
+`predictionZone` that is still `NA` gets filled with the sentinel `0`.
+`0` is not a valid band (bands start at 1), so the dashboard renders it
+as neutral grey and the run logs a `WARNING`:
+
+```
+train_and_predict[ensemble]: 3 region(s) have predictionZone=0
+  (prediction fell outside all threshold pairs): ['district_501', …]
+```
+
+If you see zone-0 regions in a production run, that is not a rendering
+bug — it is the pipeline correctly signalling that thresholds were
+degenerate for those regions. Fix upstream (extend history, exclude
+outbreak years, switch method) rather than papering over it.
+
+---
+
+## Part 8 — how to choose
+
+A rough decision tree:
+
+* **≥ 5 clean years of history, seasonal disease** →
+  `historical`, optionally with `excluded_years` for outbreak years.
+  Classification: `who`.
+* **Short or noisy history, weekly signal is good** → `prev_nweeks`.
+  Classification: `who`.
+* **SOP requires it** → `weighted_baseline`. Classification: `who`.
+* **Response capacity is the binding constraint; you must prioritise
+  between regions** → any generation method, classification `icmr`.
+* **Heavy-tailed history, one big outbreak year dominates** →
+  classification `percentile` (with any generation method — it doesn't
+  actually use Mean/StdDev).
+
+You can (and often should) compute more than one classification. All
+three parallel columns are always written to `predictions.csv`; only
+`predictionZone` is the "official" one. Analysts can compare
+`whoZone` vs `icmrZone` vs `percentileZone` after the fact to see where
+methods agree and where they diverge.
