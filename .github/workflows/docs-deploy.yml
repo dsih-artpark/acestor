@@ -19,9 +19,14 @@ jobs:
           username: ${{ secrets.USER }}
           key: ${{ secrets.KEY }}
           script: |
+            set -euo pipefail
+            # Non-interactive SSH shell doesn't source .profile/.bashrc,
+            # so ~/.local/bin (where uv installs) isn't on PATH by default.
+            export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+            command -v uv >/dev/null || { echo "uv not found on PATH ($PATH)"; exit 1; }
+
             cd /home/ubuntu/acestor
-            pwd
-            git pull
+            git pull --ff-only
             uv sync --group docs
             source .venv/bin/activate
             cd site
