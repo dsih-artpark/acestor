@@ -14,7 +14,7 @@ Before installing, make sure you have the following on your system:
   - **Linux (Debian/Ubuntu)**: ``apt-get install gdal-bin libgdal-dev libgeos-dev libproj-dev``
   - **Windows**: install `OSGeo4W <https://trac.osgeo.org/osgeo4w/>`_ or use WSL
 
-- **pdflatex** *(optional)* — only needed if ``report.compile_pdf: true`` in your config
+- **~1 GB free disk** *(optional)* — TimesFM checkpoint cache at ``.cache/timesfm/`` on first use
 
 Install
 -------
@@ -30,7 +30,7 @@ Install
 
 .. code-block:: bash
 
-    uv sync --extra dengue --extra cds --extra s3
+    uv sync --all-extras
 
 .. list-table:: Available extras
    :header-rows: 1
@@ -39,17 +39,25 @@ Install
    * - Extra
      - What it adds
    * - ``dengue``
-     - Geospatial and modeling stack: ``geopandas``, ``scikit-learn``, ``statsmodels``, ``matplotlib``
+     - Geospatial + classical modeling stack: ``geopandas``, ``scikit-learn``, ``statsmodels``, ``xgboost``, ``matplotlib``
+   * - ``timesfm``
+     - Google's TimesFM 2.5 foundation model (``timesfm[torch]==2.0.0``). Heavy (pulls torch and downloads ~800 MB checkpoint on first use).
    * - ``cds``
-     - Copernicus Climate Data Store (CDS) API client for weather downloads
+     - Copernicus Climate Data Store (CDS) API client for ERA5 weather downloads
    * - ``s3``
      - AWS S3 storage backend (``boto3``)
 
-Install only what you need. For a local run without S3 or CDS:
+Install only what you need. For a minimal local run using Open-Meteo weather and classical models only:
 
 .. code-block:: bash
 
     uv sync --extra dengue
+
+For runs that use TimesFM in the ensemble:
+
+.. code-block:: bash
+
+    uv sync --extra dengue --extra timesfm
 
 Environment Variables
 ---------------------
@@ -60,6 +68,13 @@ Create a ``.env`` file in the project root with your secrets. These are loaded a
 
     # Copernicus CDS — required if weather_download.source_mode = "cds"
     CDS_API_KEY=your-cds-api-key
+
+    # Dashboard case source — required if case_download.source_mode = "dashboard"
+    DASHBOARD_URL=https://apps.artpark.ai/disease-dashboard
+    DASHBOARD_CLIENT_ID=your-email@example.com
+    DASHBOARD_CLIENT_SECRET=your-password
+    # Optional: pin the TimesFM checkpoint revision
+    TIMESFM_REVISION=1d952420fba87f3c6dee4f240de0f1a0fbc790e3
 
     # SMTP — required if email.enabled = true
     SMTP_FROM=sender@example.com

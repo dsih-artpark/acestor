@@ -4,7 +4,7 @@ Running the Pipeline
 Basic Usage
 -----------
 
-The pipeline is invoked via the ``acestor-run`` entry point:
+Every pipeline is invoked via ``python -m acestor.run`` with three flags: a builder function, a YAML config, and a run id.
 
 .. code-block:: bash
 
@@ -12,6 +12,21 @@ The pipeline is invoked via the ``acestor-run`` entry point:
       --pipeline pipelines.dengue.pipeline:build_pipeline \
       --config configs/my-config.yaml \
       --run-id my-run-001
+
+.. list-table:: Pipeline builders
+   :header-rows: 1
+   :widths: 40 60
+
+   * - ``--pipeline`` value
+     - What it runs
+   * - ``pipelines.dengue_prep.pipeline:build_pipeline``
+     - Prep pipeline — ingest raw case + weather data, write ``prepared_data/*/{cases,weather}_daily.csv``. See :doc:`dengue_prep`.
+   * - ``pipelines.dengue.pipeline:build_pipeline``
+     - Main pipeline — thresholds, models, predictions, report.
+   * - ``pipelines.dengue_downscale.pipeline:build_pipeline``
+     - Downscale a parent-level ``predictions.csv`` to child regions. See :doc:`downscale`.
+
+A typical end-to-end flow is: prep → main → (optional) downscale.
 
 .. list-table:: Arguments
    :header-rows: 1
@@ -67,22 +82,25 @@ All outputs land under ``{storages.artifacts.filesystem.base_path}/{run_id}/``:
     {run_id}/
     ├── sampling_day.json
     ├── datasets/
+    ├── inputs/
     │   ├── cases_{region}_sampled.csv
-    │   ├── weather_{region}_sampled.csv
-    │   └── thresholds/
-    │       └── {region}_all_thresholds.csv
+    │   └── weather_{region}_sampled.csv
     ├── cutoffs.json
-    ├── predictions/
-    │   └── Predictions_*.csv
-    ├── plots/
-    │   └── {region}_{model}_{threshold}_{date}.png
-    ├── reports/
-    │   ├── *.json
-    │   ├── *.tex
-    │   └── *.pdf  (if compile_pdf: true)
-    ├── results/
-    │   └── AllMaps_{month}_{date}.zip
-    └── logs/
+    ├── outputs/
+    │   ├── predictions.csv          # ensemble (or primary model per ``report.primary``)
+    │   ├── per_model/               # only present with ``model.output`` = per_model | both
+    │   │   ├── predictions_rf.csv
+    │   │   ├── predictions_xgb.csv
+    │   │   ├── predictions_tse.csv
+    │   │   └── predictions_timesfm.csv
+    │   ├── charts/
+    │   │   └── hero_forecast.png
+    │   ├── maps/                    # skipped when ``maps.enabled: false``
+    │   │   └── {region}_{model}_{threshold}_{date}.png
+    │   └── report.html              # self-contained HTML brief with interactive D3 map
+    └── run.log
+
+See :doc:`output_format` for a full column-by-column reference.
 
 Scheduling Pipelines
 --------------------

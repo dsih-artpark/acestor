@@ -1,344 +1,281 @@
-# Models — Configuration and Extension Guide
+# Models
 
-The dengue pipeline runs one or more prediction models via a registry. Models register themselves at import time and are selected via YAML. This doc covers how to enable/disable models, how to inspect outputs, and how to add a new model.
+Reference for every forecasting model registered under `pipelines/dengue/lib/models/`. Each entry covers what the model consumes, how it emits predictions, whether it can be tuned, and its known failure modes.
 
----
-
-## Available models
-
-| Name | Class | Source | What it does |
-|------|-------|--------|--------------|
-| `nbr` | `NBRModel` | [pipelines/dengue/lib/models/nbr.py](../pipelines/dengue/lib/models/nbr.py) | Negative Binomial Regression on case counts using lagged temperature, rainfall, and humidity. Predicts the last 4 weeks of available weather data. |
-| `rf` | `RFModel` | [pipelines/dengue/lib/models/rf.py](../pipelines/dengue/lib/models/rf.py) | Random Forest Regression using lagged temperature, rainfall, and humidity. Predicts the last 4 weeks of available weather data. Default: 200 trees, max_depth=10. |
-| `tse` | `TSEModel` | [pipelines/dengue/lib/models/tse.py](../pipelines/dengue/lib/models/tse.py) | Time-Series Extrapolation — linear trend on a 4-week moving average. Predicts 2 weeks ahead from the case cutoff. Case-only, no weather. |
-| `xgb` | `XGBModel` | [pipelines/dengue/lib/models/xgb.py](../pipelines/dengue/lib/models/xgb.py) | XGBoost Regression using lagged temperature, rainfall, and humidity. Predicts the last 4 weeks of available weather data. Default: 300 estimators, lr=0.05, max_depth=5. |
-
-Inspect the live registry from a Python shell:
-
-```bash
-uv run python -c "from pipelines.dengue.lib.models import _REGISTRY; print(sorted(_REGISTRY))"
-# → ['nbr', 'rf', 'tse', 'xgb']
-```
+The runtime wiring lives in `pipelines/dengue/steps/train_and_predict.py`. That step builds one `ModelContext` per model listed in `model.models:`, calls `model.predict(ctx)`, then classifies zones and writes the result to `outputs/predictions.csv` (or per-model files under `outputs/per_model/`).
 
 ---
 
-## Configuring which models run
+## Registry and short-name → full-name mapping
 
-Set `model.models` in the pipeline YAML. The default (when omitted) is `[nbr, tse]`.
+Models register themselves via `@register("<short>")` in `pipelines/dengue/lib/models/__init__.py`. The short name is what you put in YAML (`model.models: [nbr, rf, xgb, tse, timesfm]`). Predictions land in `predictions.csv` with the model's **full string** in the `model` column, mapped by `pipelines/dengue/lib/maps.py::MODEL_FULL_NAME`:
+
+| Short (`model.models`, `report.primary`) | `model` column value              |
+| ---------------------------------------- | --------------------------------- |
+| `nbr`                                    | `negativeBinomialRegression`      |
+| `rf`                                     | `randomForestRegression`          |
+| `xgb`                                    | `xgboostRegression`               |
+| `tse`                                    | `timeSeriesExtrapolation`         |
+| `timesfm`                                | `timesFoundationModel`            |
+| `ensemble`                               | `ensembleModel`                   |
+
+---
+
+## Common CSV schema
+
+Every model contributes rows with the same shape after `train_and_predict` classifies them into zones. The canonical `outputs/predictions.csv` header:
+
+```
+dateOfComputingPrediction,startDatePredictedWeek,regionID,LGD_code,
+prediction,predictionRaw,predictionMin,predictionMax,
+thresholdMethod,predictionZone,whoZone,icmrZone,percentileZone,
+Mean,StdDev,model,ISOWeek
+```
+
+Two boundary details worth remembering:
+
+- `prediction` in the CSV is the **display integer** (`round_half_up` of the raw float — issue #83). The raw float that all internal math uses is preserved as `predictionRaw`. The downscale pipeline reverses the rename on read so nothing downstream loses precision.
+- `predictionMin` / `predictionMax` are the **extremes across ensemble members** for the same group (issue #84). They are NOT confidence intervals, standard deviations, or bootstrap bounds. For per-model files, `min == max == prediction`.
+
+A minimal sample row (KA district, ensemble, previousNweeks method):
+
+```
+2025-11-24,2025-12-01,district_KA_29_08,29-08,4,4.37,3,6,previousNweeks,3,3,2,3,3.10,1.44,ensembleModel,49
+```
+
+---
+
+## `nbr` — Negative Binomial Regression
+
+**Intent.** GLM with a negative-binomial family, one-hot on ISO week, fitted on all history except the last four weeks and applied to those four. Ported straight from the GBA pipeline.
+
+**Features consumed.** Yes — weather. Lag-shifted `t2m_mean` (temperature), `tp_sum` (rainfall), `d2m_mean` (humidity) plus ISO-week one-hots. **No case lags.** `model.data_features` is passed through as the non-lag whitelist.
+
+**Horizon handling.** Fits on all rows with `recordDate <= pred_upto` except the last four; predicts those four in one shot. No recursion, no persistence — every forecast week has its own weather row available at prediction time.
+
+**Prediction location.** Rows land in the ensemble file at `outputs/predictions.csv` and (if `output: per_model | both`) at `outputs/per_model/predictions_nbr.csv` with `model = "negativeBinomialRegression"`.
+
+**Tuneable?** No. NBR has no Optuna path — `alpha=1.0` is fixed. `model.tune` only affects `rf` and `xgb`.
+
+**Known failure modes.**
+
+- Regions with any NaN lag feature across all four prediction weeks are dropped with a warning (weather coverage gaps). They render white/hatched on maps.
+- If every region has NaN lags, `predict()` returns an empty DataFrame and `train_and_predict` raises `RuntimeError` for the whole run (issue #65 — partial dropout no longer silently succeeds).
+- `MinMaxScaler` will crash on a region where all lag features are NaN; the pre-drop above prevents this.
+
+---
+
+## `tse` — Time-Series Extrapolation
+
+**Intent.** Two-week linear extrapolation of a 4-week moving average per region. The simplest baseline in the ensemble; almost no assumptions.
+
+**Features consumed.** Cases only. Ignores weather entirely. Reads `case_df` directly (not the merged frame).
+
+**Horizon handling.** Special — TSE only goes **2 weeks past `cutoff_case`**, not 4. `TSEModel.predict()` sets `tse_upto = ctx.cutoff_case + 14 days` and stops there. When the ensemble asks for four weeks, TSE contributes rows only for weeks 1 and 2.
+
+**Prediction location.** Rows land with `model = "timeSeriesExtrapolation"` in the same files as above.
+
+**Tuneable?** No.
+
+**Known failure modes.**
+
+- Regions with fewer than 2 observations, or whose most recent observation is >15 days before `to_date`, are skipped and logged as WARNING.
+- Values are floored at 0. There is no upper clip.
+
+---
+
+## `rf` — Random Forest Regression
+
+**Intent.** `RandomForestRegressor` trained on all-but-last-4 weeks, applied **recursively** across the 4-week horizon.
+
+**Features consumed.** Weather (temp / rainfall / humidity lags) AND case lags (`lag_cases`). ISO-week one-hots.
+
+**Horizon handling.** Recursive multi-step via `pipelines/dengue/lib/models/_shared.recursive_forecast`:
+
+- **Weather / exogenous lags** for future weeks are read from `df0` and, by default, **frozen at the forecast origin** (`freeze_weather_at_origin=True` — persistence assumption, parity with vbd-modelbench `predict_rt.py`, issue #77). Setting it to `False` advances per week using each future row instead — this leaks observed future weather and is only defensible in hindcasts. Freezing enables shorter case-lag windows to be used safely.
+- **Case lags** are filled hybrid-Y: a lag pointing at a future week uses that week's own prediction (already written back into `case_by_date`); a lag pointing at an observed week uses the observed value; a lag pointing before the series start is zero-padded. Each week's prediction is fed forward.
+
+Predictions are floored at 0. If `clip_multiplier` is set, they are additionally capped at `clip_multiplier × train_max` and the row records `was_clipped=True`.
+
+**Prediction location.** `model = "randomForestRegression"`.
+
+**Tuneable?** Yes. See [Tuning](#tuning--optuna-three-modes) below. Cache location: `hp/rf_<region_type>_best_params.json` and `hp/rf_<region_type>_fingerprint.json`.
+
+**Known failure modes.**
+
+- If the origin row has any NaN weather feature, the region is skipped (persistence is undefined). If ALL regions skip, `predict()` returns empty and the run fails.
+- Training frame empty after `years_to_include` / `years_to_exclude` filtering → empty predictions.
+
+---
+
+## `xgb` — XGBoost Regression
+
+**Intent.** Same shape as `rf` but with `XGBRegressor`. Trained on all-but-last-4, applied recursively.
+
+**Features consumed.** Identical to `rf` — weather lags, case lags, ISO week.
+
+**Horizon handling.** Same `recursive_forecast` engine, same `freeze_weather_at_origin` behaviour, same hybrid-Y case-lag fill.
+
+**Prediction location.** `model = "xgboostRegression"`.
+
+**Tuneable?** Yes. Cache: `hp/xgb_<region_type>_best_params.json` and matching `_fingerprint.json`. Defaults are the vbd-modelbench values: `n_estimators=300, learning_rate=0.05, max_depth=5, min_child_weight=5, subsample=0.8, colsample_bytree=0.8, gamma=0.1, reg_alpha=0.1, reg_lambda=5.0`.
+
+**Known failure modes.** Same as RF. Additionally, xgboost carries its own OpenMP runtime — do NOT try to import torch in the same worker; that's the whole reason TimesFM runs in a subprocess (below).
+
+---
+
+## `timesfm` — TimesFM 2.5-200m Foundation Model
+
+**Intent.** Google's pretrained univariate foundation model applied to each region's weekly case series. **No weather; no per-region training; case history only.**
+
+**Isolation.** TimesFM is imported and run in a **fresh subprocess** via `pipelines/dengue/lib/isolation.py::run_isolated` (issue #46). The model registry already imports xgboost at module load, and torch loaded in the same process as xgboost's OpenMP runtime segfaults. The isolation contract is file-based:
+
+- Parent writes `series.npy`, `lengths.npy`, `spec.json` to a temp dir.
+- Parent spawns `python -m pipelines.dengue.lib._timesfm_worker <workdir>` with `start_new_session=True` so the whole process group can be signalled on timeout.
+- Child writes `output.npy` and `status.json`.
+- Every failure mode (timeout, non-zero exit, missing / unparseable status, wrong shape, non-finite values) is translated into `IsolatedRunError` with a useful message.
+
+**Checkpoint warm.** The worker pulls the HF revision on first run and caches it under `.cache/timesfm/` (project-local, gitignored). `TIMESFM_REVISION` env var overrides the pinned SHA `1d952420fba87f3c6dee4f240de0f1a0fbc790e3` without a code change — useful for ops to roll checkpoints.
+
+**Config.** All keys under `model_configs.timesfm.*` are **optional** — sensible defaults are baked in. The minimum config is:
 
 ```yaml
 model:
-  spatial_res: "district"
-  models: [nbr, tse]    # which models to run
-  ensemble: mean        # how to combine — registered ensemble strategy or "none"
-  output: ensemble      # what to write — "ensemble" | "per_model" | "both"
-  data_features: [...]
-  lag:
-    lag_temp: [12]
-    lag_rf: [4]
-  list_alpha: [2.0, 3.0]
-
-report:
-  primary: ensemble     # which CSV feeds maps + report — "ensemble" or any model key
-  output_dir: reports
-  compile_pdf: true
+  models: [timesfm]
+  spatial_res: district
+  ensemble: none
+  output: per_model
+# model_configs.timesfm can be omitted entirely; defaults apply.
 ```
 
-All three new keys (`ensemble`, `output`, `report.primary`) default to values that preserve the original pipeline behaviour, so existing configs do not need to change.
-
-### Selecting a subset of models
+Defaults:
 
 ```yaml
-model:
-  models: [nbr]         # NBR only — output labelled "negativeBinomialRegression"
-```
-
-```yaml
-model:
-  models: [tse]         # TSE only — output labelled "timeSeriesExtrapolation"
-```
-
-```yaml
-model:
-  models: [nbr, tse]    # both — output labelled "ensembleModel" by MeanEnsemble
-```
-
-### Choosing the ensemble strategy
-
-`model.ensemble` selects how multiple model outputs are combined. The currently registered strategies:
-
-| Name | Class | Behaviour |
-|------|-------|-----------|
-| `mean` | `MeanEnsemble` | Arithmetic mean of `prediction` per (region, date, ...) group. Sets `model = "ensembleModel"`. This is the default. |
-| `none` | _(sentinel)_ | Skip combining entirely. Only valid with `output: per_model` or `output: both` (config validation enforces this). |
-
-Inspect the live ensemble registry:
-
-```bash
-uv run python -c "from pipelines.dengue.lib.ensembles import _ENSEMBLE_REGISTRY; print(sorted(_ENSEMBLE_REGISTRY))"
-# → ['mean']
-```
-
-### Choosing what gets written to disk
-
-`model.output` controls which CSVs land in `artifacts/<region>/<run-id>/results/`:
-
-| Setting | Files written |
-|---------|---------------|
-| `ensemble` (default) | one combined CSV — `Predictions_<MonthYear>_<RegionType>_<YYYYMMDD>.csv` |
-| `per_model` | one CSV per model — `Predictions_<MonthYear>_<RegionType>_<model_key>_<YYYYMMDD>.csv` |
-| `both` | per-model CSVs **and** the ensemble CSV |
-
-### Picking which CSV maps + report consume
-
-Maps and the report still consume a single CSV. `report.primary` selects which one:
-
-- `report.primary: ensemble` (default) — uses the ensemble CSV. Requires `output: ensemble` or `output: both`.
-- `report.primary: nbr` (or any other model key) — uses that model's per-model CSV. Requires that the model is in `cfg.models` and that `output` is `per_model` or `both`.
-
-If `report.primary` does not match any CSV that was written, the step raises `ValueError` at runtime. The set of valid values depends on `cfg.models` and `cfg.output`, so validation has to happen at runtime (not at config load).
-
-### Behaviour rules
-
-- **One model configured** → the single model's name flows through to the output CSV's `model` column even when ensembling is on.
-- **Two or more models configured + `ensemble: mean`** → predictions are run independently, then combined by `MeanEnsemble.combine` and labelled `ensembleModel`.
-- **`ensemble: none`** → no combining. `output` must be `per_model` or `both`.
-- **A model returns no predictions** (e.g. NBR has no overlapping case/weather coverage) → a warning is logged and the model is skipped; remaining models still run.
-- **All models return empty** → the step returns an empty `PredictionResult` and downstream maps appear white/hatched.
-
-### Per-model config overrides
-
-Add an optional `model_configs:` top-level block to override specific fields for individual models. Any key present in `model_configs.<model_name>` wins over the shared `model:` value. Models without an entry continue to use the shared config unchanged.
-
-```yaml
-model:
-  models: [nbr, tse, rf]
-  ensemble: mean
-  output: ensemble
-  lag:
-    lag_temp: [12]
-    lag_rf: [4]
-  list_alpha: [2.0, 3.0]
-
 model_configs:
-  rf:
-    lag:
-      lag_temp: [4, 8, 12]   # RF uses 3 lag windows; NBR and TSE still use [12]
-      lag_rf: [2, 4]
-    list_alpha: [1.5, 2.0, 3.0]
-  tse:
-    data_features: [case, recordDate, recordYear, recordMonth, ISOWeek]
+  timesfm:
+    huggingface_repo_id: google/timesfm-2.5-200m-pytorch
+    revision:                    # env TIMESFM_REVISION, else pinned 40-hex SHA
+    cache_dir: .cache/timesfm
+    max_context: 1024
+    per_core_batch_size: 32
+    min_context_weeks: 52
+    timeout_s: 300
+    max_regions_per_batch: 128
 ```
 
-**Overridable fields:** `lag` (sub-keys `lag_temp`, `lag_rf`), `list_alpha`, `data_features`, `years_to_exclude`, `years_to_include`.
+`revision` MUST be a full 40-hex commit SHA. Tags and branches are rejected — a HF tag can move under you and reproducibility is gone.
 
-**Not overridable per-model:** `spatial_res`, `models`, `ensemble`, `output` — these are pipeline-level settings shared by all models.
+**`min_context_weeks` policy.** A region needs at least this many weekly observations (default 52). Below the floor → skipped with a warning. All-zero series ≥ the floor are emitted as zero forecasts (no need to consult the model). If EVERY region is below the floor, `predict()` raises with a hint to lower `min_context_weeks` or pick a coarser `spatial_res` — high-res levels like ward or mandal often need this.
 
-**Validation:** every key in `model_configs` must appear in `model.models`. A key that doesn't match a registered model raises `ValueError` at runtime.
+**Features consumed.** Cases only. Reads `case_df`, not `merged_df`.
+
+**Horizon handling.** Weekly grid anchored at `cutoff_case`. `horizon_and_indices_for_targets` computes `(d - cutoff_case).days // 7 - 1` per target date; off-grid or non-positive offsets are a hard error. Every region shares one horizon (the max across targets).
+
+**Prediction location.** `model = "timesFoundationModel"`.
+
+**Tuneable?** No. There is nothing to tune — it's a frozen pretrained checkpoint.
+
+**Ensemble status.** Standalone, backtest-gated. It is NOT wired into the default ensemble; use it via `model.models: [timesfm]` with `ensemble: none, output: per_model` until the validation gate lands.
+
+**Known failure modes.**
+
+- Off-weekly-cadence input in a region (a date that isn't `anchor + k*7 days`) raises `ValueError` before any inference — a data-integrity signal, not something to silently interpolate.
+- Worker timeout at 300s by default — bump `timeout_s` for large batches or slow disks (first-run HF pull).
+- Non-finite outputs bubble up as `IsolatedRunError`.
 
 ---
 
-## Where to see model outputs
+## `freeze_weather_at_origin` — persistence for future weather
 
-All CSVs land in `artifacts/<region>/<run-id>/results/`. Filenames are driven by `model.output`:
+Set on `TrainPredictConfig`; default `False` on the config field (see #77 for context), but `recursive_forecast` treats `True` as its own internal default when called without a context. In practice pipelines pass the value explicitly. Affects `rf` and `xgb` (via the shared `recursive_forecast` engine). Two modes:
 
-| `output` | Files written |
-|----------|---------------|
-| `ensemble` | `Predictions_<MonthYear>_<RegionType>_<YYYYMMDD>.csv` (combined) |
-| `per_model` | `Predictions_<MonthYear>_<RegionType>_<model_key>_<YYYYMMDD>.csv` per model |
-| `both` | both of the above |
-
-Every CSV is post-threshold-classified. The `model` column distinguishes per-model rows (`negativeBinomialRegression`, `timeSeriesExtrapolation`) from ensemble rows (`ensembleModel`).
-
-### Example — see all three outputs
-
-```yaml
-model:
-  models: [nbr, tse]
-  ensemble: mean
-  output: both
-report:
-  primary: ensemble
-```
-
-After running, the results directory contains:
-```
-Predictions_Apr 2026_District_20260427.csv         # ensemble (mean of nbr + tse)
-Predictions_Apr 2026_District_nbr_20260427.csv     # NBR alone
-Predictions__District_tse_20260427.csv             # TSE alone (empty MonthYear when no future dates)
-```
-
-> Note on the empty `MonthYear` slot: it depends on whether a model's predictions fall on/after `run_date`. TSE only predicts 2 weeks ahead from the case cutoff, so when `run_date` is later than the case cutoff + 14 days the slot collapses to empty. This is cosmetic — the file itself contains valid TSE predictions for inspection.
-
-### Inspecting a single model from Python
-
-```python
-from pipelines.dengue.lib.models import get_model, ModelContext
-ctx = ModelContext(merged_df=..., case_df=..., cfg=..., pred_upto=..., cutoff_case=...)
-nbr_only = get_model("nbr").predict(ctx)
-tse_only = get_model("tse").predict(ctx)
-```
+- **`True` (persistence).** Weather / iso lag columns for every future week are copied from the forecast origin's row. Case lags are still filled hybrid-Y. This matches upstream vbd-modelbench and enables case-lag windows shorter than the horizon (a `case_lag_1` on week +3 references week +2's own prediction, not an observed value).
+- **`False` (per-week advance).** Each future week reads its own row from `df0`. Requires `lag_cases[i] >= horizon` so the referenced case week is observed. Any NaN in any future week's non-case features → region skipped. This mode leaks observed future weather and is only useful in strict hindcasts where the future weather is known.
 
 ---
 
-## Adding a new model
+## Tuning — Optuna, three modes
 
-Three changes — one file, one decorator, one import.
+`rf` and `xgb` support hyperparameter tuning driven by `pipelines/dengue/lib/models/_tuning.py`. The search spaces mirror vbd-modelbench (`tune_rf_cv` / `tune_xgb_cv`). Expanding-window CV over the training weeks; RMSE minimized.
 
-### 1. Create the model file
+Three modes on `model.tune`:
 
-`pipelines/dengue/lib/models/my_model.py`:
+| Value     | Behaviour                                                                                                                     |
+| --------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `true`    | **Always tune.** Ignore the cache, run Optuna, write new params + fingerprint.                                                |
+| `false`   | **Cache-then-tune (default).** Load cached params; if the fingerprint matches the current config + training cutoff, use them. Otherwise auto-retune. |
+| `"never"` | **Cache-only.** Trust the cache regardless of fingerprint (hindcast / production reuse). If the cache is missing, **raise `FileNotFoundError`** — fail loud rather than silently retune. |
 
-```python
-from __future__ import annotations
+The `"never"` mode was added specifically so hindcasts and scheduled production runs can reuse a one-time tuning result across many vintages without either (a) re-tuning on every vintage or (b) silently drifting when the fingerprint invalidates.
 
-import pandas as pd
+**Fingerprint contents.** SHA-256 of a JSON payload of: `lag_temp`, `lag_rainfall`, `lag_humidity`, `lag_cases`, `data_features`, `years_to_include`, `years_to_exclude`, `train_max_date`, and `region_type` (so a district cache never leaks into a ward run).
 
-from pipelines.dengue.lib.models import ModelContext, register
+**Cache paths.**
 
-
-@register("my_model")
-class MyModel:
-    def predict(self, ctx: ModelContext) -> pd.DataFrame:
-        """Return a DataFrame with at least: spatial_col, recordDate, prediction, model."""
-        # ctx.merged_df    → case + weather joined (use this if you need weather)
-        # ctx.case_df      → case-only DataFrame (use this if you don't need weather)
-        # ctx.cfg          → TrainPredictConfig (spatial_res, data_features, lag_*, etc.)
-        # ctx.pred_upto    → prediction horizon (pd.Timestamp)
-        # ctx.cutoff_case  → last reliable case-data date (pd.Timestamp)
-
-        rows = []
-        for region, grp in ctx.case_df.groupby(ctx.cfg.spatial_res):
-            future_date = ctx.pred_upto
-            rows.append({
-                ctx.cfg.spatial_res: region,
-                "recordDate": future_date,
-                "prediction": float(grp["case"].mean()),
-                "model": "myModel",
-            })
-        return pd.DataFrame(rows)
-
-    def threshold_to_date(self, ctx: ModelContext) -> pd.Timestamp:
-        """Date passed to merge_predictions_thresholds — typically pred_upto - 28 days
-        for weather-driven models or cutoff_case for case-only models."""
-        return ctx.pred_upto - pd.Timedelta(days=28)
+```
+hp/rf_<region_type>_best_params.json
+hp/rf_<region_type>_fingerprint.json
+hp/xgb_<region_type>_best_params.json
+hp/xgb_<region_type>_fingerprint.json
 ```
 
-### 2. Trigger registration
+`_best_params.json` payload:
 
-Add one line at the bottom of [pipelines/dengue/lib/models/\_\_init\_\_.py](../pipelines/dengue/lib/models/__init__.py):
-
-```python
-from pipelines.dengue.lib.models import my_model as _my_model_mod  # noqa: F401, E402
+```json
+{
+  "tuned_at": "2025-11-14",
+  "n_trials": 100,
+  "best_rmse": 12.4381,
+  "params": { "n_estimators": 550, "max_depth": 24, "min_samples_leaf": 3, "max_features": "sqrt" }
+}
 ```
 
-This forces the module to be imported (and the `@register` decorator to run) whenever anything imports the registry.
-
-### 3. Enable in YAML
-
-```yaml
-model:
-  models: [nbr, tse, my_model]
-```
-
-That's it. No edits to `train_and_predict.py`.
-
----
-
-## Adding a new ensemble strategy
-
-Same pattern as models, in a separate registry.
-
-### 1. Implement the strategy
-
-`pipelines/dengue/lib/ensembles.py` already hosts the registry. Append your class:
-
-```python
-@register_ensemble("weighted")
-class WeightedEnsemble:
-    def combine(
-        self, dfs: list[pd.DataFrame], *, spatial_col: str
-    ) -> pd.DataFrame:
-        # Combine predictions across DataFrames. Each df has a "model" column
-        # identifying its source. Return a DataFrame with the same group-key
-        # columns, a single "prediction" column, and "model" set to a label
-        # of your choice (e.g. "weightedEnsemble").
-        ...
-```
-
-Strategies must satisfy the `BaseEnsemble` Protocol — a single method `combine(dfs, *, spatial_col) -> pd.DataFrame`.
-
-### 2. Enable in YAML
-
-```yaml
-model:
-  models: [nbr, tse]
-  ensemble: weighted
-  output: ensemble
-```
-
-No edits elsewhere; the step looks up the strategy via `get_ensemble(cfg.ensemble)` at runtime.
-
----
-
-## The `BaseModel` Protocol
-
-A model is anything that satisfies this Protocol from [pipelines/dengue/lib/models/\_\_init\_\_.py](../pipelines/dengue/lib/models/__init__.py):
-
-```python
-@runtime_checkable
-class BaseModel(Protocol):
-    def predict(self, ctx: ModelContext) -> pd.DataFrame: ...
-    def threshold_to_date(self, ctx: ModelContext) -> pd.Timestamp: ...
-```
-
-`@runtime_checkable` means you can `isinstance(model, BaseModel)` to verify compliance.
-
-### The two methods
-
-- **`predict(ctx) → DataFrame`** — produce predictions. The returned DataFrame must contain at minimum `[spatial_col, recordDate, prediction, model]`. Return an empty DataFrame to indicate "no predictions possible" (the step will log a warning and skip the model rather than fail).
-- **`threshold_to_date(ctx) → Timestamp`** — the cutoff date passed to [`zones.merge_predictions_thresholds`](../pipelines/dengue/lib/zones.py) for this model's predictions. NBR uses `pred_upto - 28d`; TSE uses `cutoff_case`. Pick the date that aligns with how far back your model's training horizon ends.
-
-### `ModelContext`
-
-```python
-@dataclass
-class ModelContext:
-    merged_df: pd.DataFrame      # case + weather joined; use for weather-aware models
-    case_df: pd.DataFrame        # case-only; use for case-only models
-    cfg: TrainPredictConfig      # spatial_res, data_features, lag_temp, lag_rf, list_alpha, ...
-    pred_upto: pd.Timestamp      # NBR's prediction horizon
-    cutoff_case: pd.Timestamp    # last reliable case data date
-```
-
-Both DataFrames already have `recordDate` (datetime), `recordYear`, `recordMonth`, `ISOWeek` columns and the spatial column normalised to `cfg.spatial_res`.
-
----
-
-## Verifying a new model works
+Priming the cache for `tune="never"`:
 
 ```bash
-# 1. Confirm registration
-uv run python -c "from pipelines.dengue.lib.models import _REGISTRY; print(sorted(_REGISTRY))"
+# One-time: tune at every spatial level you plan to run production against.
+uv run python -m acestor.run \
+  --pipeline pipelines.dengue.pipeline:build_pipeline \
+  --config configs/ap_district.yaml \
+  --run-id prime-hp-district \
+  --override model.tune=true --override model.n_trials=100
 
-# 2. Confirm Protocol compliance
-uv run python -c "
-from pipelines.dengue.lib.models import BaseModel, get_model
-assert isinstance(get_model('my_model'), BaseModel)
-print('OK')
-"
-
-# 3. Run unit tests
-uv run pytest tests/dengue/test_models.py -v
-
-# 4. Run the pipeline end-to-end
-DENGUE_CONFIG=configs/ka_district.yaml make run-dengue-pipeline DENGUE_RUN_ID=test-my-model
+# Then all downstream vintages:
+uv run python -m acestor.run --config configs/ap_district.yaml \
+  --run-id hindcast-2024-w01 --override model.tune=never
 ```
 
 ---
 
-## Related
+## Ensembling
 
-- Issue [#15](https://github.com/dsih-artpark/acestor/issues/15) — the original spec for this registry
-- Issue [#17](https://github.com/dsih-artpark/acestor/issues/17) — the same pattern applied to threshold methods (in flight)
-- [docs/CONFIG_REFERENCE.md](CONFIG_REFERENCE.md) — full pipeline YAML reference
+Configured under `model:`:
+
+```yaml
+model:
+  models: [nbr, rf, xgb, tse]
+  ensemble: mean          # or "none"
+  output: ensemble        # or "per_model" | "both"
+
+report:
+  primary: ensemble       # controls which model drives the brief; short name
+```
+
+- `ensemble: mean` — `pipelines/dengue/lib/ensembles.py::MeanEnsemble.combine` averages `prediction` across models on the shared key (region + week + thresholdMethod), rewrites `model = "ensembleModel"`, and recomputes ISOWeek from `recordDate`. `predictionMin` / `predictionMax` are then attached by `_add_prediction_range` — min and max of the members within each group (issue #84).
+- `ensemble: none` — no combining. Only valid with `output: per_model`.
+
+**Output modes** (resolved by `_resolve_predictions_paths`):
+
+| `output`     | Canonical CSV                       | Extra files                                       |
+| ------------ | ----------------------------------- | ------------------------------------------------- |
+| `ensemble`   | `outputs/predictions.csv` (ensemble) | —                                                 |
+| `both`       | `outputs/predictions.csv` (ensemble) | `outputs/per_model/predictions_<m>.csv` per model |
+| `per_model`  | `outputs/predictions.csv` (copy of primary) | `outputs/per_model/predictions_<m>.csv` per model |
+
+In `per_model` mode there is always one canonical `outputs/predictions.csv` at the root — a copy of `report.primary`'s per-model file — so officials and the HTML brief have a single source of truth.
+
+---
+
+## Threshold anchoring — `threshold_to_date` is `cutoff_case`
+
+Every model returns `ctx.cutoff_case` from `threshold_to_date()` (issue #101). Previously `nbr`, `rf`, `xgb` used `pred_upto - 28 days`, which was byte-identical to `cutoff_case` only when the horizon was exactly 28 days and silently diverged otherwise (weekday-anchored sampling can produce a 21-day horizon). The unified `cutoff_case` anchor makes per-model outputs group-consistent and unblocks ensembling across mixed horizons.

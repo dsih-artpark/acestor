@@ -1,549 +1,345 @@
-# Config Reference
+# Configuration Reference
 
-Complete reference for every key in the pipeline YAML config.
-All keys are optional unless marked **required**.
+Reference for every YAML key consumed by the three acestor pipelines. Each field lists **type**, **default**, and **why it exists**. Source of truth is the `configs.py` module for each pipeline — this document is derived from those dataclasses.
 
----
+Three pipelines are documented:
 
-## `pipeline`
+1. `dengue_prep` — builds `prepared_data/` from raw case + weather sources.
+2. `dengue` — trains models, computes thresholds, renders maps and the HTML brief.
+3. `dengue_downscale` — takes parent-level predictions from a `dengue` run and splits them onto child regions.
 
-```yaml
-pipeline:
-  name: dengue          # used in logger names and artifact paths
-  title: "Dengue Intelligence — GBA"  # used in report document title
-```
+Each pipeline has a `pipeline.name` matching one of the above; the loader dispatches on it.
 
-| Key | Type | Default | Notes |
-|---|---|---|---|
-| `name` | string | `"pipeline"` | Short identifier, no spaces |
-| `title` | string | `""` | Appears in PDF report header |
+Common top-level keys (`state`, `pipeline`, `run`, `logging`, `storages`, `email`) are shared and documented once at the end.
 
 ---
 
-## `run`
+## 1. dengue_prep
 
-```yaml
-run:
-  run_date: "2026-03-18"   # leave blank to use today
-```
+Config sample: `configs/ka_district_prep.yaml`, `configs/od_district_prep.yaml`.
+Dataclasses: `pipelines/dengue_prep/configs.py`.
 
-| Key | Type | Default | Notes |
-|---|---|---|---|
-| `run_date` | YYYY-MM-DD | today | Reference date for cutoff and prediction window |
+### `data.prepared_data`
 
----
+Where prep writes its outputs. Consumed by the downstream `dengue` pipeline via the same block.
 
-## `data.prepared_data` *(dengue pipeline)*
+| key        | type | default          | why                                                                     |
+| ---------- | ---- | ---------------- | ----------------------------------------------------------------------- |
+| `base_dir` | str  | `prepared_data`  | Root folder for the per-region-type subfolders (`district/`, `zone/`…). |
 
-Location of prepared case and weather data produced by the dengue_prep pipeline.
+### `data.case_download`
 
-```yaml
-data:
-  prepared_data:
-    base_dir: "prepared_data"
-    region_type: "mandal"
-```
+Fetches raw line-list files from a case source.
 
-| Key | Type | Default | Notes |
-|---|---|---|---|
-| `base_dir` | string | `"prepared_data"` | Root directory; files resolved as `{base_dir}/{region_type}/cases_daily.csv` etc. |
-| `region_type` | string | `"district"` | Region granularity to load |
+| key                    | type      | default                                            | why                                                                                                                          |
+| ---------------------- | --------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `enabled`              | bool      | `false`                                            | Master switch. When false, prep assumes files are already staged under `source_path`.                                        |
+| `source_mode`          | str       | `""`                                               | Selects a case-source plugin: `dashboard`, `filesystem`, a dotted module path, or a direct file path. Empty → legacy backend.|
+| `source_backend`       | str       | `filesystem`                                       | Legacy path used only when `source_mode` is blank; `filesystem` or `s3`.                                                     |
+| `source_path`          | str       | `""` (falls back to `DENGUE_PREP_CASE_SOURCE` env) | Root path or URL the source plugin reads from.                                                                               |
+| `base_url`             | str       | plugin-specific                                    | For `dashboard` mode: dashboard API root, e.g. `https://apps.artpark.ai/disease-dashboard`.                                  |
+| `disease`              | str       | `Dengue`                                           | Dashboard disease slug.                                                                                                      |
+| `date_start`           | str       | `""`                                               | Dashboard: inclusive start of the fetch window (YYYY-MM-DD).                                                                 |
+| `date_end`             | str       | `""` (→ run_date)                                  | Dashboard: inclusive end. Blank tracks the current run.                                                                      |
+| `chunk_days`           | int       | plugin default                                     | Dashboard pagination window; smaller values ease per-request payload.                                                        |
+| `backfill_days`        | int       | plugin default                                     | Dashboard: how many days before `date_start` to re-fetch to catch late-arriving reports.                                     |
+| `selected_region_id`   | str       | `""`                                               | Restrict the dashboard fetch to a single region (debugging).                                                                 |
+| `cache_enabled`        | bool      | `true`                                             | Turn off to force re-download on every run.                                                                                  |
+| `cache_dir`            | str       | `./cache/raw_case`                                 | Local cache root.                                                                                                            |
+| `cache_strategy`       | str       | `local_first`                                      | `local_first` skips the network when the cache hits.                                                                         |
+| `filesystem_base_path` | str       | `""`                                               | Absolute or relative filesystem root when `source_backend=filesystem`.                                                       |
+| `s3_bucket`, `s3_prefix`| str      | `""`                                               | S3 backend location.                                                                                                         |
+| `source_paths`         | list\[str]| `[]`                                               | Explicit list of files a plugin should ingest.                                                                               |
+| `dest_relpath`         | str       | `datasets/raw_linelist_data/linelist`              | Relative destination under the run artifact root.                                                                            |
 
----
+### `data.case_parse`
 
-## `data.region_type` *(dengue_prep pipeline)*
+Parses raw case files into `cases_daily.csv`.
 
-Top-level region type for data preparation. Propagates into `case_parse`, `weather_download`, and `weather_parse` if those sections don't override it.
+| key                | type              | default                                     | why                                                                                                                                      |
+| ------------------ | ----------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `region_types`     | list\[str]        | required                                    | Non-empty list of region tiers to emit; each becomes a subfolder under `prepared_data/`.                                                 |
+| `date_start`       | str               | `""`                                        | Inclusive start filter on the case date. Empty → no lower bound.                                                                         |
+| `date_end`         | str               | `""`                                        | Inclusive end filter. Empty → no upper bound.                                                                                            |
+| `date_column`      | str \| list\[str] | `["Sample Collected Date"]`                 | Candidate column(s) for the case date. Parser tries in order; first one that parses cleanly wins. String is accepted for back-compat.    |
+| `region_id_column` | str               | `""`                                        | When set and present in the file, this column is trusted verbatim as the resolved `region_id` — skips LGD lookup, geocode, spatial join. |
+| `lgd_code_column`  | str               | `""`                                        | Column with an LGD code. Present → used to resolve to `region_id`.                                                                       |
+| `lat_column`       | str               | `Latitude`                                  | Fallback spatial-join latitude column.                                                                                                   |
+| `lon_column`       | str               | `Longitude`                                 | Fallback spatial-join longitude column.                                                                                                  |
+| `header_row`       | int               | `0`                                         | 0-indexed row containing headers; use `1` for banner-row IHIP exports.                                                                   |
+| `filters`          | list\[dict]       | `[]`                                        | Row filters: each entry `{column, values}`; AND across entries, OR within `values`.                                                      |
+| `geocoding`        | dict              | disabled                                    | Google-geocode + spatial-join resolver; see below.                                                                                       |
 
-```yaml
-data:
-  region_type: "mandal"
-```
+#### `data.case_parse.geocoding`
 
----
+Runs only when a row has neither LGD code nor `region_id_column` and only free-text address fields are usable.
 
-## `data.date_range` *(dengue_prep pipeline)*
+| key                          | type       | default                      | why                                                                    |
+| ---------------------------- | ---------- | ---------------------------- | ---------------------------------------------------------------------- |
+| `enabled`                    | bool       | `false`                      | Opt in explicitly.                                                     |
+| `address_fields`             | list\[str] | required when enabled        | Columns concatenated to build the primary query.                       |
+| `fallback_address_fields`    | list\[str] | `[]`                         | Second-pass columns when the first fails validation.                   |
+| `cache_file`                 | str        | `./cache/geocode_cache.json` | On-disk memoisation of Google responses.                               |
+| `extra_stopwords`            | list\[str] | `[]`                         | Extra tokens stripped before validation.                               |
+| `require_address`            | bool       | `true`                       | Drop rows whose first address field is empty.                          |
+| `require_validation`         | bool       | `true`                       | Drop rows whose Google response fails token validation.                |
+| `bounds`                     | list\[4]   | `null`                       | `[min_lat, min_lon, max_lat, max_lon]` viewport bias for the geocoder. |
+| `restrict_admin_area_tokens` | list\[str] | `[]`                         | Substrings that must appear in the formatted address; hard reject.     |
 
-Date range for data preparation. Propagates into `case_parse` (as `date_start`/`date_end`) and `weather_download` (as `start_date`/`end_date`) if those sections don't set their own values.
+### `data.weather_download`
 
-```yaml
-data:
-  date_range:
-    start: "2022-01-01"
-    end: "2026-03-28"   # empty → today (OpenMeteo capped at ERA5 5-day lag)
-```
+Fetches gridded weather. Two source families: CDS (`reanalysis-era5-land`) and openmeteo.
 
-| Key | Type | Default | Notes |
-|---|---|---|---|
-| `start` | YYYY-MM-DD | — | Earliest date to include |
-| `end` | YYYY-MM-DD | today | Latest date; empty → today |
+| key                     | type         | default                | why                                                                                                                                       |
+| ----------------------- | ------------ | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `enabled`               | bool         | `false`                | Master switch.                                                                                                                            |
+| `source_mode`           | str          | `filesystem`           | Plugin selector: `filesystem`, `cds`, `openmeteo`.                                                                                        |
+| `source_backend`        | str          | `filesystem`           | Backend for the filesystem plugin: `filesystem` or `s3`.                                                                                  |
+| `temperature_unit`      | str          | `celsius`              | Unit the *source* returns (`celsius`/`kelvin`). The parser normalises on-disk to Kelvin so downstream code sees one convention.           |
+| `precipitation_unit`    | str          | `mm`                   | Unit the source returns (`mm`/`m`). Normalised to metres on disk.                                                                         |
+| `netcdf_cache_path`     | str          | `""`                   | Local NetCDF cache path; empty → plugin default.                                                                                          |
+| `parsed_output_path`    | str          | `""`                   | Where per-region CSVs land after parsing.                                                                                                 |
+| `cds_variables`         | list\[str]   | env `GBA_CDS_VARIABLES`| CDS variable names.                                                                                                                       |
+| `region_bounds`         | list\[4]\|null | `null`               | `[N, W, S, E]`; null → auto-compute from the geojson.                                                                                     |
+| `region_type`           | str          | `district`             | Subfolder under the geojson root used to compute bounds.                                                                                  |
+| `w_params`              | list\[str]   | `[t2m, d2m, tp]`       | Short names of NetCDF variables the parser extracts.                                                                                      |
+| `threshold_km`          | float        | `25.0`                 | Max distance from a region's boundary a grid point may lie to still be attributed.                                                        |
+| `bounds_resolution_deg` | float        | `0.1`                  | Snap auto-computed bounds to this grid (0.25 for ERA5, 0.1 for ERA5-Land).                                                                |
+| `start_date`            | str          | `2015-01-01`           | Inclusive fetch start.                                                                                                                    |
+| `end_date`              | str          | `""`                   | Inclusive end. Empty → run_date.                                                                                                          |
+| `cache_enabled`         | bool         | `true`                 | Turn off to force re-download.                                                                                                            |
+| `cache_dir`             | str          | `./cache/raw_weather`  | Local cache root.                                                                                                                         |
+| `cache_strategy`        | str          | `local_first`          | `local_first` skips the network on cache hit.                                                                                             |
+| `source_path`, `filesystem_base_path`, `s3_bucket`, `s3_prefix`, `source_storage`, `source_prefix`, `source_paths`, `dest_relpath` | str/list | `""` / `datasets/raw_weather_data` | Location knobs mirroring `case_download`. |
 
----
+### `data.weather_parse`
 
-## `data.case_download`
+Daily aggregation of downloaded weather.
 
-Controls where raw case CSV files are read from.
+| key                 | type        | default                                                                | why                                             |
+| ------------------- | ----------- | ---------------------------------------------------------------------- | ----------------------------------------------- |
+| `region_type`       | str         | `district`                                                             | Region tier the daily rows are keyed to.        |
+| `weather_variables` | list\[str]  | `["2mTemperature","totalPrecipitation","2mDewpointTemperature"]`       | Variables to aggregate.                         |
+| `daily_agg`         | list\[dict] | `mean` for temps, `sum` for precip                                     | Per-variable daily aggregation ops.             |
 
-```yaml
-data:
-  case_download:
-    enabled: true
-    source_backend: "filesystem"   # or "s3"
-    source_path: "datasets/raw_linelist_data/AP_IHIP"
-```
+### `data.geojson`
 
-| Key | Type | Default | Notes |
-|---|---|---|---|
-| `enabled` | bool | `false` | Set `true` to activate |
-| `source_backend` | `"filesystem"` \| `"s3"` | `"filesystem"` | |
-| `source_path` | string | `""` | Filesystem dir or `s3://bucket/prefix` |
-| `source_paths` | list[string] | `[]` | Explicit file list; if empty, all files under `source_path` are used |
-| `cache_enabled` | bool | `true` | Cache S3 downloads locally |
-| `cache_dir` | string | `"./cache/raw_case"` | Local cache directory |
-| `cache_strategy` | string | `"local_first"` | `"local_first"` \| `"local"` \| `"cloud_first"` |
+| key         | type | default | why                                                    |
+| ----------- | ---- | ------- | ------------------------------------------------------ |
+| `base_path` | str  | —       | Root of the geojson layer; subfolders per region type. |
 
----
+### `data.date_range.start`
 
-## `data.case_parse`
-
-**Required section.**
-
-```yaml
-data:
-  case_parse:
-    region_types:
-      - "district"
-    date_start: "2021-09-01"
-    date_end: ""
-    date_column: "Sample Collected Date"
-    header_row: 0
-    lgd_code_column: "District Code"
-    filters:
-      - column: "Confirmed Diagnosis"
-        values: ["Dengue"]
-```
-
-| Key | Type | Default | Notes |
-|---|---|---|---|
-| `region_types` | **required** list[string] | — | e.g. `["corp", "zone"]` or `["district"]`. Last entry drives downstream steps |
-| `date_start` | **required** YYYY-MM-DD | — | Earliest case date to include |
-| `date_end` | YYYY-MM-DD | run_date | Latest case date; empty → run_date |
-| `date_column` | string | `"Sample Collected Date"` | Which column in the IHIP file to use as case date |
-| `header_row` | int | `0` | 0-indexed row containing column headers; set to `1` for banner-row exports (BBMP weekly L-forms) |
-| `lgd_code_column` | string | `""` | If set, this column drives the LGD → `{region_type}_{code}` resolver. Empty falls back to spatial join or geocoding |
-| `lat_column` | string | `"Latitude"` | Latitude column for the spatial-join resolver |
-| `lon_column` | string | `"Longitude"` | Longitude column for the spatial-join resolver |
-| `filters` | list[obj] | `[]` | Row-level filters; AND across entries, OR within `values`. Example: keep only confirmed dengue |
-| `geocoding` | object | (disabled) | Optional geocode-then-PIP resolver — see below |
-
-**Accepted region types:** `corp`, `zone`, `ward`, `district`, `subdistrict`, `mandal`
-
-### `data.case_parse.geocoding`
-
-Opt-in resolver for sources that lack both an LGD code column and reliable
-`(Latitude, Longitude)` — only free-text address fields. Composes an address
-per row, sends to Google's Geocoding API (with a persistent JSON cache),
-validates that the response actually references the source's named area
-(fuzzy ≤ 1 char, with a stopword filter), then PIPs the coords against the
-region geojson layer. Disabled by default.
-
-```yaml
-data:
-  case_parse:
-    geocoding:
-      enabled: true
-      address_fields:
-        - "Patient Address"
-        - "Village Or Ward"
-        - "Sub District"
-        - "Ulb"
-      fallback_address_fields:
-        - "Facility Name Lform"
-        - "Village Or Ward"
-        - "Sub District"
-        - "Ulb"
-      cache_file: "cache/gba_geocode_cache.json"
-      bounds: [12.7, 77.3, 13.3, 77.9]
-      restrict_admin_area_tokens:
-        - "Karnataka"
-```
-
-| Key | Type | Default | Notes |
-|---|---|---|---|
-| `enabled` | bool | `false` | Master switch. When `true`, `address_fields` must be non-empty |
-| `address_fields` | list[string] | `[]` | Primary composition — `", "`-joined in order. First entry is also the "primary identifier" for `require_address` |
-| `fallback_address_fields` | list[string] | `[]` | Tried only for rows that didn't resolve on `address_fields` (e.g. cross-state Patient Addresses). Same `", "`-join semantics |
-| `cache_file` | string | `"./cache/geocode_cache.json"` | Persistent JSON cache, keyed by normalised address. Weekly re-runs are zero-cost for already-seen rows |
-| `extra_stopwords` | list[string] | `[]` | Extra tokens (e.g. district / corporation names) to suppress from the validation set — prevents generic words from carrying through a wrong-area Google guess |
-| `require_address` | bool | `true` | Drop rows where the first `address_fields` column is empty (vs carrying them through with `NaN` region_id) |
-| `require_validation` | bool | `true` | Drop rows that fail both primary and fallback passes (vs keeping them with `NaN` region_id) |
-| `bounds` | list[float] (4 items) | `null` | `[min_lat, min_lon, max_lat, max_lon]` viewport biasing the geocoder. **Soft** bias only — pair with `restrict_admin_area_tokens` for a hard reject. The bounds value is also folded into the cache key so bounded and unbounded runs don't collide |
-| `restrict_admin_area_tokens` | list[string] | `[]` | Substrings (case-insensitive) at least one of which must appear in Google's `formatted_address` for the result to be accepted. **Hard** reject — used to drop cross-state hits (e.g. require `"Karnataka"` so a Jhansi UP geocode is rejected before PIP) |
+| key     | type | default | why                                                                                                       |
+| ------- | ---- | ------- | --------------------------------------------------------------------------------------------------------- |
+| `start` | str  | —       | Global anchor for the prep window; passed to plugins that need a fetch start when `date_start` is blank.  |
 
 ---
 
-## `data.case_sufficiency`
+## 2. dengue
 
-Early gate that aborts the run if case data is too sparse.
+Config sample: `configs/ka_district.yaml`, `configs/gba_zone.yaml`.
+Dataclasses: `pipelines/dengue/configs.py`.
 
-```yaml
-data:
-  case_sufficiency:
-    enabled: true
-    min_total_rows: 30
-    min_distinct_regions: 2
-    min_date_span_days: 14
-    max_staleness_days: 14
-```
+### `data.prepared_data`
 
-| Key | Type | Default | Notes |
-|---|---|---|---|
-| `enabled` | bool | `true` | |
-| `min_total_rows` | int | `30` | Minimum case rows across all regions |
-| `min_distinct_regions` | int | `2` | Minimum distinct region IDs |
-| `min_date_span_days` | int | `14` | Minimum date range in days |
-| `max_staleness_days` | int | `0` | Recency guard. Max acceptable gap (in days) between `run_date` and the most recent date observed in prepared data — checked **before** the case-data clamp. `0` = disabled (legacy behaviour). Catches the silent failure mode of `run_date` running ahead of the available data — every model's prediction window then falls past the data cutoff, NaN-ing out case-lag features and silently dropping models. Recommended value: a few days more than your prep cadence (e.g. `14` for weekly prep). |
+| key           | type | default          | why                                                                            |
+| ------------- | ---- | ---------------- | ------------------------------------------------------------------------------ |
+| `base_dir`    | str  | `prepared_data`  | Root of the prep output the pipeline reads.                                    |
+| `region_type` | str  | `district`       | Subfolder to load from (`district`, `zone`, `corp`, `ward`, `subdistrict`).    |
 
----
+### `data.case_parse`
 
-## `data.geojson`
+| key            | type       | default  | why                                                                                                                              |
+| -------------- | ---------- | -------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `region_types` | list\[str] | required | Non-empty, no duplicates. **Order matters**: the last entry drives cutoffs and the sampled CSV that maps/thresholds consume.     |
+| `date_start`   | str        | required | Inclusive start.                                                                                                                 |
+| `date_end`     | str        | required | Inclusive end; empty string → parser uses today.                                                                                 |
 
-```yaml
-data:
-  geojson:
-    base_path: "datasets/geojsons/geojsons_GBA"
-```
+### `data.case_sufficiency`
 
-| Key | Type | Default | Notes |
-|---|---|---|---|
-| `base_path` | string | `"geojsons"` | Root folder; files resolved as `{base_path}/{region_type}s/{region_id}.geojson` |
+Early abort when the parsed case data is too thin to model.
 
----
+| key                    | type | default | why                                                                                                                                    |
+| ---------------------- | ---- | ------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `enabled`              | bool | `true`  | Turn off to run the pipeline on tiny/synthetic inputs.                                                                                 |
+| `min_total_rows`       | int  | `30`    | Row-count floor.                                                                                                                       |
+| `min_distinct_regions` | int  | `2`     | Region-count floor.                                                                                                                    |
+| `min_date_span_days`   | int  | `14`    | Temporal span floor.                                                                                                                   |
+| `case_column`          | str  | `case`  | Which column carries the case count.                                                                                                   |
+| `region_column`        | str  | `""`    | Empty → derived from `region_type`.                                                                                                    |
+| `date_column`          | str  | `""`    | Empty → derived from `region_type`.                                                                                                    |
+| `max_staleness_days`   | int  | `0`     | Max acceptable gap between `run_date` and the freshest observed case row. Catches `run_date` running ahead of ingest. 0 disables.      |
 
-## `data.weather_download`
+### `cutoff`
 
-```yaml
-data:
-  weather_download:
-    enabled: true
-    source_mode: "openmeteo"   # openmeteo | cds | filesystem
-    parsed_output_path: "datasets/openmeteo_ap"
-    convert_units: true        # convert OpenMeteo °C→K and mm→m to match ERA5 units
-    region_type: "district"
-```
+| key                   | type | default | why                                                                                    |
+| --------------------- | ---- | ------- | -------------------------------------------------------------------------------------- |
+| `case_min_regions`    | int  | `2`     | Minimum regions with observations before the case cutoff is honoured.                  |
+| `weather_min_regions` | int  | `5`     | Same, for weather.                                                                     |
 
-| Key | Type | Default | Notes |
-|---|---|---|---|
-| `enabled` | bool | `false` | Must be `true` for weather data to flow into the pipeline |
-| `source_mode` | `"openmeteo"` \| `"cds"` \| `"filesystem"` | `"filesystem"` | `"openmeteo"` — free ERA5 via Open-Meteo archive API; `"cds"` — ERA5-Land via Copernicus (requires API key); `"filesystem"` — read pre-downloaded CSVs |
-| `source_backend` | `"filesystem"` \| `"s3"` | `"filesystem"` | Backend for `"filesystem"` mode |
-| `source_path` | string | `""` | Directory of pre-parsed CSVs, or `s3://bucket/prefix` |
-| `parsed_output_path` | string | `""` | Root directory where monthly CSVs are written. For openmeteo/CDS modes, files land at `{parsed_output_path}/{region_type}/{year}/{year}_{mm}.csv` |
-| `convert_units` | bool | `false` | OpenMeteo mode only: convert °C→K for temperature/dew-point and mm→m for precipitation to match ERA5 units. Set `true` when mixing with CDS data |
-| `chunk_months` | int | `12` | OpenMeteo mode only: months of data per API call. Reduce if hitting rate limits |
-| `region_type` | string | `"zone"` | Region type to download weather for; must match `data.region_type` |
-| `netcdf_cache_path` | string | `""` | CDS mode: path to local `.zip`/`.nc` cache |
-| `w_params` | list[string] | `["t2m","d2m","tp"]` | CDS/NetCDF mode: variable short names to extract |
-| `threshold_km` | float | `25.0` | CDS mode: max distance from region boundary for ERA5 grid-point filtering |
-| `bounds_resolution_deg` | float | `0.1` | CDS mode: grid snap resolution for auto-computed region bounds |
-| `start_date` | YYYY-MM-DD | `"2015-01-01"` | Download start date |
-| `end_date` | YYYY-MM-DD | run_date | Download end date; empty → today (OpenMeteo is capped at ERA5 lag of 5 days) |
+### `thresholds`
 
----
+| key                     | type          | default                     | why                                                                                                                                                                                                                                                        |
+| ----------------------- | ------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `region_type`           | str           | `zone`                      | Region tier the thresholds are computed for.                                                                                                                                                                                                              |
+| `methods`               | list\[str]    | `[historical, prev_nweeks]` | Which methods to compute; each writes its own threshold rows. Registered names: `historical`, `prev_nweeks`, `weighted_baseline`.                                                                                                                          |
+| `classification_method` | str           | `who`                       | Zone-labelling scheme: `who`, `icmr`, or `percentile`. Unknown values raise (previously silently produced WHO output — issue #62).                                                                                                                        |
+| `percentile_cutoffs`    | list\[float]  | `[25.0, 50.0, 75.0]`        | For `classification_method: percentile` only. N cutoffs → N+1 bands, computed per region against its own weekly history. Common override: `[50, 75, 90]`.                                                                                                 |
+| `n_weeks`               | int           | `4`                         | Prev-N-weeks window.                                                                                                                                                                                                                                      |
+| `historical_n_years`    | int \| null   | `4`                         | Historical lookback in years. `null` → all history.                                                                                                                                                                                                       |
+| `excluded_years`        | list\[int]    | `[2020, 2021]`              | Years dropped from the historical baseline (COVID gaps).                                                                                                                                                                                                  |
+| `included_years`        | list\[int]    | `[]`                        | Empty → no restriction; non-empty → whitelist.                                                                                                                                                                                                            |
+| `list_alpha`            | list\[float]  | `[1.0, 2.0]`                | Sigma multipliers for the WHO/ICMR banding.                                                                                                                                                                                                               |
+| `recent_weeks`          | int           | `4`                         | `weighted_baseline` recent-window length.                                                                                                                                                                                                                 |
+| `sd_window_weeks`       | int           | `8`                         | `weighted_baseline` std-dev window.                                                                                                                                                                                                                       |
+| `weight_recent`         | float         | `0.7`                       | `weighted_baseline` recent-mean weight.                                                                                                                                                                                                                   |
+| `weight_seasonal`       | float         | `0.3`                       | `weighted_baseline` seasonal weight (52-week-lag mean).                                                                                                                                                                                                   |
+| `method_configs.<name>` | dict          | inherit                     | Per-method overrides for `n_weeks`, `historical_n_years`, `excluded_years`, `included_years`, `recent_weeks`, `sd_window_weeks`, `weight_recent`, `weight_seasonal`. `region_type`, `methods`, `classification_method` always inherit from the base block. |
 
-## `data.weather_parse`
+### `model`
 
-```yaml
-data:
-  weather_parse:
-    region_type: "district"
-    weather_variables:
-      - "2mTemperature"
-      - "totalPrecipitation"
-      - "2mDewpointTemperature"
-    daily_agg:
-      - {name: "2mTemperature", op: "max", output_name: "2mTemperature_max"}
-      - {name: "2mTemperature", op: "min", output_name: "2mTemperature_min"}
-      - {name: "2mTemperature", op: "mean"}
-      - {name: "2mDewpointTemperature", op: "mean"}
-      - {name: "totalPrecipitation", op: "sum"}
-    rolling_n_days: 7
-    rolling_agg:
-      - {name: "2mTemperature", op: "mean"}
-      - {name: "2mDewpointTemperature", op: "mean"}
-      - {name: "totalPrecipitation", op: "sum"}
-    sampling_rate: 7
-    intermediate_col_rename:
-      "2mTemperature_max": "t2m_max"
-      "2mTemperature_min": "t2m_min"
-      "2mTemperature": "t2m_mean"
-      "2mDewpointTemperature": "d2m_mean"
-      "totalPrecipitation": "tp_sum"
-```
+| key                        | type          | default        | why                                                                                                                                                                                                    |
+| -------------------------- | ------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `spatial_res`              | str           | `zone`         | Region tier the models train and predict on.                                                                                                                                                           |
+| `models`                   | list\[str]    | `["tse"]`      | Subset of `nbr`, `tse`, `rf`, `xgb`, `timesfm`. `nbr` was retired from the default set (issue #63) but is still opt-in via `models: [nbr, ...]`.                                                       |
+| `ensemble`                 | str           | `mean`         | Registered ensemble strategy or `none`. `none` is incompatible with `output=ensemble`.                                                                                                                 |
+| `output`                   | str           | `ensemble`     | `ensemble`, `per_model`, or `both`.                                                                                                                                                                    |
+| `tune`                     | bool \| str   | `false`        | `true` → always Optuna-retune. `false` → use cache when fingerprint matches, otherwise retune. `"never"` → trust cache regardless (hindcast / production reuse); fails loud on cache miss.             |
+| `n_trials`                 | int           | `100`          | Optuna trials when tuning runs.                                                                                                                                                                        |
+| `debug`                    | bool          | `false`        | Emit per-model intermediate CSVs under `artifacts/debug/<model>/`.                                                                                                                                     |
+| `data_features`            | list\[str]    | `[]`           | Columns fed to the tabular models.                                                                                                                                                                     |
+| `years_to_exclude`         | list\[int]    | `[2020, 2021]` | Training years dropped.                                                                                                                                                                                |
+| `years_to_include`         | list\[int]    | `[]`           | Empty → no restriction; non-empty → whitelist.                                                                                                                                                         |
+| `lag.lag_temp`             | list\[int]    | `[12]`         | Temperature lag weeks fed as features.                                                                                                                                                                 |
+| `lag.lag_rainfall`         | list\[int]    | `[4]`          | Precipitation lags.                                                                                                                                                                                    |
+| `lag.lag_humidity`         | list\[int]    | `[4]`          | Dewpoint lags.                                                                                                                                                                                         |
+| `lag.lag_cases`            | list\[int]    | `[]`           | Case-count lags (autoregressive).                                                                                                                                                                      |
+| `clip_multiplier`          | float \| null | `null`         | Upper clip in recursive forecast: cap each step at `clip_multiplier * max(train cases)`. `null` = floor at 0 only (default; reference parity).                                                         |
+| `freeze_weather_at_origin` | bool          | `true`         | Persistence: freeze weather/exogenous lag features at the forecast origin for every future week. Matches upstream vbd-modelbench. Set false only for hindcasts that deliberately leak future weather.  |
 
-| Key | Type | Default | Notes |
-|---|---|---|---|
-| `region_type` | string | `"zone"` | Must match `case_parse.region_types` |
-| `weather_variables` | list[string] | `["2mTemperature","totalPrecipitation","2mDewpointTemperature"]` | Variables to read from parsed CSVs |
-| `daily_agg` | list[{name, op, output_name?}] | mean/sum defaults | Aggregations applied per day. `op`: `"mean"`, `"max"`, `"min"`, `"sum"` |
-| `rolling_n_days` | int | `7` | Rolling window size in days |
-| `rolling_agg` | list[{name, op}] | mean/sum defaults | Aggregations applied over rolling window |
-| `sampling_rate` | int | `7` | Sample every N days (7 = weekly) |
-| `intermediate_col_rename` | dict | see above | Renames columns in intermediate files |
-| `write_agg_daily` | bool | `true` | Write `agg_daily` intermediate CSVs to artifacts. Set `false` to skip (e.g. hindcast batch runs) |
-| `write_agg_ndays` | bool | `true` | Write `agg_Ndays` rolling-aggregate intermediate CSVs to artifacts. Set `false` to skip |
+### `model_configs.<model>`
 
----
+Per-model overrides. Keys mirror the `model` block: `data_features`, `years_to_exclude`, `years_to_include`, `tune`, `n_trials`, `debug`, `clip_multiplier`, `freeze_weather_at_origin`, and the `lag.*` sub-keys. Unspecified keys inherit from `model`. Any key not listed in `model.models` is rejected at build time (fail-fast; the error message names both the YAML fix and the `--set` CLI trap that re-creates a removed key).
 
-## `cutoff`
+#### `model_configs.timesfm`
 
-```yaml
-cutoff:
-  case_min_regions: 2
-  weather_min_regions: 5
-```
+TimesFM 2.5 foundation model settings. **All optional** — omit the whole block and defaults apply.
 
-| Key | Type | Default | Notes |
-|---|---|---|---|
-| `case_min_regions` | int | `2` | Minimum regions with recent case data to determine cutoff |
-| `weather_min_regions` | int | `5` | Minimum regions with recent weather data |
+| key                     | type  | default                                                                          | why                                                                                                        |
+| ----------------------- | ----- | -------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `huggingface_repo_id`   | str   | `google/timesfm-2.5-200m-pytorch`                                                | HF repo the checkpoint is pulled from.                                                                     |
+| `revision`              | str   | env `TIMESFM_REVISION` or pinned SHA `1d952420fba87f3c6dee4f240de0f1a0fbc790e3`  | Must be a full 40-hex commit SHA. Tags/branches are rejected — checkpoints can move under a floating ref.  |
+| `cache_dir`             | str   | `.cache/timesfm`                                                                 | Project-local, gitignored.                                                                                 |
+| `max_context`           | int   | `1024`                                                                           | Truncate each region's series to this many trailing weeks before inference.                                |
+| `per_core_batch_size`   | int   | `32`                                                                             | Torch batch size inside the worker.                                                                        |
+| `min_context_weeks`     | int   | `52`                                                                             | Regions with fewer weeks of history are skipped (all-zero regions still get zero predictions).             |
+| `timeout_s`             | float | `300`                                                                            | Subprocess wall-clock timeout.                                                                             |
+| `max_regions_per_batch` | int   | `128`                                                                            | Cap on regions per worker call — bounds worker memory.                                                     |
 
----
+### `assess`
 
-## `thresholds`
+| key                        | type | default | why                                                                                                                                                                                     |
+| -------------------------- | ---- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `total_<region>_regions`   | int  | —       | Denominator for assess ratios. Keys recognised: `total_corp_regions`, `total_zone_regions`, `total_ward_regions`, `total_district_regions`, `total_subdistrict_regions`.                |
 
-```yaml
-thresholds:
-  region_type: "district"
-  n_weeks: 4
-  historical_n_years: 4
-  excluded_years: []
-  included_years: []
-  classification_method: "who"        # "who" | "icmr" | "percentile"
-  percentile_cutoffs: [25, 50, 75]    # only used when classification_method = "percentile"
-```
+### `maps`
 
-| Key | Type | Default | Notes |
-|---|---|---|---|
-| `region_type` | string | `"zone"` | Must match `case_parse.region_types` |
-| `n_weeks` | int | `4` | Number of future weeks to predict |
-| `historical_n_years` | int \| null | `null` (all years) | Limit historical data to last N years |
-| `excluded_years` | list[int] | `[2020, 2021]` | Years to skip (e.g. COVID anomaly) |
-| `included_years` | list[int] | `[]` | If non-empty, only use these years |
-| `classification_method` | `"who"` \| `"icmr"` \| `"percentile"` | `"who"` | Risk-zone classifier. **Unknown values now raise** — until 2026 they silently fell through to WHO output. `who` = per-region threshold bands `T_α = Mean + α·StdDev`. `icmr` = cross-sectional quartile strata (A1–A4) per predicted week. `percentile` = per-region historical-percentile bands cut at `percentile_cutoffs` of each region's own case history. |
-| `percentile_cutoffs` | list[float] | `[25, 50, 75]` | Percentile values (0–100) at which to cut each region's history. `N` cutoffs yield `N+1` bands; band 1 = lowest, band `N+1` = highest. Only used when `classification_method = "percentile"`. |
+| key            | type | default            | why                                                                                                                                                     |
+| -------------- | ---- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `enabled`      | bool | `true`             | Set `false` to skip static PNG generation. The HTML report renders interactive D3 maps from embedded GeoJSON regardless; PNGs remain useful for PDF/offline distribution. |
+| `output_dir`   | str  | `plots`            | Where PNG choropleths land.                                                                                                                             |
+| `figure_title` | str  | `Dengue risk map`  | Suptitle line 1; line 2 is the prediction date.                                                                                                         |
+
+### `report`
+
+| key                            | type | default                                    | why                                                                                                                                            |
+| ------------------------------ | ---- | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `document_title`               | str  | `<pipeline.title> — summary report`        | Report `<title>`. Falls back to a generic string when both this and `pipeline.title` are empty.                                                |
+| `primary`                      | str  | `ensemble`                                  | Which prediction feeds maps and the report. Accepts `ensemble` or a model key. Short aliases (`timesfm`, `ensemble`) resolve to the internal model name. |
+| `threshold_method_for_report`  | str  | `historical`                                | Threshold method the report tables and headline bands use.                                                                                     |
+
+### `report_distribution`
+
+Free-form dict rendered into the report header (`system_name`, `organization`, `state`, `region`, `department`, `contact_email`, `footer_note`). All fields are strings; empty strings are omitted.
 
 ---
 
-## `model`
+## 3. dengue_downscale
 
-```yaml
-model:
-  spatial_res: "district"
-  data_features:
-    - "case"
-    - "recordDate"
-    - "recordYear"
-    - "recordMonth"
-    - "ISOWeek"
-    - "t2m_mean"
-    - "tp_sum"
-    - "d2m_mean"
-  lag:
-    lag_temp: [12]
-    lag_rf: [4]
-  years_to_exclude: []
-  years_to_include: []
-  list_alpha: [1.0, 2.0]
-```
+Config sample: `configs/ka_district_to_subdistrict.yaml`.
+Dataclasses: `pipelines/dengue_downscale/configs.py`.
 
-| Key | Type | Default | Notes |
-|---|---|---|---|
-| `spatial_res` | string | `"zone"` | Must match `case_parse.region_types` |
-| `data_features` | list[string] | temperature/rain/case defaults | Feature columns fed to the model |
-| `lag.lag_temp` | list[int] | `[12]` | Temperature lag in weeks |
-| `lag.lag_rf` | list[int] | `[4]` | Rainfall lag in weeks |
-| `years_to_exclude` | list[int] | `[2020, 2021]` | Exclude from model training |
-| `years_to_include` | list[int] | `[]` | If non-empty, train only on these years |
-| `list_alpha` | list[float] | `[1.0, 2.0]` | Ridge regression alpha values to try |
+### `run`
 
----
+| key              | type | default | why                                                                                                                                                                                          |
+| ---------------- | ---- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `source_run_id`  | str  | —       | Run ID whose parent-level predictions are downscaled. Sentinel `"latest"` picks the newest artifact matching `parent_level` and the finer brief tolerance (fixed in commit 6d96610).          |
 
-## `assess`
+### `downscale`
 
-```yaml
-assess:
-  total_district_regions: 26
-```
+| key                          | type        | default                              | why                                                                                                                                                            |
+| ---------------------------- | ----------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `parent_level`               | str         | required                             | Singular region tier the source predictions live at (e.g. `district`).                                                                                         |
+| `child_level`                | str         | required                             | Singular child tier to split onto (e.g. `subdistrict`). Must differ from `parent_level`.                                                                       |
+| `window_weeks`               | int         | `4`                                  | Look-back window (weeks of child-level cases) used to derive per-child shares of parent cases.                                                                 |
+| `historical_fallback_weeks`  | int \| null | `null`                               | Longer window tried when the primary window has zero cases across all children of a parent (issue #86). Must strictly exceed `window_weeks`. `null` disables.  |
+| `cases_csv`                  | str         | `prepared_data/mandal/cases_daily.csv`| Child-level case history used to derive shares.                                                                                                                |
+| `geojson_base_path`          | str         | `ap_datasets/geojsons/geojsons_AP`   | Root of the geojson layer used for the child map.                                                                                                              |
+| `on_missing_parents`         | str         | `error`                              | `error` or `warn`. Controls behaviour when a parent has no children in the geojson.                                                                            |
 
-Set `total_{region_type}_regions` for each region type present in your data.
+### `thresholds`
 
-| Key | Type | Default | Notes |
-|---|---|---|---|
-| `total_corp_regions` | int | — | Total number of corp regions in the geography |
-| `total_zone_regions` | int | — | Total number of zone regions |
-| `total_ward_regions` | int | — | Total number of ward regions |
-| `total_district_regions` | int | — | Total number of districts |
-| `total_subdistrict_regions` | int | — | Total number of subdistricts |
+Same schema as the `dengue` pipeline's `thresholds` block, applied to child-level predictions. `method_configs.<name>` overrides are supported identically.
 
-Used to compute coverage ratios for threshold method assessment. If omitted for a region type, defaults to `10`.
+### `downscale_maps`
+
+| key            | type | default            | why                                                                              |
+| -------------- | ---- | ------------------ | -------------------------------------------------------------------------------- |
+| `enabled`      | bool | `true`             | Set false to skip child-level PNG choropleths (interactive maps still render).   |
+| `output_dir`   | str  | `outputs/maps`     | Where PNGs land.                                                                 |
+| `figure_title` | str  | `Dengue risk map`  | Suptitle.                                                                        |
 
 ---
 
-## `maps`
+## Common top-level keys
 
-```yaml
-maps:
-  output_dir: "plots"
-  figure_title: "Andhra Pradesh Dengue Risk Map"
-```
+### `state`
 
-| Key | Type | Default | Notes |
-|---|---|---|---|
-| `output_dir` | string | `"plots"` | Relative path under artifacts for map PNGs |
-| `figure_title` | string | `"Dengue risk map"` | Map title (first line); prediction date is added as second line |
+Two-letter state slug used in artifact paths and report copy. Free-form.
 
----
+### `pipeline`
 
-## `report`
+| key            | type | default | why                                                                                        |
+| -------------- | ---- | ------- | ------------------------------------------------------------------------------------------ |
+| `name`         | str  | —       | Selects the pipeline: `dengue`, `dengue_prep`, or `dengue_downscale`.                      |
+| `title`        | str  | `""`    | Human title used in the report header when `report.document_title` is blank.               |
+| `display_name` | str  | `""`    | Alternate hint used the same way as `title`.                                               |
 
-```yaml
-report:
-  output_dir: "reports"
-  compile_pdf: true
-  caption_primary: "AP districts"
-  caption_secondary: ""
-  bundle_prefix: "Report"
-  document_title: ""
-```
+### `run`
 
-| Key | Type | Default | Notes |
-|---|---|---|---|
-| `output_dir` | string | `"reports"` | Relative path under artifacts for report files |
-| `compile_pdf` | bool | `false` | Compile LaTeX bundle to PDF (requires `pdflatex` in PATH) |
-| `caption_primary` | string | `"corporations"` | Region label for primary region type in captions |
-| `caption_secondary` | string | `"zones"` | Region label for secondary region type |
-| `bundle_prefix` | string | `"Report"` | Prefix for the output zip filename |
-| `document_title` | string | derived from `pipeline.title` | PDF document title; auto-set if blank |
+| key         | type | default          | why                                                    |
+| ----------- | ---- | ---------------- | ------------------------------------------------------ |
+| `run_date`  | str  | `""` → today     | Anchor date for the pipeline. Blank tracks wall clock. |
 
----
+### `logging`
 
-## `report_distribution`
+| key     | type | default | why                                                        |
+| ------- | ---- | ------- | ---------------------------------------------------------- |
+| `level` | str  | `INFO`  | Python logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`).|
 
-Metadata embedded in the report and used in email notifications.
+### `storages.artifacts`
 
-```yaml
-report_distribution:
-  system_name: "Dengue Early Warning System"
-  organization: "ARTPARK, IISc Bengaluru"
-  state: "Andhra Pradesh"
-  region: "Andhra Pradesh (26 Districts)"
-  department: "Directorate of Public Health, GoAP"
-  contact_email: ""
-  footer_note: ""
-```
+Where the pipeline writes per-run artifacts.
 
----
+| key                        | type | default | why                                                                                     |
+| -------------------------- | ---- | ------- | --------------------------------------------------------------------------------------- |
+| `kind`                     | str  | —       | `filesystem` or `s3`.                                                                   |
+| `filesystem.base_path`     | str  | —       | Root path when `kind=filesystem`. Each run gets an isolated subfolder keyed by `--run-id`. |
+| `s3.bucket`, `s3.prefix`   | str  | —       | Bucket / key prefix when `kind=s3`.                                                     |
 
-## `email`
+### `email`
 
-```yaml
-email:
-  enabled: false
-  on: ["success", "failed"]
-  to: ["recipient@example.com"]
-```
-
-| Key | Type | Default | Notes |
-|---|---|---|---|
-| `enabled` | bool | `false` | |
-| `on` | list[string] | `["success"]` | When to send: `"success"`, `"failed"`, or both |
-| `to` | list[string] | `[]` | Recipient addresses |
-
-SMTP credentials are set via environment variables — see `.env.example`.
-
----
-
-## `logging`
-
-```yaml
-logging:
-  level: INFO
-```
-
-| Key | Type | Default | Notes |
-|---|---|---|---|
-| `level` | string | — | `DEBUG`, `INFO`, `WARNING`, `ERROR`. **If this section is omitted, all pipeline logs are silently discarded.** |
-
----
-
-## `storages`
-
-```yaml
-storages:
-  artifacts:
-    kind: filesystem
-    filesystem:
-      base_path: "./artifacts"
-```
-
-**Filesystem:**
-
-| Key | Type | Notes |
-|---|---|---|
-| `kind` | `"filesystem"` | |
-| `filesystem.base_path` | string | Root directory for all run artifacts |
-
-**S3:**
-
-```yaml
-storages:
-  artifacts:
-    kind: s3
-    s3:
-      bucket: your-bucket
-      base_prefix: artifacts/
-      region: ap-south-1
-```
-
-| Key | Type | Notes |
-|---|---|---|
-| `kind` | `"s3"` | |
-| `s3.bucket` | string | S3 bucket name |
-| `s3.base_prefix` | string | Key prefix (folder) within the bucket |
-| `s3.region` | string | AWS region |
-
----
-
-## `run.source_run_id` *(dengue_downscale pipeline)*
-
-```yaml
-run:
-  source_run_id: "march-10-run"
-```
-
-| Key | Type | Default | Notes |
-|---|---|---|---|
-| `source_run_id` | string | **required** | Run ID of the `dengue` forecast run whose predictions to disaggregate. Must exist under `storages.artifacts.filesystem.base_path`. |
-
----
-
-## `downscale` *(dengue_downscale pipeline)*
-
-```yaml
-downscale:
-  parent_level: district
-  child_level: mandal
-  window_weeks: 4
-  cases_csv: "prepared_data/mandal/cases_daily.csv"
-  geojson_base_path: "ap_datasets/geojsons/geojsons_AP"
-```
-
-| Key | Type | Default | Notes |
-|---|---|---|---|
-| `parent_level` | string | **required** | Singular geography of the source predictions (e.g. `district`, `state`) |
-| `child_level` | string | **required** | Singular geography to disaggregate into (e.g. `mandal`, `block`). Must differ from `parent_level`. |
-| `window_weeks` | int | `4` | How many recent weeks of child-level case history to use when computing each child's share. Must be > 0. |
-| `cases_csv` | string | `"prepared_data/mandal/cases_daily.csv"` | Path to child-level daily case counts produced by `dengue_prep` at the child spatial level. |
-| `geojson_base_path` | string | `"ap_datasets/geojsons/geojsons_AP"` | Base directory containing `{child_level}s/` subdirectory with per-region GeoJSON files. Each file must have `region_id` and `parent` properties. |
-
+| key       | type | default | why                                                                                                                                                                                            |
+| --------- | ---- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `enabled` | bool | `false` | Turn on to have the report step send the rendered HTML via SMTP. Other keys (`smtp_host`, `smtp_port`, `to`, `from`, `subject`, credentials via env) are consumed by the email step directly.  |

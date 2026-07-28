@@ -1,328 +1,249 @@
 # Threshold & Classification Methods — Reference
 
-> **Audience:** Modelling team, backend engineers, config authors.  
-> **Purpose:** One place to understand every threshold and classification method,
-> where each one lives in the pipeline, and how to configure it.  
-> Sources: PRISM-H Logic Reference, High Risk Districts SOP (Draft V3), codebase.
+> **Audience:** modelling team, backend engineers, config authors.
+> **Purpose:** one place to look up every threshold-generation method and
+> every classification method, the exact formula each one uses, and the
+> config keys that drive them.
+> **Sources of truth:** `pipelines/dengue/lib/thresholds.py`,
+> `pipelines/dengue/lib/zones.py`, PRISM-H Logic Reference,
+> High Risk Districts SOP (Draft V3).
 
 ---
 
-## The Short Version
+## Two independent knobs
 
-There are **three distinct concepts** that all get called "thresholds." They answer different questions and run at different stages of the pipeline. Do not mix them up.
+The word "threshold" gets overloaded. In this codebase there are two
+independent knobs:
 
-| Concept | Question answered | When it runs | Config key |
-|---------|------------------|--------------|-----------|
-| **WHO baseline** | Is this district unusual vs its own seasonal history? | Before predictions (`generate_thresholds` step) | `thresholds.methods` |
-| **ICMR quartile** | Where does this district rank vs all other districts right now? | After predictions (`train_and_predict` step) | `thresholds.classification_method: icmr` |
-| **SOP weighted baseline** | Does this district exceed its statistical control limit? | After predictions (not yet implemented) | — |
+1. **Threshold generation** (`thresholds.methods`) — how do we compute a
+   per-region `Mean` and `StdDev`? Three methods available:
+   `historical`, `prev_nweeks`, `weighted_baseline`. You can configure
+   more than one; every configured method produces its own row in the
+   long-form thresholds table.
+2. **Classification** (`thresholds.classification_method`) — given the
+   `Mean`, `StdDev`, and a raw prediction, which discrete risk band does
+   the region land in? Four methods: `who`, `icmr`, `percentile`, plus
+   the default WHO band that runs unconditionally.
+
+The two knobs compose. `historical + icmr` and `weighted_baseline + who`
+are both legal.
 
 ---
 
-## 1. WHO Baseline Methods
+## Threshold generation methods
 
-**Source:** WHO EWAR guidance. Used for Karnataka and Odisha Risk Class. Also the fallback method when ICMR is not configured.
+All three methods produce the same output schema: one row per `(region,
+date, method)` with columns `Mean`, `StdDev`, `threshold_method`. The
+Mean/StdDev are combined with `list_alpha` at merge-time to produce the
+`T{alpha}` cut-points in `predictions.csv`.
 
-### 1a. `historical` — Same-week historical mean
-
-For each district, for each date:
+`list_alpha` (default `[1.0, 2.0]`) is a list of standard-deviation
+multipliers. Every configured α yields one `T{α}` column:
 
 ```
-μ = mean of case counts from the same (month, weekday) in previous N years
-σ = std dev of the same
+T_α = Mean + α · StdDev + i · 1e-6
 ```
 
-Risk zones are then assigned based on where the prediction falls:
+where `i` is the α's 1-based position in the list — the epsilon nudge
+guarantees strict monotonicity even when Mean/StdDev collapse to zero.
+The α=0 case (`T0.00`) is always added implicitly so binning starts at
+the Mean itself.
 
-| Zone | Range | Label |
-|------|-------|-------|
-| 1 | 0 < prediction ≤ μ | Low |
-| 2 | μ < prediction ≤ μ + σ | Moderate |
-| 3 | μ + σ < prediction ≤ μ + 2σ | High |
-| 4 | prediction > μ + 2σ | Very High (Outbreak) |
+### `historical`
 
-**Config knobs:**
+**Question:** "how does this week compare to the same week in past
+years?"
+
+For each `(region, year, month, weekday)`, take all past rows with the
+same `(month, weekday)` from earlier years and compute:
+
+```
+Mean_hist(r, year, m, wd)   = mean(case[r, y, m, wd]  for y < year)
+StdDev_hist(r, year, m, wd) = std(case[r, y, m, wd]   for y < year)
+```
+
+Filters (all optional):
+
+* `historical_n_years` — cap the look-back window at N years.
+* `included_years` — restrict to a whitelist.
+* `excluded_years` — drop specific years (e.g. drop COVID-affected 2020).
+
+If no years remain after filtering, `Mean` and `StdDev` come out `NaN`
+and the module logs a warning listing every affected `(year, region)`.
+Those rows survive downstream but paint light grey on maps and end up
+with `predictionZone = 0` after the sentinel fill.
+
+**When to use:** the region has ≥ 3 clean years of past data, the
+seasonal cycle is real, and outbreak years don't dominate the history.
+
+### `prev_nweeks`
+
+**Question:** "how does the incoming prediction compare to the last
+handful of weeks?"
+
+Two-stage rolling statistic, computed per region on the weekly case
+series:
+
+```
+ν_t  = mean(case_{t-1}, case_{t-2}, …, case_{t-n_weeks})   # excludes current week
+μ_t  = mean(ν_t, ν_{t-1}, ν_{t-2})                          # 3-value smoother
+σ_t  = std(ν_t, ν_{t-1}, ν_{t-2}, ν_{t-3})                  # 4-value spread
+```
+
+The stride between "weeks" is 7 days (`k = 7`); `n_weeks` defaults to 4.
+`Mean = μ_t`, `StdDev = σ_t`.
+
+**When to use:** the region has short or noisy history but a fresh
+weekly time-series; you want thresholds that track recent conditions
+rather than an old seasonal average.
+
+### `weighted_baseline` (SOP-style)
+
+**Question:** "blend the last few weeks with what happened at this time
+of year last year."
+
+```
+recent_mean(t)    = mean(case_{t-i} for i in 0..recent_weeks-1)
+seasonal_mean(t)  = mean(case_{t-52-i} for i in 0..recent_weeks-1)
+Mean(t)           = weight_recent · recent_mean + weight_seasonal · seasonal_mean
+StdDev(t)         = std(case_{t-i} for i in 0..sd_window_weeks-1, ddof=1)
+```
+
+Defaults: `recent_weeks=4`, `sd_window_weeks=8`, `weight_recent=0.7`,
+`weight_seasonal=0.3`. When seasonal data is missing (cold start),
+`Mean` falls back to `recent_mean` alone; when recent is missing but
+seasonal is present, the reverse. Both missing → `NaN`.
+
+**When to use:** the SOP requires blending recency with seasonality; you
+have ≥ 52 weeks of history but the seasonal signal isn't clean enough
+for pure `historical`.
+
+### Preference order (assessment)
+
+`assess_thresholds` picks a "best" method per prediction date using this
+priority (PRISM-H §4.2):
+
+```
+historical  →  previousNweeks  →  weightedBaseline
+```
+
+The first method with a non-null, non-zero `Mean` wins. If none qualify,
+the first available row is returned as a graceful-degrade fallback.
+
+---
+
+## Config-key breakdown
+
 ```yaml
 thresholds:
-  historical_n_years: 4       # how many prior years to use (null = all)
-  excluded_years: [2020, 2021]
-  included_years: []          # non-empty = whitelist
+  methods: [historical, prev_nweeks]        # generation methods to compute
+  list_alpha: [1.0, 2.0]                    # α multipliers → T-columns
+  classification_method: who                # who | icmr | percentile
+  percentile_cutoffs: [50, 75, 90]          # only used when method=percentile
   method_configs:
     historical:
-      historical_n_years: 2   # per-method override
-```
-
-**Cold start:** If a district has no prior-year data for that week, Mean=NaN → district appears grey on maps. This is expected and correct.
-
----
-
-### 1b. `prev_nweeks` — Rolling N-week fallback
-
-Used when there is not enough historical data (e.g., first year of surveillance).
-
-```
-For each date, look back N weeks:
-  col = 4-week moving average of case counts
-  Mean = mean of col over 3 prior windows
-  StdDev = std dev of col over 3 prior windows
-```
-
-**Config knobs:**
-```yaml
-thresholds:
-  n_weeks: 4
-  method_configs:
+      historical_n_years: 5
+      excluded_years: [2020, 2021]
+      included_years: []                    # empty = "no whitelist"
     prev_nweeks:
-      n_weeks: 6   # per-method override
-```
-
----
-
-### How WHO methods fit in the pipeline
-
-```
-generate_thresholds step
-  → reads case CSV
-  → runs historical + prev_nweeks
-  → writes datasets/thresholds/{region_type}_all_thresholds.csv
-       columns: region_id | date | Mean | StdDev | threshold_method
-
-train_and_predict step
-  → reads threshold CSV
-  → merges with predictions
-  → computes T0, T2.0, T3.0 columns (Mean + α×StdDev)
-  → assigns predictionZone 1–4 based on where prediction falls
-       (only when classification_method = "who", which is the default)
-
-assess_thresholds step
-  → for each date, compares how many regions each method calls High/Very High
-  → picks the best-performing threshold method
-  → writes best_method_{region}_{date}.csv
-```
-
-Both methods always run and both appear as rows in the threshold CSV. `assess_thresholds` decides which one drives the final map on each date.
-
----
-
-## 2. ICMR Quartile Classification
-
-**Source:** ICMR "Threshold Range Categorization" doc. Used for Andhra Pradesh Risk Class and for High Risk Areas (all states).
-
-### What it does
-
-At each prediction date, look at all districts' predicted case counts simultaneously. Divide them into four equal strata by distinct value count:
-
-```
-distinct_values = sorted set of predicted case values, descending
-values_per_stratum = ceil(len(distinct_values) / 4)
-
-Top values_per_stratum → A1 Critical  → predictionZone = 4
-Next values_per_stratum → A2 High     → predictionZone = 3
-Next values_per_stratum → A3 Caution  → predictionZone = 2
-Remainder               → A4 Low      → predictionZone = 1
-```
-
-**Key differences from WHO:**
-- Cross-sectional (compares districts to each other), not temporal (comparing to historical self)
-- Operates on predictions, not historical case data → runs after predictions exist
-- "A1 Critical" in a quiet week ≠ "A1 Critical" in peak season — ICMR strata are not comparable across time
-- Ties collapse: only distinct values are ranked
-
-### Worked example (from PRISM-H §5.3)
-
-26 AP districts. `ceil(26 / 4) = 7` per stratum.
-
-| Stratum | Districts |
-|---------|-----------|
-| A1 Critical (zone 4) | Top 7 by predicted cases |
-| A2 High (zone 3) | Next 7 |
-| A3 Caution (zone 2) | Next 7 |
-| A4 Low (zone 1) | Remaining 5 |
-
-### Edge cases
-
-- All districts have 0 predicted cases → all A4 (zone 1). Do not show Critical colours.
-- Fewer than 4 distinct values → some strata will be empty. This is correct behaviour.
-- Window with < 10 total cases across all districts → consider showing "Insufficient data" instead of forcing strata (not yet enforced in pipeline — open item).
-
-### How ICMR fits in the pipeline
-
-```
-train_and_predict step
-  → WHO zone assignment runs first (always, even for AP)
-  → if classification_method = "icmr":
-       icmr_quartile_zones() overrides predictionZone
-       degenerate-threshold NaN check is skipped (not relevant for ICMR)
-```
-
-WHO thresholds still run in `generate_thresholds` even when ICMR is enabled — they feed `assess_thresholds` and drive the grey-region logic (Mean=NaN → no historical data → grey on map). That behaviour is separate from the predictionZone colour.
-
-### Config
-
-```yaml
-thresholds:
-  classification_method: icmr   # who (default) | icmr
-```
-
----
-
-## 3. SOP Weighted Baseline (not yet implemented)
-
-**Source:** High Risk Districts SOP Draft V3. Describes the operational procedure for identifying high-risk districts in the weekly report.
-
-### Algorithm
-
-```
-Weighted Mean = 0.7 × mean(cases over last 4 weeks)
-              + 0.3 × mean(cases for same epi-weeks last year)
-
-SD = std dev of cases over the past 8 weeks (rolling ~2 months)
-
-UCL = Weighted Mean + n × SD
-```
-
-Classification:
-- `prediction > UCL` → **High Risk**
-- Otherwise → **Normal / Monitoring**
-
-This is a 2-class output (High Risk vs not), not 4-tier.
-
-### Open questions before implementing
-
-1. **n = 2 or 3?** Section 4.6 of the SOP says `UCL = Mean + 2×SD`. Section 5 says `UCL = Weighted Mean + 3×SD`. These are inconsistent — clarify with the team before implementing.
-2. **"Same epi-weeks last year"**: does this mean the exact same ISO week numbers (e.g., weeks 16–19 of last year), or exactly 52 weeks back (same 4-week window shifted back by 364 days)? These can diverge by a week around year-end.
-3. **Does this replace historical/prev_nweeks for AP, or is it additive?** The SOP covers operational High Risk District reporting; PRISM-H covers dashboard Risk Class. They may be parallel outputs from the same pipeline run.
-4. **Is this what AP actually uses for the weekly SOP reporting, or is ICMR their live method?** Worth confirming with state DHS.
-
-### Planned implementation
-
-When the above questions are resolved, `weighted_baseline` will be a new registered method:
-
-```python
-@register("weighted_baseline")
-def _weighted_baseline_method(df, ctx):
-    return weighted_baseline_threshold_params(
-        df,
-        recent_weeks=ctx.recent_weeks,     # default 4
-        sd_window_weeks=ctx.sd_window_weeks,  # default 8
-        weight_recent=ctx.weight_recent,   # default 0.7
-        weight_seasonal=ctx.weight_seasonal,  # default 0.3
-        n_sigma=ctx.n_sigma,              # 2 or 3 — TBD
-    )
-```
-
-YAML config (when implemented):
-```yaml
-thresholds:
-  methods: [historical, prev_nweeks, weighted_baseline]
-  method_configs:
+      n_weeks: 4
     weighted_baseline:
       recent_weeks: 4
       sd_window_weeks: 8
       weight_recent: 0.7
       weight_seasonal: 0.3
-      n_sigma: 3   # confirm with team
 ```
+
+Only the methods listed in `methods` get executed. `method_configs`
+entries for other methods are ignored. Every method listed in `methods`
+must have its `ThresholdContext` fields resolvable (defaults are
+supplied per method — you never need to fill everything).
 
 ---
 
-## 4. State Assignment Summary
+## Classification methods
 
-From PRISM-H Logic Reference §3:
+The three classification columns (`whoZone`, `icmrZone`,
+`percentileZone`) are **always all populated**. `predictionZone` is a
+copy of whichever one `thresholds.classification_method` selects, with
+`NA` values sentinel-filled to `0`.
 
-| State | Risk Class method | Levels | Notes |
-|-------|------------------|--------|-------|
-| Andhra Pradesh | **ICMR quartile** | A1 Critical · A2 High · A3 Caution · A4 Low | `classification_method: icmr` |
-| Karnataka | **WHO historical** | Low · Moderate · High · Very High | default `classification_method: who` |
-| Odisha | **WHO historical** | Low · Moderate · High · Very High | default `classification_method: who` |
+### WHO band (default)
 
-**High Risk Areas (all three states):** ICMR A1 ∪ A2 AND Trend = Rising. This is a separate output from Risk Class (used on the Overview tab, not Forecast tab). Not yet implemented as a pipeline step.
+`pipelines/dengue/lib/zones.py::assign_zone`. Given the T-columns for a
+row, build half-open intervals `[Zero, T0.00), [T0.00, T1.00), …, [T2.00,
+Inf)` and place `predictionRaw` into one:
 
-**Trend arrows (all surfaces):** `ratio = mean(last 2W) / mean(prior 2W)`. Rising ≥ 1.20, Falling ≤ 0.80, Stable otherwise. Not yet implemented.
+```
+zone = 1 + count(T_i < predictionRaw for T_i in [Zero, T0.00, T1.00, …])
+```
+
+With default `list_alpha: [1.0, 2.0]` this yields 4 bands. Degenerate
+rows (`Mean == 0 and StdDev == 0`) are set to `NA` — no meaningful band
+can be assigned.
+
+**Uses:** `Mean + α · StdDev` cut-points → answers "is this prediction
+statistically unusual for this region under this baseline?"
+
+### ICMR quartile
+
+`pipelines/dengue/lib/thresholds.py::icmr_quartile_zones`.
+Cross-sectional per date. For each `startDatePredictedWeek`:
+
+1. Take the distinct values of `predictionRaw` across all regions.
+2. Rank descending, split into 4 equal strata of size
+   `ceil(n_distinct / 4)`.
+3. Map: top stratum → 4 (A1 Critical), next → 3 (A2 High),
+   next → 2 (A3 Caution), last → 1 (A4 Low).
+
+Guard (PRISM-H §5.4): if the total predicted caseload for the date is
+< 10, every region on that date gets `icmrZone = NA` and downstream
+consumers render this as "Insufficient data".
+
+**Uses:** cross-region ranking → answers "which districts are the
+highest risk *right now* relative to the others?"
+
+### Percentile
+
+`pipelines/dengue/lib/thresholds.py::percentile_historical_zones`
+(PR #73, issue #62). Per-region, using the region's own weekly-aggregated
+case history:
+
+```
+cuts_r = np.percentile(weekly_cases_r, percentile_cutoffs)
+band(pred) = 1 + searchsorted(cuts_r, pred, side='right')
+```
+
+`N` percentile cutoffs produce `N + 1` bands. The default `[50, 75, 90]`
+gives four bands: `≤ p50`, `(p50, p75]`, `(p75, p90]`, `> p90`. Regions
+with no history → `NA`.
+
+Weekly aggregation is not optional — see PR #98 in
+`thresholds-explained.md`.
+
+**Uses:** self-referential ranking → answers "is this prediction high
+compared to this region's own past?"
+
+### Sentinel fill
+
+After the selected classification is copied into `predictionZone`, any
+remaining `NA` is filled with `0`. Dashboards render zone 0 as neutral
+grey and the pipeline logs the affected region list at `WARNING`. `0` is
+distinguishable from a valid band (which always starts at `1`).
 
 ---
 
-## 5. Pipeline Flow (full picture)
+## Real values (AP district, ensemble)
 
-```
-generate_thresholds
-  Inputs:  case CSV
-  Runs:    WHO methods listed in thresholds.methods (historical, prev_nweeks)
-           ICMR is NOT listed here — it needs predictions, not historical data
-  Outputs: datasets/thresholds/{region}_all_thresholds.csv
-           columns: region_id | date | Mean | StdDev | threshold_method
+From `artifacts/ap/ap-repro-fixed/outputs/predictions.csv`:
 
-train_and_predict
-  Inputs:  case CSV, weather CSV, threshold CSV, model weights
-  Runs:    train + predict (NBR / RF / XGB / ensemble)
-           WHO zone assignment via zones.merge_predictions_thresholds()
-           if classification_method=icmr: override predictionZone with ICMR quartile
-  Outputs: results/Predictions_{month}_{region}_{date}.csv
-           columns: regionID | prediction | predictionZone | thresholdMethod | Mean | StdDev | ...
+| regionID | thresholdMethod | Mean  | StdDev | T0.00 | T1.00 | T2.00 | predictionRaw | whoZone | icmrZone | percentileZone |
+|----------|-----------------|-------|--------|-------|-------|-------|---------------|---------|----------|----------------|
+| district_502 | previousNweeks   | 1.667 | 0.479  | 1.667 | 2.145 | 2.624 | 1.566 | 1 | 3 | 2 |
+| district_502 | weightedBaseline | 1.000 | 1.488  | 1.000 | 2.488 | 3.976 | 1.566 | 2 | 3 | 2 |
 
-assess_thresholds
-  Inputs:  predictions CSV (all threshold methods stacked as rows)
-  Runs:    for each date, compares Risk_Zone_Sum per method → picks best WHO method
-  Outputs: dumps/best_method_{region}_{date}.csv
-  Note:    when classification_method=icmr, predictionZone is ICMR-based,
-           but thresholdMethod rows still exist for each WHO method —
-           assess_thresholds still runs and picks best WHO method for the grey-region logic
-
-generate_maps + generate_report
-  Inputs:  best_method CSV, predictions CSV, geojson
-  Renders: maps coloured by predictionZone (1=green, 2=yellow, 3=orange, 4=red)
-```
-
----
-
-## 6. Quick Config Reference
-
-### AP district (ICMR, recommended for AP runs)
-```yaml
-thresholds:
-  region_type: district
-  n_weeks: 4
-  historical_n_years: 4
-  excluded_years: []
-  included_years: []
-  methods: [historical, prev_nweeks]
-  classification_method: icmr
-```
-
-### Karnataka / Odisha (WHO, default)
-```yaml
-thresholds:
-  region_type: district
-  n_weeks: 4
-  historical_n_years: 4
-  excluded_years: []
-  included_years: []
-  methods: [historical, prev_nweeks]
-  # classification_method defaults to "who"
-```
-
-### Per-method overrides (optional)
-```yaml
-thresholds:
-  ...
-  method_configs:
-    prev_nweeks:
-      n_weeks: 6          # use 6-week window instead of 4
-    historical:
-      historical_n_years: 2
-      excluded_years: [2020, 2021]
-```
-
----
-
-## 7. Open Items
-
-| # | Item | Blocks |
-|---|------|--------|
-| 1 | SOP: is UCL = Mean + 2σ or Mean + 3σ? Section 4.6 and Section 5 disagree. | `weighted_baseline` implementation |
-| 2 | SOP: "same epi-weeks last year" — ISO week numbers or 52-week offset? | `weighted_baseline` implementation |
-| 3 | Is SOP weighted baseline for AP operational reporting, or is ICMR the live method? Are they parallel? | Knowing whether `weighted_baseline` produces a separate output or replaces WHO risk classification |
-| 4 | ICMR: window < 10 total cases across all districts — should pipeline emit "Insufficient data" instead of strata? (PRISM-H §5.4) | ICMR edge case handling |
-| 5 | High Risk Areas (ICMR A1+A2 AND Trend=Rising) not yet implemented as a pipeline step | PRISM-H Overview tab |
-| 6 | Trend arrows (Δ% test) not yet implemented | PRISM-H everywhere |
-| 7 | WHO baseline N for Odisha: confirm it is 4 years like Karnataka (PRISM-H open item #3) | Odisha config |
+The two rows are the same `(region, week, prediction)` but different
+`thresholdMethod`, so the T-columns and `whoZone` differ. `icmrZone`
+and `percentileZone` are identical across the two rows because they
+don't depend on Mean/StdDev at all — one is cross-sectional, one is
+based on the region's own historical distribution.
