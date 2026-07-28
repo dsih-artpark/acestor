@@ -374,15 +374,58 @@ class PreparedDataConfig:
 
 
 @dataclass(frozen=True)
+class HorizonConfig:
+    """Prediction horizon: how many target weeks, anchored on what.
+
+    ``anchor`` picks what date the ``pred_upto`` is measured from:
+      * ``weather_cutoff`` (default, legacy) — ``cutoff_weather + weeks*7 days``.
+        Horizon wobbles based on the gap between weather and case cutoffs; may
+        emit fewer target weeks than ``weeks`` if case data is fresher than
+        weather. Kept as default to preserve historical behaviour.
+      * ``case_cutoff`` — ``cutoff_case + weeks*7 days``. Always ``weeks``
+        target weeks, anchored on the last observed case week (good for
+        training-aligned hindcasts).
+      * ``today`` — ``today_aligned_to_sampling_day + (weeks-1)*7 days``.
+        Always ``weeks`` target weeks anchored on the current calendar week
+        (good for operational forecasting, e.g. "this week + next N-1").
+    """
+
+    anchor: str = "weather_cutoff"
+    weeks: int = 4
+
+    @classmethod
+    def from_raw(cls, raw: Mapping[str, Any]) -> HorizonConfig:
+        anchor = str(raw.get("anchor", "weather_cutoff")).strip().lower()
+        allowed = {"weather_cutoff", "case_cutoff", "today"}
+        if anchor not in allowed:
+            raise ValueError(
+                f"run.horizon.anchor must be one of {sorted(allowed)}, got "
+                f"{anchor!r}."
+            )
+        try:
+            weeks = int(raw.get("weeks", 4))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"run.horizon.weeks must be a positive integer, got "
+                f"{raw.get('weeks')!r}"
+            ) from exc
+        if weeks < 1:
+            raise ValueError(f"run.horizon.weeks must be >= 1, got {weeks}")
+        return cls(anchor=anchor, weeks=weeks)
+
+
+@dataclass(frozen=True)
 class CutoffConfig:
     case_min_regions: int
     weather_min_regions: int
+    horizon: HorizonConfig = field(default_factory=HorizonConfig)
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any]) -> CutoffConfig:
         return cls(
             case_min_regions=int(raw.get("case_min_regions", 2)),
             weather_min_regions=int(raw.get("weather_min_regions", 5)),
+            horizon=HorizonConfig.from_raw(raw.get("horizon", {}) or {}),
         )
 
 
