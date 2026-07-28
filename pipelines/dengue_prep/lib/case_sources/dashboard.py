@@ -67,7 +67,11 @@ import requests
 
 from pipelines.dengue_prep.lib.case_sources import CaseSource
 
-log = logging.getLogger(__name__)
+# Reparent under the acestor.dengue_prep tree so INFO logs actually reach
+# stdout + run.log (acestor's create_logger only attaches handlers to
+# ``acestor.*``; module-level loggers under ``pipelines.*`` propagate to root
+# where the default level is WARNING and records are silently dropped).
+log = logging.getLogger("acestor.dengue_prep.case_sources.dashboard")
 
 
 _LOGIN_PATH = "/api/auth/login"
@@ -89,6 +93,45 @@ _DEFAULT_DATE_CANDIDATE_COLS: tuple[str, ...] = (
 
 def _parse_date(s: str) -> date:
     return datetime.strptime(s, "%Y-%m-%d").date()
+
+
+def _subtract_coverage(
+    window_start: date,
+    window_end: date,
+    coverage: list[tuple[date, date]],
+) -> list[tuple[date, date]]:
+    """Return sub-ranges of [window_start, window_end] not covered by any span."""
+    if not coverage:
+        return [(window_start, window_end)]
+    # Clip + sort by start.
+    clipped = sorted(
+        (max(s, window_start), min(e, window_end))
+        for s, e in coverage
+        if e >= window_start and s <= window_end
+    )
+    gaps: list[tuple[date, date]] = []
+    cursor = window_start
+    for s, e in clipped:
+        if s > cursor:
+            gaps.append((cursor, s - timedelta(days=1)))
+        if e >= cursor:
+            cursor = e + timedelta(days=1)
+    if cursor <= window_end:
+        gaps.append((cursor, window_end))
+    return gaps
+
+
+def _merge_into(ranges: list[tuple[date, date]], new: tuple[date, date]) -> None:
+    """Insert ``new`` into a sorted list of (start, end), merging overlaps."""
+    ranges.append(new)
+    ranges.sort()
+    merged: list[tuple[date, date]] = []
+    for s, e in ranges:
+        if merged and s <= merged[-1][1] + timedelta(days=1):
+            merged[-1] = (merged[-1][0], max(merged[-1][1], e))
+        else:
+            merged.append((s, e))
+    ranges[:] = merged
 
 
 def _scan_staged_files(staging_dir: Path) -> list[tuple[date, date, Path]]:
@@ -149,7 +192,18 @@ def _trim_xlsx_in_place(
     """
     import pandas as pd  # noqa: PLC0415
 
-    df = pd.read_excel(path)
+    try:
+        df = pd.read_excel(path)
+    except Exception as exc:
+        # Not a readable xlsx (corrupt, wrong format, test fixture, ...).
+        # Leave the file alone rather than crashing the whole prep run.
+        log.warning(
+            "case_sources.dashboard: could not read %s for trimming (%s) — "
+            "left in place, no trim applied",
+            path.name,
+            exc,
+        )
+        return 0, 0
     present = [c for c in date_cols if c in df.columns]
     if not present:
         return len(df), len(df)
@@ -371,14 +425,26 @@ class Source(CaseSource):
         """
         cur = _parse_date(from_date)
         end = _parse_date(to_date)
+        total_days = (end - cur).days + 1
+        log.info(
+            "case_sources.dashboard: starting chunked download %s → %s "
+            "(%d days total, chunk_days=%d)",
+            from_date,
+            to_date,
+            total_days,
+            self.chunk_days,
+        )
+        n_chunks = 0
         while cur <= end:
             chunk_days = self.chunk_days
+            n_chunks += 1
             while True:
                 chunk_end = min(cur + timedelta(days=chunk_days - 1), end)
                 c_from = cur.isoformat()
                 c_to = chunk_end.isoformat()
                 log.info(
-                    "case_sources.dashboard: chunk %s → %s (%d days)",
+                    "case_sources.dashboard: [chunk %d] fetching %s → %s " "(%d days)…",
+                    n_chunks,
                     c_from,
                     c_to,
                     chunk_days,
@@ -416,7 +482,8 @@ class Source(CaseSource):
                 out_path = self.staging_dir / filename
                 out_path.write_bytes(content)
                 log.info(
-                    "case_sources.dashboard: wrote %d bytes → %s",
+                    "case_sources.dashboard: [chunk %d] wrote %d bytes → %s",
+                    n_chunks,
                     len(content),
                     out_path,
                 )
@@ -432,20 +499,12 @@ class Source(CaseSource):
     # ------------------------------------------------------------------
 
     def _compute_fetch_window(self) -> tuple[str, str]:
-        """Decide which sub-range to fetch this run.
-
-        - First run (nothing staged): fetch the full [date_start, date_end].
-        - Subsequent runs: fetch from ``max(date_start, latest_end - backfill_days + 1)``
-          through ``date_end``. This re-pulls the last N days to catch late-
-          arriving cases in the reporting lag window while leaving older files
-          untouched.
+        """Legacy single-window helper — kept for backward-compat with tests
+        that assert the tail-backfill behaviour. Production path uses
+        :meth:`_compute_fetch_ranges` which also detects gaps in coverage.
         """
         end_d = _parse_date(self.date_end)
         start_d = _parse_date(self.date_start)
-        # Anchor from BOTH sources: dashboard_*.xlsx filenames (cheap) and any
-        # other .xlsx already staged (pandas-read max date). The latter lets
-        # an operator drop their raw_case export into the staging dir and get
-        # incremental fetching without renaming or re-downloading history.
         staged_ends = [rng[1] for rng in _scan_staged_files(self.staging_dir)]
         external_ends = [
             d
@@ -459,29 +518,94 @@ class Source(CaseSource):
         latest_end = max(all_ends)
         backfill_from = latest_end - timedelta(days=max(0, self.backfill_days - 1))
         fetch_from = max(start_d, backfill_from)
-        # Clamp: never fetch a from > date_end.
         if fetch_from > end_d:
             fetch_from = end_d
         return fetch_from.isoformat(), self.date_end
 
-    def _delete_overlapping_staged(self, from_date: str, to_date: str) -> int:
-        """Remove any existing staged file whose date range overlaps the new fetch.
+    def _compute_fetch_ranges(self) -> list[tuple[str, str]]:
+        """Return every [from, to] sub-range we still need to fetch.
 
-        Overlap = ``existing_end >= fetch_from AND existing_start <= fetch_to``.
-        Prevents parse_case_data from double-counting cases that live in both
-        files.
+        Combines two behaviours:
+        1. **Gap detection** — walk the config's ``[date_start, date_end]``
+           window and skip any sub-range already covered by a staged file
+           (both dashboard-pattern and external xlsx). Returns the missing
+           sub-ranges. Fixes the silent-hole bug where a mid-timeline file
+           (e.g. 2023) is deleted or never fetched and the incremental
+           logic never notices.
+        2. **Tail backfill** — the last ``backfill_days`` days of the
+           configured window are always included, so late-arriving cases
+           get re-pulled. Overlaps with existing coverage are OK; the
+           :meth:`_delete_fully_contained_staged` step handles them.
+        """
+        start_d = _parse_date(self.date_start)
+        end_d = _parse_date(self.date_end)
+        if start_d > end_d:
+            return []
+
+        # Coverage from BOTH sources (dashboard-pattern + external xlsx).
+        coverage: list[tuple[date, date]] = [
+            (s, e) for s, e, _ in _scan_staged_files(self.staging_dir)
+        ]
+        for max_d, path in _scan_external_xlsx_max_dates(
+            self.staging_dir, date_cols=self.date_cols
+        ):
+            # External file — assume it covers [date_start, max_d]. Not
+            # perfect (there could be internal gaps we can't see without
+            # reading every row), but a conservative upper bound.
+            coverage.append((start_d, max_d))
+
+        # Compute gaps in the config's window that are NOT covered.
+        gaps = _subtract_coverage(start_d, end_d, coverage)
+
+        # Tail backfill: re-fetch the last ``backfill_days`` ending at the
+        # latest staged end (or date_end if nothing is staged), to catch
+        # late-arriving cases. This may overlap existing coverage — that's
+        # the point; the fresh fetch replaces stale rows in that tail.
+        if self.backfill_days > 0 and coverage:
+            latest_end = max(e for _, e in coverage)
+            backfill_start = max(
+                start_d, latest_end - timedelta(days=self.backfill_days - 1)
+            )
+            if backfill_start <= end_d:
+                # Backfill runs from ``backfill_start`` through date_end so any
+                # new data past ``latest_end`` gets picked up in the same range.
+                _merge_into(gaps, (backfill_start, end_d))
+
+        return [(a.isoformat(), b.isoformat()) for a, b in gaps]
+
+    def _delete_fully_contained_staged(self, from_date: str, to_date: str) -> int:
+        """Reconcile every existing staged file with the new fetch window.
+
+        Three cases:
+
+        1. **Fully contained** (``fetch_from <= existing_start AND existing_end
+           <= fetch_to``) — new fetch strictly supersedes existing → delete.
+        2. **Partial overlap** — trim existing xlsx in place so its rows end
+           at ``fetch_from - 1`` and rename its filename to match. The new
+           fetch supplies everything from ``fetch_from`` onward, so parse
+           sees no duplicate rows.
+        3. **No overlap** — leave alone.
+
+        The trim path handles the common backfill case: an older long-range
+        file (e.g. 12 months of history) that partially overlaps a short
+        30-day refetch at its tail. Before this change we kept both files
+        and warned; now we trim the tail off the old file so parse_case_data
+        never sees the overlap window twice.
         """
         fetch_from_d = _parse_date(from_date)
         fetch_to_d = _parse_date(to_date)
         removed = 0
         for existing_start, existing_end, path in _scan_staged_files(self.staging_dir):
-            if existing_end >= fetch_from_d and existing_start <= fetch_to_d:
+            fully_contained = (
+                fetch_from_d <= existing_start and existing_end <= fetch_to_d
+            )
+            if fully_contained:
                 try:
                     path.unlink()
                     removed += 1
                     log.info(
-                        "case_sources.dashboard: removed overlapping staged file %s "
-                        "(covers %s → %s)",
+                        "case_sources.dashboard: removed superseded staged file %s "
+                        "(covers %s → %s, fully within new fetch)",
                         path.name,
                         existing_start.isoformat(),
                         existing_end.isoformat(),
@@ -490,59 +614,147 @@ class Source(CaseSource):
                     log.warning(
                         "case_sources.dashboard: could not delete %s: %s", path, exc
                     )
+            elif existing_end >= fetch_from_d and existing_start <= fetch_to_d:
+                # Partially overlapping — trim the existing file so its rows
+                # stop just before the new fetch begins. The new fetch then
+                # supplies everything from fetch_from onwards, and no rows
+                # are double-counted at parse time.
+                new_end = fetch_from_d - timedelta(days=1)
+                if new_end < existing_start:
+                    # Entire existing range is superseded by the new fetch;
+                    # delete outright (same as fully-contained case).
+                    try:
+                        path.unlink()
+                        removed += 1
+                        log.info(
+                            "case_sources.dashboard: removed staged file %s "
+                            "(covers %s → %s, entirely superseded by new fetch %s → %s)",
+                            path.name,
+                            existing_start.isoformat(),
+                            existing_end.isoformat(),
+                            from_date,
+                            to_date,
+                        )
+                    except OSError as exc:
+                        log.warning(
+                            "case_sources.dashboard: could not delete %s: %s",
+                            path,
+                            exc,
+                        )
+                    continue
+                before, after = _trim_xlsx_in_place(
+                    path, cutoff=fetch_from_d, date_cols=self.date_cols
+                )
+                if before == 0 and after == 0:
+                    # trim couldn't run (unreadable / empty / no date columns).
+                    # Leave the file as-is with its original filename — a warning
+                    # was already logged from _trim_xlsx_in_place.
+                    log.warning(
+                        "case_sources.dashboard: partial overlap on %s but trim "
+                        "was a no-op — filename left as-is; parse may see "
+                        "duplicated rows in the overlap window",
+                        path.name,
+                    )
+                    continue
+                # Rename the file to reflect its new (shortened) date range so
+                # future _scan_staged_files reflects reality and future
+                # overlap checks work off correct filename ranges.
+                new_name = (
+                    f"dashboard_{existing_start.isoformat()}_to_"
+                    f"{new_end.isoformat()}.xlsx"
+                )
+                new_path = path.with_name(new_name)
+                try:
+                    path.rename(new_path)
+                    log.info(
+                        "case_sources.dashboard: trimmed overlapping staged "
+                        "file %s → %s: %d → %d rows (dropped %d rows on/after "
+                        "%s so the new fetch %s → %s doesn't double-count)",
+                        path.name,
+                        new_name,
+                        before,
+                        after,
+                        before - after,
+                        from_date,
+                        from_date,
+                        to_date,
+                    )
+                except OSError as exc:
+                    log.warning(
+                        "case_sources.dashboard: trimmed %s in place but could not "
+                        "rename to %s: %s — filename date range is now stale",
+                        path.name,
+                        new_name,
+                        exc,
+                    )
         return removed
 
     def _ensure_staged(self) -> list[str]:
-        """Fetch (possibly just the backfill window), stage the XLSX, remember it.
+        """Fetch every missing sub-range in [date_start, date_end], stage each.
 
-        Behavior on repeat runs: only re-fetches the last ``backfill_days`` days
-        of the range (+ any dates past the last staged file's end). Existing
-        files that cover older, out-of-backfill dates stay untouched — the
-        parse_case_data step will read every ``dashboard_*.xlsx`` in the dir.
+        1. Compute the list of sub-ranges we still need (gaps in coverage +
+           tail backfill window) via :meth:`_compute_fetch_ranges`.
+        2. For each range, delete any fully-superseded prior file, trim
+           external xlsx rows that overlap, then chunked-download.
+        3. Return the merged list of all xlsx now on disk.
         """
         if self._staged_paths is not None:
             return self._staged_paths
         self.staging_dir.mkdir(parents=True, exist_ok=True)
 
-        from_date, to_date = self._compute_fetch_window()
-        log.info(
-            "case_sources.dashboard: fetch window %s → %s (backfill_days=%d)",
-            from_date,
-            to_date,
-            self.backfill_days,
-        )
-        removed = self._delete_overlapping_staged(from_date, to_date)
-        if removed:
+        ranges = self._compute_fetch_ranges()
+        if not ranges:
             log.info(
-                "case_sources.dashboard: removed %d overlapping staged file(s) "
-                "before writing the new fetch",
-                removed,
+                "case_sources.dashboard: no fetch ranges — full window "
+                "%s → %s already covered on disk.",
+                self.date_start,
+                self.date_end,
             )
-        # For external files (non-dashboard-pattern xlsx dropped in by the
-        # operator), don't delete — trim their rows in the [fetch_from, ...]
-        # window so the fresh refetch doesn't double-count.
-        fetch_from_d = _parse_date(from_date)
-        for _max_d, ext_path in _scan_external_xlsx_max_dates(
-            self.staging_dir, date_cols=self.date_cols
-        ):
-            before, after = _trim_xlsx_in_place(
-                ext_path, cutoff=fetch_from_d, date_cols=self.date_cols
+        else:
+            log.info(
+                "case_sources.dashboard: %d fetch range(s) to cover — %s",
+                len(ranges),
+                ", ".join(f"{a}→{b}" for a, b in ranges),
             )
-            if before != after:
-                log.info(
-                    "case_sources.dashboard: trimmed %s: %d → %d rows (dropped "
-                    "%d rows on/after %s to make room for refetch)",
-                    ext_path.name,
-                    before,
-                    after,
-                    before - after,
-                    from_date,
-                )
 
-        # Chunked download: the dashboard export can 504 on multi-year windows.
-        # Walk the [from_date, to_date] range in chunks of self.chunk_days, and
-        # on timeout/504 halve the chunk (down to a floor) and retry.
-        self._download_chunked(from_date, to_date)
+        for from_date, to_date in ranges:
+            log.info(
+                "case_sources.dashboard: processing range %s → %s "
+                "(backfill_days=%d, chunk_days=%d)",
+                from_date,
+                to_date,
+                self.backfill_days,
+                self.chunk_days,
+            )
+            removed = self._delete_fully_contained_staged(from_date, to_date)
+            if removed:
+                log.info(
+                    "case_sources.dashboard: removed %d fully-superseded "
+                    "staged file(s) before writing the new fetch",
+                    removed,
+                )
+            # External files (non-dashboard-pattern xlsx dropped in by the
+            # operator): trim their rows on/after fetch_from so the refetch
+            # can't double-count.
+            fetch_from_d = _parse_date(from_date)
+            for _max_d, ext_path in _scan_external_xlsx_max_dates(
+                self.staging_dir, date_cols=self.date_cols
+            ):
+                before, after = _trim_xlsx_in_place(
+                    ext_path, cutoff=fetch_from_d, date_cols=self.date_cols
+                )
+                if before != after:
+                    log.info(
+                        "case_sources.dashboard: trimmed %s: %d → %d rows "
+                        "(dropped %d rows on/after %s to make room for "
+                        "refetch)",
+                        ext_path.name,
+                        before,
+                        after,
+                        before - after,
+                        from_date,
+                    )
+            self._download_chunked(from_date, to_date)
         # Return every xlsx now on disk — both dashboard_*.xlsx (our own writes)
         # and any operator-provided external xlsx that survived trimming.
         # parse_case_data reads them all; older files stay untouched.

@@ -17,6 +17,8 @@ _PREDICTION_COLS = [
     "regionID",
     "prediction",
     "predictionInt",
+    "predictionMin",
+    "predictionMax",
     "thresholdMethod",
     "predictionZone",
     "model",
@@ -614,11 +616,27 @@ def downscale_predictions(
         .to_dict()
     )
 
+    # Do the parent rows carry predictionMin/predictionMax? Only present when
+    # the upstream forecast was an ensemble (single-model runs leave them as
+    # None). If present, propagate proportionally to children:
+    #     child_min = parent_min × share    child_max = parent_max × share
+    # Extremes of ensemble members are additive by the same share the raw
+    # prediction is (same reasoning as _augment_ward in the upload shim).
+    has_min = (
+        "predictionMin" in parent_preds.columns
+        and parent_preds["predictionMin"].notna().any()
+    )
+    has_max = (
+        "predictionMax" in parent_preds.columns
+        and parent_preds["predictionMax"].notna().any()
+    )
     rows = []
     for _, row in parent_preds.iterrows():
         parent_id = row["regionID"]
         if parent_id not in shares_by_parent:
             continue
+        parent_min = float(row["predictionMin"]) if has_min else None
+        parent_max = float(row["predictionMax"]) if has_max else None
         for child_id, share in shares_by_parent[parent_id].items():
             rows.append(
                 {
@@ -627,6 +645,12 @@ def downscale_predictions(
                     "regionID": child_id,
                     "prediction": float(row["prediction"]) * share,
                     "predictionInt": pd.NA,  # apportioned below via LRM
+                    "predictionMin": (
+                        parent_min * share if parent_min is not None else pd.NA
+                    ),
+                    "predictionMax": (
+                        parent_max * share if parent_max is not None else pd.NA
+                    ),
                     "thresholdMethod": row["thresholdMethod"],
                     "predictionZone": pd.NA,  # re-derived below, never inherited
                     "model": row["model"],
@@ -649,6 +673,17 @@ def downscale_predictions(
     child_preds["predictionInt"] = _apportion_children(
         child_preds, child_mapping, recent_cases_by_child
     )
+    # Enforce min ≤ predictionInt ≤ max at the child level. LRM apportionment
+    # of parent int into child ints can nudge a child's int outside its
+    # (parent_min × share, parent_max × share) band by ±1; widen the bracket.
+    if has_min:
+        child_preds["predictionMin"] = child_preds[
+            ["predictionMin", "predictionInt"]
+        ].min(axis=1)
+    if has_max:
+        child_preds["predictionMax"] = child_preds[
+            ["predictionMax", "predictionInt"]
+        ].max(axis=1)
     check_numeric_sanity(parent_preds, child_preds, child_mapping)
     # Surface tier stats to the calling step via DataFrame attrs.
     child_preds.attrs["tier_stats"] = {

@@ -1,0 +1,58 @@
+pipeline:
+  name: dengue_prep
+  title: "Dengue Data Prep — Karnataka (district)"
+
+run:
+  run_date: ""
+
+data:
+  region_type: "district"
+
+  prepared_data:
+    base_dir: "ka_datasets/prepared_data"
+
+  date_range:
+    start: "2022-01-01"
+
+  geojson:
+    base_path: "ka_datasets/geojsons"
+
+  case_download:
+    enabled: true
+    source_mode: dashboard
+    source_path: "ka_datasets/raw_case"
+
+  case_parse:
+    region_types:
+      - "district"
+
+    date_column:
+      - "Date Of Onset"
+      - "Test Performed Date"
+      - "Sample Collected Date"
+
+    region_id_column: "Region Id"
+    lat_column: "Latitude"
+    lon_column: "Longitude"
+
+    filters:
+      - column: "Test Suspected For"
+        values:
+          - "Dengue"
+
+  weather_download:
+    enabled: true
+    source_mode: "filesystem"
+    source_path: "ka_datasets/weather"
+    parsed_output_path: "ka_datasets/weather"
+    temperature_unit: "celsius"
+    precipitation_unit: "mm"
+
+logging:
+  level: DEBUG
+
+storages:
+  artifacts:
+    kind: filesystem
+    filesystem:
+      base_path: "./artifacts/ka_prep"

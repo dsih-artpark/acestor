@@ -313,6 +313,8 @@ def test_empty_input_returns_empty_dataframe_with_schema():
         "predictionRaw",
         "prediction",
         "predictionInt",
+        "predictionMin",
+        "predictionMax",
         "thresholdMethod",
         "predictionZone",
         "model",

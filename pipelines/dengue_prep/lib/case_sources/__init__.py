@@ -49,7 +49,9 @@ import os
 from abc import ABC, abstractmethod
 from typing import Any, Mapping
 
-log = logging.getLogger(__name__)
+# Under the acestor.dengue_prep tree so INFO logs reach stdout + run.log
+# (acestor's create_logger attaches handlers only to that tree).
+log = logging.getLogger("acestor.dengue_prep.case_sources")
 
 _BUILTIN_DIR = os.path.dirname(__file__)
 

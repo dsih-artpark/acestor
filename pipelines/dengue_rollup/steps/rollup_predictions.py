@@ -72,8 +72,14 @@ class RollupPredictionsStep(BaseStep[RollupPredictionsInputs, RollupResult]):
         source_preds = pd.read_csv(inputs.load_predictions.predictions_csv_path)
         # CSV-boundary reverse rename: post-#89 CSVs expose `prediction` as the
         # display int; the rollup sum operates on the raw float. Swap if the
-        # source is post-#89, pass through if pre-#89.
+        # source is post-#89, pass through if pre-#89. Drop the source's own
+        # `predictionInt` first — it is redundant with `prediction` at the CSV
+        # boundary, and leaving it in place turns the swap-then-unswap dance
+        # into duplicate-column producers (two `predictionInt` after the first
+        # rename → two `prediction` after the second → dupe in the CSV header).
         if "predictionRaw" in source_preds.columns:
+            if "predictionInt" in source_preds.columns:
+                source_preds = source_preds.drop(columns=["predictionInt"])
             source_preds = source_preds.rename(
                 columns={
                     "prediction": "predictionInt",

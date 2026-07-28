@@ -40,8 +40,8 @@ data:
     source_mode: "openmeteo"
     source_path: "od_datasets/weather"
     parsed_output_path: "od_datasets/weather"
-    temperature_unit: "kelvin"
-    precipitation_unit: "m"
+    temperature_unit: "celsius"    # openmeteo returns °C — parser converts to K on disk
+    precipitation_unit: "mm"       # openmeteo returns mm — parser converts to m on disk
 
 logging:
   level: DEBUG

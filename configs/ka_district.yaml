@@ -1,20 +1,20 @@
-state: "GBA"
+state: "KA"
 
 pipeline:
   name: dengue
-  title: "Dengue Early Warning System — Greater Bengaluru Authority (zone)"
+  title: "Dengue Early Warning System — Karnataka"
 
 run:
-  run_date: ""   # blank → today's date
+  run_date: ""
 
 data:
   prepared_data:
-    base_dir: "gba_datasets/prepared_data"
-    region_type: "zone"
+    base_dir: "ka_datasets/prepared_data"
+    region_type: "district"
 
   case_parse:
     region_types:
-      - "zone"
+      - "district"
     date_start: "2022-01-01"
     date_end: ""
 
@@ -25,19 +25,19 @@ data:
     min_date_span_days: 14
 
   geojson:
-    base_path: "gba_datasets/geojsons/geojsons_GBA"
+    base_path: "ka_datasets/geojsons"
 
   weather_parse:
-    region_type: "zone"
+    region_type: "district"
     weather_variables:
       - "2mTemperature"
       - "totalPrecipitation"
       - "2mDewpointTemperature"
     rolling_n_days: 7
     rolling_agg:
-      - {name: "2mTemperature",         op: "mean"}
+      - {name: "2mTemperature", op: "mean"}
       - {name: "2mDewpointTemperature", op: "mean"}
-      - {name: "totalPrecipitation",    op: "sum"}
+      - {name: "totalPrecipitation", op: "sum"}
     sampling_rate: 7
     intermediate_col_rename:
       "2mTemperature_max": "t2m_max"
@@ -51,47 +51,50 @@ cutoff:
   weather_min_regions: 5
 
 thresholds:
-  region_type: "zone"
-  list_alpha: [1.0, 2.0]
+  region_type: "district"
   methods: [historical, prev_nweeks, weighted_baseline]
   classification_method: percentile
-  # Per-region historical percentile cutoffs (issue #62): the current week's
-  # forecast is placed in one of 4 bands relative to the region's own history.
-  # Cutoffs 50/75/90 → 4 bands: ≤p50, (p50,p75], (p75,p90], >p90.
-  percentile_cutoffs: [50.0, 75.0, 90.0]
-  method_configs:
-    prev_nweeks:
-      n_weeks: 4
-    historical:
-      historical_n_years: 4
-      excluded_years: []
-      included_years: []
+  n_weeks: 4
+  historical_n_years: 4
+  excluded_years: []
+  included_years: []
 
 model:
-  spatial_res: "zone"
+  spatial_res: "district"
   models: [rf, timesfm]
   ensemble: mean
   output: both
-  debug: false
+  data_features:
+    - "case"
+    - "recordDate"
+    - "recordYear"
+    - "recordMonth"
+    - "ISOWeek"
+    - "t2m_mean"
+    - "tp_sum"
+    - "d2m_mean"
+  years_to_exclude: []
+  years_to_include: []
+  list_alpha: [1.0, 2.0]
 
 model_configs:
   rf:
     lag:
       lag_temp: [4, 5, 6, 7, 8, 9, 10, 11, 12]
-      lag_rainfall: [4]
-      lag_humidity: [4]
+      lag_rainfall: [1,2,3, 4]
+      lag_humidity: [1,2,3,4]
       lag_cases: [1, 2, 3, 4, 5]
     years_to_exclude: []
     years_to_include: []
     tune: false
-    n_trials: 200
+    n_trials: 100
 
 assess:
-  total_district_regions: 10
+  total_district_regions: 31
 
 maps:
   output_dir: "outputs/maps"
-  figure_title: "Greater Bengaluru Authority Dengue Risk Map"
+  figure_title: "Karnataka Dengue Risk Map"
 
 report:
   output_dir: "outputs/report"
@@ -100,13 +103,13 @@ report_distribution:
   system_name: "Dengue Early Warning System"
   organization: "ARTPARK, IISc Bengaluru"
   state: "Karnataka"
-  region: "Greater Bengaluru Authority (10 zones)"
-  department: "BBMP / Greater Bengaluru Authority"
+  region: "Karnataka (31 Districts)"
+  department: ""
   contact_email: ""
   footer_note: ""
 
 logging:
-  level: INFO
+  level: DEBUG
 
 email:
   enabled: false
@@ -115,4 +118,4 @@ storages:
   artifacts:
     kind: filesystem
     filesystem:
-      base_path: "./artifacts/gba_zone"
+      base_path: "./artifacts/ka"

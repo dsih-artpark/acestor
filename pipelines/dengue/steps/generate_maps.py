@@ -28,6 +28,12 @@ class GenerateMapsStep(BaseStep[GenerateMapsInputs, MapsResult]):
 
     def run(self, context: PipelineContext, inputs: GenerateMapsInputs) -> MapsResult:
         cfg = MapsConfig.from_raw(_section(context.config, "maps"))
+        if not cfg.enabled:
+            context.log.info(
+                "generate_maps: disabled via maps.enabled=false — skipping "
+                "static PNG generation. HTML report will use interactive D3 maps."
+            )
+            return MapsResult(map_paths=[])
         plots_dir = str(context.artifact_fs_path(cfg.output_dir))
         geojson_base = geojson_sources.get_geojson_base_dir()
         run_date = str(

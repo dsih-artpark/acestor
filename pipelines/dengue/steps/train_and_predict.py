@@ -41,6 +41,13 @@ def _add_prediction_range(
     of the per-model frames except ``prediction`` and ``model`` (and the range
     columns themselves, in case they were pre-populated by a caller).
 
+    ``ISOWeek`` is also excluded from the merge key: MeanEnsemble.combine
+    recomputes ISOWeek from ``recordDate`` on the ensembled DataFrame (target
+    week's true ISO week), while per-model DataFrames still carry whatever
+    ISOWeek their threshold snapshot was tagged with. If we merged on it, the
+    values would mismatch and predictionMin/Max would silently come back as
+    NaN — same class of bug PR #104 fixed for the ensemble step itself.
+
     Semantic: extremes across ensemble members — not a confidence interval,
     not std, not bootstrap. See issue #84.
     """
@@ -48,7 +55,7 @@ def _add_prediction_range(
     range_group_cols = [
         c
         for c in combined.columns
-        if c not in ("prediction", "model", "predictionMin", "predictionMax")
+        if c not in ("prediction", "model", "predictionMin", "predictionMax", "ISOWeek")
     ]
     agg = (
         combined.groupby(range_group_cols, dropna=False)["prediction"]
@@ -280,6 +287,20 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
             classified["predictionInt"] = (
                 classified["prediction"].astype(float).apply(round_half_up)
             )
+
+            # Enforce min ≤ predictionInt ≤ max at the CSV boundary. The float
+            # min/max bracket the raw ensemble float, but round_half_up on the
+            # raw can push the display int just outside the band (e.g. raw=4.4
+            # with min=4.3 max=4.5 → int=4 < min). Widen the bracket so the
+            # invariant every consumer expects holds unconditionally.
+            if "predictionMin" in classified.columns:
+                classified["predictionMin"] = classified[
+                    ["predictionMin", "predictionInt"]
+                ].min(axis=1)
+            if "predictionMax" in classified.columns:
+                classified["predictionMax"] = classified[
+                    ["predictionMax", "predictionInt"]
+                ].max(axis=1)
 
             # Degenerate WHO check: Mean=0 & StdDev=0 → meaningless threshold → NaN
             if "Mean" in classified.columns and "StdDev" in classified.columns:

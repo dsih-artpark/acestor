@@ -663,10 +663,15 @@ class AssessConfig:
 class MapsConfig:
     output_dir: str
     figure_title: str  # map suptitle (first line); second line is the prediction date
+    # Set false to skip static per-week PNG generation. The HTML report renders
+    # interactive D3 maps from embedded GeoJSON regardless, so PNGs are only
+    # useful for offline/PDF distribution or the ``<img>`` fallback branch.
+    enabled: bool = True
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any]) -> MapsConfig:
         return cls(
+            enabled=bool(raw.get("enabled", True)),
             output_dir=raw.get("output_dir", "plots"),
             figure_title=str(
                 raw.get("figure_title") or "Dengue risk map",

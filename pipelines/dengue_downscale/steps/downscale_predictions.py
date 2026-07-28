@@ -228,6 +228,12 @@ class DownscalePredictionsStep(BaseStep[DownscalePredictionsInputs, DownscaleRes
         # Old parent CSVs (no predictionRaw column) pass through unchanged for
         # backward compatibility.
         if "predictionRaw" in parent_preds.columns:
+            # Drop pre-existing predictionInt (redundant with prediction at the
+            # CSV boundary) before the swap, otherwise the rename produces
+            # duplicate `predictionInt` columns and the reverse rename before
+            # writing produces a duplicate `prediction` in the output header.
+            if "predictionInt" in parent_preds.columns:
+                parent_preds = parent_preds.drop(columns=["predictionInt"])
             parent_preds = parent_preds.rename(
                 columns={"prediction": "predictionInt", "predictionRaw": "prediction"}
             )
