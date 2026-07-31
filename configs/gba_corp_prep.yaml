@@ -16,6 +16,9 @@ data:
 
   geojson:
     base_path: "gba_datasets/geojsons/geojsons_GBA"
+    source_mode: dashboard
+    scope_id: gulb_gba
+    refresh: false
     # Wards live under <base>/ward/ or <base>/wards/. The geocoding resolver
     # auto-detects either layout.
 
@@ -43,7 +46,8 @@ data:
 
   weather_download:
     enabled: true
-    source_mode: "openmeteo"
+    source_mode: dashboard         # was openmeteo — avoids rate limits + daily-fresh via dashboard sync
+    scope_id: "gulb_gba"              # dashboard /api/weather/observed spelling for GBA
     parsed_output_path: "gba_datasets/weather"
     temperature_unit: "celsius"
     precipitation_unit: "mm"

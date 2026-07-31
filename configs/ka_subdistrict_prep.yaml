@@ -16,6 +16,9 @@ data:
 
   geojson:
     base_path: "ka_datasets/geojsons"
+    source_mode: dashboard
+    scope_id: karnataka
+    refresh: false
 
   case_download:
     enabled: true
@@ -41,8 +44,8 @@ data:
 
   weather_download:
     enabled: true
-    source_mode: "filesystem"
-    source_path: "ka_datasets/weather"
+    source_mode: dashboard
+    scope_id: "Karnataka"
     parsed_output_path: "ka_datasets/weather"
     temperature_unit: "celsius"
     precipitation_unit: "mm"

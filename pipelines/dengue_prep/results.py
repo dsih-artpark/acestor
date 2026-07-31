@@ -6,6 +6,16 @@ from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
+class PrepGeojsonDownloadResult:
+    """Summary of the ``download_geojsons`` step."""
+
+    region_type: str
+    output_dir: str
+    files_written: int
+    files_cached: int
+
+
+@dataclass(frozen=True)
 class PrepCaseDownloadResult:
     enabled: bool
     copied_files: list[str] = field(default_factory=list)

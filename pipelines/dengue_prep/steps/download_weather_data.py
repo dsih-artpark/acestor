@@ -141,6 +141,11 @@ class PrepDownloadWeatherDataStep(BaseStep[NoInputs, PrepWeatherDownloadResult])
 
         now = pd.Timestamp.now().normalize()
         current_ym = (now.year, now.month)
+        # Backfill tail: force-refetch the last N days ending today, even if
+        # the file already covers them. Catches late corrections upstream
+        # (ERA5 revisions land ~5 days after the initial fetch; the dashboard
+        # weather sync re-imports whatever ERA5 publishes).
+        backfill_cutoff = now - pd.Timedelta(days=max(0, cfg.backfill_days))
         downloaded: list[str] = []
 
         for year, month in _months_in_range(start, end):
@@ -151,22 +156,39 @@ class PrepDownloadWeatherDataStep(BaseStep[NoInputs, PrepWeatherDownloadResult])
             ).strftime("%Y-%m-%d")
             dest = output_path / str(year) / f"{year}_{month:02d}.csv"
             is_current = (year, month) == current_ym
+            # A past month is only "backfill-eligible" if its month_end falls
+            # inside the backfill window.
+            in_backfill_window = pd.Timestamp(month_end) >= backfill_cutoff
 
             # Past months — skip only if the file actually covers through
-            # month_end. A previous run may have hit Open-Meteo's archive lag
-            # mid-month, leaving a gap at the tail; when the month rolls into
-            # "past" the code used to treat any existing file as complete,
-            # freezing the gap forever. Now we look at the max date on disk
-            # and fall through to the resume-fetch branch if it's short.
-            if not is_current and dest.exists() and _file_has_data(dest):
+            # month_end AND is outside the backfill window. A previous run may
+            # have hit Open-Meteo's archive lag mid-month, leaving a gap at
+            # the tail; when the month rolls into "past" the code used to
+            # treat any existing file as complete, freezing the gap forever.
+            # Now we look at the max date on disk and fall through to the
+            # resume-fetch branch if it's short OR if it's inside the backfill
+            # window (in which case we overwrite the tail).
+            if (
+                not is_current
+                and not in_backfill_window
+                and dest.exists()
+                and _file_has_data(dest)
+            ):
                 max_date = _max_date_in_file(dest)
                 if max_date and pd.Timestamp(max_date) >= pd.Timestamp(month_end):
                     downloaded.append(f"filesystem://{dest.resolve()}")
                     dl_stats.months_skipped_complete += 1
                     continue
 
-            # Determine fetch start: resume from the last date already stored
-            if dest.exists() and _file_has_data(dest):
+            # Determine fetch start:
+            # - If we're in the backfill window, refetch from backfill_cutoff
+            #   (or month_start, whichever is later) to overwrite stale tail rows.
+            # - Otherwise resume from the last date already stored.
+            if in_backfill_window and dest.exists() and _file_has_data(dest):
+                fetch_start = max(pd.Timestamp(month_start), backfill_cutoff).strftime(
+                    "%Y-%m-%d"
+                )
+            elif dest.exists() and _file_has_data(dest):
                 max_date = _max_date_in_file(dest)
                 fetch_start = (
                     (pd.Timestamp(max_date) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")

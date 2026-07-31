@@ -10,8 +10,16 @@ Auth flow
 ---------
 1. ``POST {base_url}/api/auth/login`` with ``{"email": <client_id>, "password": <client_secret>}``
    → response body ``{"access_token": "..."}``.
-2. ``GET {base_url}/api/cases/export.xlsx?from=<date>&to=<date>`` with
-   ``Authorization: Bearer <token>`` → binary XLSX response body.
+2. ``GET {base_url}/api/cases/export/stream?from=<date>&to=<date>`` with
+   ``Authorization: Bearer <token>`` → ``application/x-ndjson`` response body,
+   one IHIP record per line. Records are collected and materialised locally
+   into an XLSX file so the rest of the pipeline (filename pattern, parser)
+   stays unchanged.
+
+The older ``/api/cases/export.xlsx`` endpoint is deprecated on the dashboard
+side and used to 504 at the ingress on multi-year windows because the server
+rendered the entire xlsx before the first byte. The streaming endpoint has
+no such render latency.
 
 Env-var names use the generic ``DASHBOARD_CLIENT_ID`` / ``DASHBOARD_CLIENT_SECRET``
 convention (email/password under the hood) so the same source can front any
@@ -75,7 +83,10 @@ log = logging.getLogger("acestor.dengue_prep.case_sources.dashboard")
 
 
 _LOGIN_PATH = "/api/auth/login"
-_EXPORT_PATH = "/api/cases/export.xlsx"
+# NDJSON streaming endpoint — one IHIP record per line, no server-side render,
+# no ingress timeout on multi-year windows (the older ``/api/cases/export.xlsx``
+# repeatedly 504'd because it rendered the entire xlsx before the first byte).
+_EXPORT_PATH = "/api/cases/export/stream"
 
 _STAGED_FILENAME_RE = re.compile(
     r"^dashboard_(\d{4}-\d{2}-\d{2})_to_(\d{4}-\d{2}-\d{2})\.xlsx$"
@@ -389,30 +400,109 @@ class Source(CaseSource):
     # ------------------------------------------------------------------
 
     def _download_xlsx(self, from_date: str, to_date: str) -> bytes:
-        """GET /api/cases/export.xlsx?from=..&to=.. and return the raw bytes."""
+        """Stream NDJSON from the dashboard, materialise as XLSX bytes.
+
+        Historical/naming context: this method is still called
+        ``_download_xlsx`` and still returns XLSX bytes because the rest of
+        the source (filename pattern ``dashboard_..._to_....xlsx``, external
+        file trim, parser) all expect XLSX on disk. Only the wire format
+        changed: we now hit ``/api/cases/export/stream`` (NDJSON), which
+        avoids the 60-second Cloudflare ingress timeout that the old
+        ``/api/cases/export.xlsx`` used to trip on multi-year windows.
+        """
+        import io  # noqa: PLC0415
+        import json  # noqa: PLC0415
+
+        import pandas as pd  # noqa: PLC0415
+
         headers = {"Authorization": f"Bearer {self._get_access_token()}"}
         params: dict[str, str] = {"from": from_date, "to": to_date}
         if self.disease:
             params["disease"] = self.disease
         if self.selected_region_id:
             params["selected_region_id"] = self.selected_region_id
-        resp = requests.get(
-            self.export_url, headers=headers, params=params, timeout=300, stream=False
+
+        import sys  # noqa: PLC0415
+        import time  # noqa: PLC0415
+
+        from tqdm import tqdm  # noqa: PLC0415
+
+        # TTY-adaptive progress. Interactive terminal → live tqdm bar with
+        # rate + elapsed. Captured logs (run.log / CI / systemd journal) →
+        # tqdm is disabled and we fall back to a periodic log heartbeat so
+        # the operator sees forward motion in the file too.
+        is_tty = sys.stderr.isatty()
+        _LOG_EVERY_N = 10_000
+        _LOG_EVERY_S = 15.0
+        started = time.monotonic()
+        last_log = started
+
+        records: list[dict[str, Any]] = []
+        bar = tqdm(
+            desc=f"cases {from_date}→{to_date}",
+            unit=" rec",
+            unit_scale=False,
+            disable=not is_tty,
+            file=sys.stderr,
+            leave=False,
         )
-        resp.raise_for_status()
-        content = resp.content
-        if not content:
-            raise RuntimeError(
-                f"case_sources.dashboard: export endpoint {self.export_url!r} "
-                f"returned zero bytes for from={from_date} to={to_date}."
-            )
-        # Quick sniff — XLSX is a ZIP archive; its first two bytes are 'PK'.
-        if not content.startswith(b"PK"):
-            raise RuntimeError(
-                f"case_sources.dashboard: export endpoint returned non-XLSX bytes "
-                f"(first 64: {content[:64]!r}). Auth or endpoint issue?"
-            )
-        return content
+        try:
+            with requests.get(
+                self.export_url,
+                headers=headers,
+                params=params,
+                timeout=600,
+                stream=True,
+            ) as resp:
+                resp.raise_for_status()
+                for raw_line in resp.iter_lines(decode_unicode=True):
+                    if not raw_line:
+                        continue
+                    try:
+                        records.append(json.loads(raw_line))
+                    except json.JSONDecodeError as exc:
+                        raise RuntimeError(
+                            f"case_sources.dashboard: streaming endpoint "
+                            f"{self.export_url!r} returned unparseable NDJSON "
+                            f"line for from={from_date} to={to_date}: {exc}. "
+                            f"First 200 bytes: {raw_line[:200]!r}"
+                        ) from exc
+                    bar.update(1)
+                    if not is_tty:
+                        n = len(records)
+                        now = time.monotonic()
+                        if n % _LOG_EVERY_N == 0 or (now - last_log) >= _LOG_EVERY_S:
+                            elapsed = now - started
+                            rate = n / elapsed if elapsed > 0 else 0.0
+                            log.info(
+                                "case_sources.dashboard: streaming %s → %s — "
+                                "%d records so far (%.0f rec/s, %.1fs elapsed)",
+                                from_date,
+                                to_date,
+                                n,
+                                rate,
+                                elapsed,
+                            )
+                            last_log = now
+        finally:
+            bar.close()
+
+        elapsed = time.monotonic() - started
+        log.info(
+            "case_sources.dashboard: stream complete %s → %s — " "%d records in %.1fs",
+            from_date,
+            to_date,
+            len(records),
+            elapsed,
+        )
+
+        # Empty windows are valid (nothing reported in the range). Return a
+        # header-only xlsx so downstream can distinguish "no data" from
+        # "fetch failed"; the ihip parser already skips empty files cleanly.
+        df = pd.DataFrame(records)
+        buf = io.BytesIO()
+        df.to_excel(buf, index=False, engine="openpyxl")
+        return buf.getvalue()
 
     _CHUNK_FLOOR_DAYS = 30  # don't halve below this — deeper indicates a real problem
 

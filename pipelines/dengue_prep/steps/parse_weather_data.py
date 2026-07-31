@@ -26,6 +26,7 @@ from pipelines.dengue_prep.configs import (
 )
 from pipelines.dengue_prep.lib.upsert import write_csv as _write_csv
 from pipelines.dengue_prep.results import (
+    PrepGeojsonDownloadResult,
     PrepWeatherDownloadResult,
     PrepWeatherParseResult,
 )
@@ -34,6 +35,7 @@ from pipelines.dengue_prep.results import (
 @dataclass(frozen=True)
 class PrepParseWeatherDataInputs:
     download_weather_data: PrepWeatherDownloadResult
+    download_geojsons: PrepGeojsonDownloadResult
 
 
 class PrepParseWeatherDataStep(
