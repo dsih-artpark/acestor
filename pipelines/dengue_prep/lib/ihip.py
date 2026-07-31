@@ -29,6 +29,7 @@ If the same (region_id, date) appears across files, the last-processed value win
 from __future__ import annotations
 
 import logging
+import sys
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -36,6 +37,7 @@ from typing import Any
 import geopandas as gpd
 import pandas as pd
 from shapely.geometry import Point
+from tqdm import tqdm
 
 from pipelines.dengue_prep.configs import PrepGeocodingConfig
 from pipelines.dengue_prep.lib.summary import CaseParseStats, FileParseStats
@@ -696,7 +698,22 @@ def parse_ihip_files(
             "parse_ihip_files: date_column must be a non-empty string or list of strings"
         )
 
-    for path in files:
+    # Progress bar over files. Each file can carry hundreds of thousands of
+    # rows and go through multiple stages (read → filter → resolve → date
+    # parse), so per-file granularity is the useful signal without adding
+    # per-row overhead. TTY-only — non-interactive log capture (cron, CI, log
+    # files) stays clean.
+    file_iter = tqdm(
+        files,
+        desc=f"parse_ihip[{region_type}]",
+        unit="file",
+        disable=not sys.stderr.isatty(),
+        file=sys.stderr,
+        leave=False,
+    )
+    for path in file_iter:
+        if hasattr(file_iter, "set_postfix_str"):
+            file_iter.set_postfix_str(path.name, refresh=False)
         df = _read_file(path, header_row=header_row)
         log.info("ihip parser: file %r → read %d rows", path.name, len(df))
 
