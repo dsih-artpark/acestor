@@ -164,14 +164,23 @@ def sync_input_datasets(
 def sync_artifacts_back(
     host: RemoteHost, run_id: str, local_artifacts_root: Path | str
 ) -> int:
-    """Pull ``{workspace}/artifacts/{run_id}/`` → local ``artifacts/{run_id}/``.
+    """Pull the whole remote ``{workspace}/artifacts/`` subtree back.
 
-    Returns the byte-size of the local run subtree after sync, for the
+    We rsync the entire directory (not just ``artifacts/{run_id}/``) because
+    the actual path a pipeline writes to depends on the config's
+    ``storages.artifacts.filesystem.base_path`` — e.g. the prep pipeline
+    writes to ``artifacts/gba_ward_prep/{run_id}/``, not
+    ``artifacts/{run_id}/``. A fresh ephemeral remote only has *this* run's
+    artifacts, so pulling the whole tree is safe and covers arbitrary
+    per-pipeline layouts without the caller having to describe them.
+
+    Returns the byte-size of the local artifacts root after sync, for the
     ledger. Missing remote directory is treated as "run produced no
     artifacts" — logs but doesn't raise.
     """
-    remote_dir = f"{REMOTE_WORKSPACE}/artifacts/{run_id}"
-    local_dir = Path(local_artifacts_root) / run_id
+    _ = run_id  # kept in signature for future per-run-id filtering
+    remote_dir = f"{REMOTE_WORKSPACE}/artifacts"
+    local_dir = Path(local_artifacts_root)
     try:
         rsync_down(host=host, remote_dir=remote_dir, local_dir=local_dir)
     except RuntimeError as exc:
