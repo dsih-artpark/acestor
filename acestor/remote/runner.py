@@ -23,7 +23,7 @@ from acestor.remote.bootstrap import (
     system_bootstrap_script,
     uv_sync_command,
 )
-from acestor.remote.config_walker import find_input_paths
+from acestor.remote.config_walker import find_input_paths, find_output_paths
 from acestor.remote.env_forward import DEFAULT_FORWARD_ENV, compose_env_prefix
 from acestor.remote.ledger import (
     DEFAULT_LEDGER_PATH,
@@ -37,6 +37,7 @@ from acestor.remote.ssh import ssh_exec
 from acestor.remote.sync import (
     sync_artifacts_back,
     sync_input_datasets,
+    sync_output_datasets_back,
     sync_repo,
 )
 
@@ -182,13 +183,33 @@ def run_remote(opts: RemoteRunOptions) -> RemoteRunOutcome:
                 log.info("remote runner: launching pipeline on %s", host.ip)
                 rc = ssh_exec(host, cmd, stream=True)
 
-                # ── 5. Artifact sync down (always attempt, even on fail) ──
+                # ── 5. Artifact + output-dataset sync down ──
+                # Always attempt both, even when the pipeline failed —
+                # partial outputs are often exactly what the operator wants
+                # to inspect to figure out what went wrong.
                 try:
                     artifact_bytes = sync_artifacts_back(
                         host, opts.run_id, local_artifacts_root
                     )
                 except Exception as exc:
                     log.exception("remote runner: artifact sync-back failed — %s", exc)
+                if not opts.skip_input_sync:
+                    try:
+                        outputs = _load_output_paths(opts.config, repo_root)
+                        if outputs:
+                            artifact_bytes += sync_output_datasets_back(
+                                host, outputs, repo_root
+                            )
+                        else:
+                            log.info(
+                                "remote runner: no config-declared output "
+                                "datasets to pull back"
+                            )
+                    except Exception as exc:
+                        log.exception(
+                            "remote runner: output-dataset sync-back failed — %s",
+                            exc,
+                        )
 
                 if rc == 0:
                     exit_status = "ok"
@@ -268,17 +289,25 @@ def _load_input_paths(config_path: str, repo_root: Path):
     ``config_path`` is resolved relative to ``repo_root`` if not absolute —
     same rule as ``acestor.run`` uses when invoked from the project root.
     """
+    raw = _load_config(config_path, repo_root)
+    return find_input_paths(raw, repo_root)
+
+
+def _load_output_paths(config_path: str, repo_root: Path):
+    """Same as :func:`_load_input_paths` but for output-tagged keys."""
+    raw = _load_config(config_path, repo_root)
+    return find_output_paths(raw, repo_root)
+
+
+def _load_config(config_path: str, repo_root: Path) -> dict:
     import yaml  # local import — keeps the module import light
 
     p = Path(config_path)
     if not p.is_absolute():
         p = repo_root / p
     if not p.is_file():
-        raise FileNotFoundError(
-            f"remote runner: config file not found for input walk: {p}"
-        )
-    raw = yaml.safe_load(p.read_text()) or {}
-    return find_input_paths(raw, repo_root)
+        raise FileNotFoundError(f"remote runner: config file not found: {p}")
+    return yaml.safe_load(p.read_text()) or {}
 
 
 def _find_repo_root() -> Path:

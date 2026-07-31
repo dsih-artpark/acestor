@@ -1,23 +1,31 @@
-"""Walk a pipeline YAML to find local filesystem inputs the remote needs.
+"""Walk a pipeline YAML to find local filesystem paths the remote needs.
 
-The remote runner has to know *which* local directories to rsync up before
-the pipeline runs. Rather than hardcode paths per pipeline, we scan the
-config for the well-known input keys the prep + main pipelines use.
+The remote runner has to know *which* local directories to rsync — both
+inputs to push up before the run, and outputs to pull back after. Rather
+than hardcode paths per pipeline, we scan the config for the well-known
+keys the prep + main pipelines use.
 
-Input-ish keys (values are directories that must exist locally and be
-readable by the pipeline on the remote):
+**Input-ish keys** (push up before the run; the pipeline reads from them):
 
     data.geojson.base_path
     data.case_download.source_path
     data.weather_download.source_path
     data.weather_download.filesystem_base_path
     data.weather_download.netcdf_cache_path
+
+**Output-ish keys** (also push up so incremental caches carry over — then
+pull back after the run so the local machine gets the freshly-appended
+data). The prep pipeline treats ``prepared_data`` as a reusable cache
+that downstream pipelines consume; without pulling it back the whole
+point of running prep remotely is lost.
+
     data.prepared_data.base_dir
-
-Output-ish keys are deliberately excluded — the remote generates its own:
-
     data.weather_download.parsed_output_path
-    storages.artifacts.filesystem.base_path
+
+``storages.artifacts.filesystem.base_path`` is handled separately by
+:func:`acestor.remote.sync.sync_artifacts_back`, which pulls the entire
+remote ``artifacts/`` subtree — arbitrary per-pipeline sub-layouts don't
+have to be enumerated here.
 
 If a discovered path doesn't exist locally, we skip it — that most likely
 means the pipeline will fetch the data itself (e.g. ``source_mode:
@@ -41,7 +49,13 @@ INPUT_KEY_PATHS: tuple[tuple[str, ...], ...] = (
     ("data", "weather_download", "source_path"),
     ("data", "weather_download", "filesystem_base_path"),
     ("data", "weather_download", "netcdf_cache_path"),
+)
+
+# Output-ish keys — pushed up (so incremental caches survive) AND pulled
+# back (so the local machine gets whatever the pipeline appended).
+OUTPUT_KEY_PATHS: tuple[tuple[str, ...], ...] = (
     ("data", "prepared_data", "base_dir"),
+    ("data", "weather_download", "parsed_output_path"),
 )
 
 
@@ -67,11 +81,36 @@ def find_input_paths(
     matches acestor's own behaviour (``python -m acestor.run`` is always
     invoked from the project root).
     """
+    return _resolve_key_paths(config, project_root, INPUT_KEY_PATHS, "up")
+
+
+def find_output_paths(
+    config: Mapping[str, Any], project_root: Path | str
+) -> list[InputPath]:
+    """Return the set of local *output* directories the runner must pull
+    back from the remote after the pipeline exits.
+
+    Same resolution rules as :func:`find_input_paths`. A local dir doesn't
+    have to exist yet — the runner creates it during pull-back. But we skip
+    values pointing outside ``project_root`` (safety) and empty strings.
+    """
+    return _resolve_key_paths(
+        config, project_root, OUTPUT_KEY_PATHS, "down", require_exists=False
+    )
+
+
+def _resolve_key_paths(
+    config: Mapping[str, Any],
+    project_root: Path | str,
+    key_paths: tuple[tuple[str, ...], ...],
+    direction: str,  # "up" or "down" — purely for log wording
+    require_exists: bool = True,
+) -> list[InputPath]:
     project_root = Path(project_root).resolve()
     seen: set[Path] = set()
     out: list[InputPath] = []
 
-    for key_tuple in INPUT_KEY_PATHS:
+    for key_tuple in key_paths:
         raw = _lookup(config, key_tuple)
         if not isinstance(raw, str) or not raw.strip():
             continue
@@ -82,7 +121,7 @@ def find_input_paths(
             path = path.resolve()
 
         dotted = ".".join(key_tuple)
-        if not path.exists():
+        if require_exists and not path.exists():
             log.debug(
                 "config_walker: %s → %s does not exist locally, skipping "
                 "(pipeline is likely fetching this at runtime)",
@@ -90,7 +129,7 @@ def find_input_paths(
                 path,
             )
             continue
-        if not path.is_dir():
+        if path.exists() and not path.is_dir():
             log.warning(
                 "config_walker: %s → %s exists but is not a directory, skipping",
                 dotted,
@@ -103,8 +142,7 @@ def find_input_paths(
         except ValueError:
             log.warning(
                 "config_walker: %s → %s is OUTSIDE project root %s — skipping "
-                "for safety. Move the data under the project or pass an "
-                "explicit --extra-sync flag if you really want this.",
+                "for safety.",
                 dotted,
                 path,
                 project_root,
@@ -115,7 +153,7 @@ def find_input_paths(
             continue
         seen.add(path)
         out.append(InputPath(key_path=dotted, local_path=path))
-        log.info("config_walker: %s → %s (will rsync up)", dotted, path)
+        log.info("config_walker: %s → %s (will rsync %s)", dotted, path, direction)
 
     return out
 

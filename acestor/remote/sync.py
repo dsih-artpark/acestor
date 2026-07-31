@@ -161,6 +161,49 @@ def sync_input_datasets(
         )
 
 
+def sync_output_datasets_back(
+    host: RemoteHost,
+    outputs: list[InputPath],
+    project_root: Path | str,
+) -> int:
+    """Pull each declared output directory back to its local path.
+
+    Output directories are those flagged by
+    :data:`acestor.remote.config_walker.OUTPUT_KEY_PATHS` — currently
+    ``data.prepared_data.base_dir`` and
+    ``data.weather_download.parsed_output_path``. These are prep-pipeline
+    products the downstream pipeline reads; they must land locally or the
+    remote run's whole point is lost.
+
+    Returns the total bytes recovered across all outputs, for the ledger.
+    Missing remote paths are logged and skipped — non-fatal.
+    """
+    project_root = Path(project_root).resolve()
+    total = 0
+    for op in outputs:
+        rel = op.local_path.relative_to(project_root)
+        remote_dir = f"{REMOTE_WORKSPACE}/{rel.as_posix()}"
+        log.info(
+            "sync_output_datasets_back: [%s] %s@%s:%s → %s",
+            op.key_path,
+            host.ssh_user,
+            host.ip,
+            remote_dir,
+            op.local_path,
+        )
+        try:
+            rsync_down(host=host, remote_dir=remote_dir, local_dir=op.local_path)
+        except RuntimeError as exc:
+            log.warning(
+                "sync_output_datasets_back: [%s] failed (%s) — skipping",
+                op.key_path,
+                exc,
+            )
+            continue
+        total += _tree_bytes(op.local_path)
+    return total
+
+
 def sync_artifacts_back(
     host: RemoteHost, run_id: str, local_artifacts_root: Path | str
 ) -> int:
