@@ -134,17 +134,26 @@ def run_remote(opts: RemoteRunOptions) -> RemoteRunOutcome:
                 error = f"repo sync failed: {exc}"
                 raise
 
-            # ── 2b. Input dataset sync (skips gracefully when configs
-            #        use dashboard sources, since no local dirs exist) ──
+            # ── 2b. Input + output dataset sync (skips gracefully when
+            #        configs use dashboard sources → no local dirs exist).
+            #        Output paths are pushed too so the pipeline sees the
+            #        existing cache (e.g. main dengue pipeline reads
+            #        prepared_data as input); they'll be pulled back later. ──
             if not opts.skip_input_sync:
                 try:
                     inputs = _load_input_paths(opts.config, repo_root)
-                    if inputs:
-                        sync_input_datasets(host, inputs, repo_root)
+                    outputs = _load_output_paths(opts.config, repo_root)
+                    # Outputs that already exist locally count as inputs too
+                    # for the push-up phase (bidirectional dirs).
+                    push_up = list(inputs) + [
+                        op for op in outputs if op.local_path.exists()
+                    ]
+                    if push_up:
+                        sync_input_datasets(host, push_up, repo_root)
                     else:
                         log.info(
-                            "remote runner: no local input datasets to sync "
-                            "(all sources appear to fetch data at runtime)"
+                            "remote runner: no local input/output datasets to "
+                            "sync (all sources appear to fetch data at runtime)"
                         )
                 except Exception as exc:
                     exit_status = "sync_failed"
