@@ -133,6 +133,24 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Override the ledger path (default: ~/.acestor/remote_runs.jsonl).",
     )
+    p.add_argument(
+        "--uv-extras",
+        default="all",
+        help='Remote uv sync extras — "all" (default), "none", or a specific '
+        'extra name (e.g. "dengue").',
+    )
+    p.add_argument(
+        "--skip-run",
+        action="store_true",
+        help="Provision + bootstrap + sync only, don't run the pipeline. "
+        "Useful for testing the bootstrap phase without spending compute time.",
+    )
+    p.add_argument(
+        "--keep-alive-on-failure",
+        action="store_true",
+        help="Leave the remote host RUNNING if the run fails, so you can ssh in "
+        "and debug. WARNING: you are billed until you manually terminate.",
+    )
 
     # ---- AWS-provider knobs (only read when --remote-provider aws) -----
     aws = p.add_argument_group("AWS provider (--remote-provider aws)")
@@ -205,6 +223,9 @@ def main(argv: list[str] | None = None) -> int:
             if ledger_path is not None
             else RemoteRunOptions.__dataclass_fields__["ledger_path"].default
         ),
+        uv_extras=args.uv_extras,
+        skip_run=bool(args.skip_run),
+        keep_alive_on_failure=bool(args.keep_alive_on_failure),
     )
 
     outcome = run_remote(opts)
