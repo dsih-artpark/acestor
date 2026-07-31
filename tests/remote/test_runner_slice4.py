@@ -178,8 +178,8 @@ def test_env_forwarding_prefixes_pipeline_command(tmp_path, host, monkeypatch):
         run_remote(opts)
 
     pipeline_cmd = next(c for c in captured if "acestor.run" in c)
-    assert pipeline_cmd.startswith("env ")
-    assert "DASHBOARD_URL=https://dashboard.example" in pipeline_cmd
-    assert "DASHBOARD_CLIENT_ID=cid" in pipeline_cmd
+    assert pipeline_cmd.startswith("export ")
+    assert "export DASHBOARD_URL=https://dashboard.example;" in pipeline_cmd
+    assert "export DASHBOARD_CLIENT_ID=cid;" in pipeline_cmd
     # unset var must NOT appear
     assert "DASHBOARD_CLIENT_SECRET" not in pipeline_cmd

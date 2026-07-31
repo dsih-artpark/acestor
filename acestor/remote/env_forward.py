@@ -34,7 +34,14 @@ DEFAULT_FORWARD_ENV: tuple[str, ...] = (
 
 
 def compose_env_prefix(names: list[str] | tuple[str, ...]) -> str:
-    """Return an ``env NAME='val' NAME2='val2'`` prefix, or ``""`` if none.
+    """Return a shell prefix ``export NAME='val'; export NAME2='val2'; ``
+    or the empty string if none of the requested names are set.
+
+    Shell ``export`` is used rather than the ``env`` binary because the
+    remote command that follows starts with shell builtins (``cd``, ``&&``,
+    ``export PATH``) — ``env`` would refuse to exec ``cd`` since it isn't a
+    real binary. ``export`` runs inside the shell, so the vars are visible
+    to every subsequent command in the compound line.
 
     Skips names that aren't set locally — silently, since half the auto-
     forwarded set is optional depending on which pipeline you're running.
@@ -65,8 +72,8 @@ def compose_env_prefix(names: list[str] | tuple[str, ...]) -> str:
         ", ".join(f"{n}={_redact(v)}" for n, v in resolved),
     )
 
-    quoted = " ".join(f"{n}={shlex.quote(v)}" for n, v in resolved)
-    return f"env {quoted} "
+    parts = [f"export {n}={shlex.quote(v)};" for n, v in resolved]
+    return " ".join(parts) + " "
 
 
 def _redact(v: str) -> str:

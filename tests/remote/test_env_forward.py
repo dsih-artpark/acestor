@@ -15,18 +15,20 @@ def test_composes_env_prefix_for_set_vars(monkeypatch):
     monkeypatch.setenv("FOO", "hello")
     monkeypatch.setenv("BAR", "world value")
     prefix = compose_env_prefix(["FOO", "BAR"])
-    assert prefix.startswith("env ")
+    # shell 'export ...;' is used (not 'env NAME=val') so that vars are
+    # visible to the shell builtins that follow (cd / export PATH / &&).
+    assert prefix.startswith("export ")
     assert prefix.endswith(" ")
+    assert "export FOO=hello;" in prefix
     # BAR contains a space → must be quoted for the remote shell
-    assert "BAR='world value'" in prefix
-    assert "FOO=hello" in prefix
+    assert "export BAR='world value';" in prefix
 
 
 def test_skips_unset_vars_silently(monkeypatch):
     monkeypatch.setenv("HAVE", "x")
     monkeypatch.delenv("MISSING", raising=False)
     prefix = compose_env_prefix(["HAVE", "MISSING"])
-    assert "HAVE=x" in prefix
+    assert "export HAVE=x;" in prefix
     assert "MISSING" not in prefix
 
 
@@ -34,4 +36,4 @@ def test_quotes_values_with_shell_metacharacters(monkeypatch):
     monkeypatch.setenv("TRICKY", "a'b\"c $d")
     prefix = compose_env_prefix(["TRICKY"])
     # shlex.quote wraps in single quotes and escapes any internal '
-    assert "TRICKY='a'\"'\"'b\"c $d'" in prefix
+    assert "export TRICKY='a'\"'\"'b\"c $d';" in prefix
