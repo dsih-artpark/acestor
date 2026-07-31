@@ -121,9 +121,9 @@ def rsync_up(
     argv = [
         "rsync",
         "-a",
-        *(["-z"] if _rsync_supports_compression() else []),
+        "--compress",
         *(["--delete"] if delete else []),
-        "--info=stats1",
+        "--stats",
         "-e",
         _rsync_ssh_arg(host),
         *excludes,
@@ -164,8 +164,8 @@ def rsync_down(
     argv = [
         "rsync",
         "-a",
-        *(["-z"] if _rsync_supports_compression() else []),
-        "--info=stats1",
+        "--compress",
+        "--stats",
         "-e",
         _rsync_ssh_arg(host),
         *excludes,
@@ -193,25 +193,7 @@ def _preview(command: str, max_len: int = 120) -> str:
     return flat if len(flat) <= max_len else flat[: max_len - 1] + "…"
 
 
-def _rsync_supports_compression() -> bool:
-    """macOS ships an old rsync that lacks -z; skip it there rather than fail.
-
-    Cached at process import via the module-level closure below.
-    """
-    return _RSYNC_SUPPORTS_COMPRESSION
-
-
-def _detect_rsync_compression() -> bool:
-    try:
-        # rsync --help writes to stdout on GNU rsync, stderr on the BSD one
-        out = subprocess.run(
-            ["rsync", "--version"], capture_output=True, text=True, timeout=5
-        )
-        text = (out.stdout or "") + (out.stderr or "")
-        # If we see a version string at all, -z has been supported since forever.
-        return "rsync" in text.lower()
-    except Exception:
-        return False
-
-
-_RSYNC_SUPPORTS_COMPRESSION = _detect_rsync_compression()
+# Note on rsync flags used above:
+#   --compress / --stats — supported by both GNU rsync (Linux) and openrsync
+#     (macOS 14+, protocol 29 compat). We deliberately avoid --info=stats1
+#     which is GNU-only and blew up the slice-4 smoke test on macOS.
