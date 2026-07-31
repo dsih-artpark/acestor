@@ -59,6 +59,10 @@ class AWSProviderConfig:
     # cloud-init user-data placeholder — the bootstrap slice will fill this
     user_data: str = ""
     tags: dict[str, str] = field(default_factory=dict)
+    # Root EBS volume size. Ubuntu 24.04 AMI defaults to 8 GB which fills up
+    # once uv sync stages the wheel cache — 20 GB is enough headroom for
+    # every extra including the dengue geospatial + xgboost / sklearn stack.
+    root_volume_gb: int = 20
 
 
 class AWSProvider(CloudProvider):
@@ -123,6 +127,17 @@ class AWSProvider(CloudProvider):
                 }
             ],
         }
+        if self.cfg.root_volume_gb:
+            run_kwargs["BlockDeviceMappings"] = [
+                {
+                    "DeviceName": "/dev/sda1",  # Ubuntu 24.04 AMI root device
+                    "Ebs": {
+                        "VolumeSize": int(self.cfg.root_volume_gb),
+                        "VolumeType": "gp3",
+                        "DeleteOnTermination": True,
+                    },
+                }
+            ]
         if self.cfg.security_group_ids:
             run_kwargs["SecurityGroupIds"] = self.cfg.security_group_ids
         if self.cfg.subnet_id:

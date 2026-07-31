@@ -60,6 +60,7 @@ def _resolve_provider(name: str, args: argparse.Namespace) -> CloudProvider:
             ami=args.aws_ami or "",
             iam_instance_profile=args.aws_instance_profile or "",
             profile=args.aws_profile or "",
+            root_volume_gb=int(args.aws_root_volume_gb),
         )
         return AWSProvider(cfg)
     raise ValueError(f"Unknown --remote-provider {name!r}. Available: aws, mock.")
@@ -202,6 +203,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--aws-profile",
         default="",
         help="Optional boto3 profile name (defaults to standard credential chain).",
+    )
+    aws.add_argument(
+        "--aws-root-volume-gb",
+        type=int,
+        default=20,
+        help="Root EBS volume size in GB (default: 20). Bump if uv sync fills "
+        "the disk on large --uv-extras choices.",
     )
     return p
 

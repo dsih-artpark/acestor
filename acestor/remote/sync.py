@@ -10,6 +10,8 @@ Slice 3 ships repo sync only. Slice 4 will add:
 from __future__ import annotations
 
 import logging
+import subprocess
+import tempfile
 from pathlib import Path
 
 from acestor.remote.bootstrap import REMOTE_WORKSPACE
@@ -51,9 +53,15 @@ _REPO_EXCLUDES = [
 def sync_repo(host: RemoteHost, repo_root: Path | str) -> None:
     """Rsync the local repo → ``{workspace}`` on the remote.
 
-    ``--delete`` is on: the remote workspace mirrors the local checkout
-    exactly, so re-running the same run-id after local edits doesn't leave
-    stale files behind.
+    Uses ``git ls-files --cached --others --exclude-standard`` to pick the
+    file set — that's tracked files plus untracked-but-not-gitignored ones.
+    Result: the remote gets exactly what a fresh ``git clone`` would give,
+    plus any local uncommitted edits, but never scratch data / caches /
+    adjacent nested repos even if they happen to live inside ``repo_root``.
+
+    Falls back to a blanket rsync with :data:`_REPO_EXCLUDES` when
+    ``repo_root`` isn't a git checkout (unusual but possible in CI-style
+    tarball unpacks).
     """
     repo_root = Path(repo_root).resolve()
     log.info(
@@ -63,13 +71,44 @@ def sync_repo(host: RemoteHost, repo_root: Path | str) -> None:
         host.ip,
         REMOTE_WORKSPACE,
     )
-    rsync_up(
-        host=host,
-        local_dir=repo_root,
-        remote_dir=REMOTE_WORKSPACE,
-        exclude=_REPO_EXCLUDES,
-        delete=True,
+
+    tracked = _git_tracked_and_untracked(repo_root)
+    if tracked is None:
+        log.warning(
+            "sync_repo: %s is not a git checkout — falling back to blanket "
+            "rsync with static excludes. May push more than intended.",
+            repo_root,
+        )
+        rsync_up(
+            host=host,
+            local_dir=repo_root,
+            remote_dir=REMOTE_WORKSPACE,
+            exclude=_REPO_EXCLUDES,
+            delete=True,
+        )
+        return
+
+    log.info(
+        "sync_repo: pushing %d file(s) selected by git ls-files (tracked + "
+        "non-gitignored)",
+        len(tracked),
     )
+    # NUL-separated list so filenames with spaces survive (rsync --from0).
+    with tempfile.NamedTemporaryFile(
+        mode="wb", suffix=".acestor-files-from", delete=False
+    ) as tmp:
+        tmp.write(b"\0".join(p.encode("utf-8") for p in tracked))
+        files_from = Path(tmp.name)
+    try:
+        rsync_up(
+            host=host,
+            local_dir=repo_root,
+            remote_dir=REMOTE_WORKSPACE,
+            files_from=files_from,
+            delete=True,
+        )
+    finally:
+        files_from.unlink(missing_ok=True)
 
 
 def sync_input_datasets(
@@ -129,6 +168,39 @@ def sync_artifacts_back(
         )
         return 0
     return _tree_bytes(local_dir)
+
+
+def _git_tracked_and_untracked(repo_root: Path) -> list[str] | None:
+    """Return the file list ``git ls-files`` gives us for ``repo_root``.
+
+    ``-z`` (NUL-separated) so filenames with spaces / newlines round-trip.
+    Returns ``None`` when ``repo_root`` isn't a git checkout — caller falls
+    back to a blanket rsync.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(repo_root),
+                "ls-files",
+                "-z",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+            ],
+            capture_output=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return None
+    if result.returncode != 0:
+        return None
+    raw = result.stdout
+    if not raw:
+        return []
+    # Trailing NUL is normal — strip before split so we don't emit an empty entry.
+    return [p.decode("utf-8") for p in raw.rstrip(b"\0").split(b"\0") if p]
 
 
 def _tree_bytes(root: Path) -> int:

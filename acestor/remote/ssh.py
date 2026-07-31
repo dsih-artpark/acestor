@@ -108,6 +108,7 @@ def rsync_up(
     remote_dir: str,
     exclude: Iterable[str] | None = None,
     delete: bool = True,
+    files_from: Path | str | None = None,
 ) -> None:
     """Push ``local_dir`` → ``host:remote_dir`` via rsync-over-ssh.
 
@@ -118,6 +119,10 @@ def rsync_up(
     local = str(local_dir).rstrip("/") + "/"
     remote = f"{host.ssh_user}@{host.ip}:{remote_dir.rstrip('/')}/"
     excludes = [f"--exclude={e}" for e in (exclude or [])]
+    files_from_args = ["--files-from", str(files_from), "--from0"] if files_from else []
+    # --files-from disables recursive discovery, so keep -a but the list is
+    # authoritative. --from0 lets us feed NUL-separated paths so filenames
+    # with spaces (e.g. 'dengue-model-pipeline-automation - GBA/') work.
     argv = [
         "rsync",
         "-a",
@@ -126,6 +131,7 @@ def rsync_up(
         "--stats",
         "-e",
         _rsync_ssh_arg(host),
+        *files_from_args,
         *excludes,
         local,
         remote,
