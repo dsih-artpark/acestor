@@ -23,7 +23,10 @@ log = logging.getLogger(__name__)
 # Directories/files we NEVER want to push. .venv is many hundreds of MB and
 # platform-specific (macOS wheels would fail on Linux anyway). artifacts/ is
 # pipeline output — the remote generates its own. __pycache__ is trivially
-# regenerated.
+# regenerated. .env / .envrc / *.pem hold secrets — the runner reaches the
+# remote pipeline through env_forward.compose_env_prefix, which keeps
+# values in-memory only and never touches remote disk. Copying secret files
+# would defeat that.
 _REPO_EXCLUDES = [
     ".venv",
     "artifacts",
@@ -34,6 +37,12 @@ _REPO_EXCLUDES = [
     ".ruff_cache",
     "htmlcov",
     ".coverage",
+    # Secrets — never land these on ephemeral remote disks.
+    ".env",
+    ".env.*",
+    ".envrc",
+    "*.pem",
+    "*.key",
     # Keep .git — reproducibility (remote can print commit sha) is worth
     # the ~few MB. If it becomes an issue we can flip this.
 ]
