@@ -30,24 +30,39 @@ from acestor.remote.runner import (
 log = logging.getLogger("acestor.remote")
 
 
-def _resolve_provider(name: str) -> CloudProvider:
+def _resolve_provider(name: str, args: argparse.Namespace) -> CloudProvider:
     """Look up a provider by name.
 
-    Slice 1 ships only the mock. Real providers (aws, gcp) land in later
-    slices and just plug in here.
+    Providers requiring per-cloud config (aws key pair, security group, ...)
+    read it out of the CLI args here. Adding gcp later means one more branch.
     """
     if name == "mock":
         from acestor.remote.providers.mock import MockProvider
 
         return MockProvider()
     if name == "aws":
-        raise NotImplementedError(
-            "aws provider not implemented yet — coming in slice 2. "
-            "Use --remote-provider mock to exercise the CLI + ledger."
+        from acestor.remote.providers.aws import AWSProvider, AWSProviderConfig
+
+        if not args.aws_key_name or not args.aws_key_path:
+            raise ValueError(
+                "aws provider: --aws-key-name and --aws-key-path are required "
+                "(existing EC2 key pair + local private key)."
+            )
+        cfg = AWSProviderConfig(
+            key_name=args.aws_key_name,
+            key_path=args.aws_key_path,
+            security_group_ids=(
+                [s.strip() for s in args.aws_security_groups.split(",") if s.strip()]
+                if args.aws_security_groups
+                else []
+            ),
+            subnet_id=args.aws_subnet or "",
+            ami=args.aws_ami or "",
+            iam_instance_profile=args.aws_instance_profile or "",
+            profile=args.aws_profile or "",
         )
-    raise ValueError(
-        f"Unknown --remote-provider {name!r}. Available: mock (aws lands next)."
-    )
+        return AWSProvider(cfg)
+    raise ValueError(f"Unknown --remote-provider {name!r}. Available: aws, mock.")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -118,6 +133,42 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Override the ledger path (default: ~/.acestor/remote_runs.jsonl).",
     )
+
+    # ---- AWS-provider knobs (only read when --remote-provider aws) -----
+    aws = p.add_argument_group("AWS provider (--remote-provider aws)")
+    aws.add_argument(
+        "--aws-key-name",
+        help="Name of an existing EC2 key pair in --remote-region.",
+    )
+    aws.add_argument(
+        "--aws-key-path",
+        help="Local path to the matching private key (e.g. ~/.ssh/acestor.pem).",
+    )
+    aws.add_argument(
+        "--aws-security-groups",
+        default="",
+        help="Comma-separated security group IDs (must allow SSH from your IP).",
+    )
+    aws.add_argument(
+        "--aws-subnet",
+        default="",
+        help="Subnet ID. Omit to use default VPC subnet (needs auto-assign public IP).",
+    )
+    aws.add_argument(
+        "--aws-ami",
+        default="",
+        help="AMI ID. Omit to auto-resolve latest Ubuntu 24.04 LTS via SSM.",
+    )
+    aws.add_argument(
+        "--aws-instance-profile",
+        default="",
+        help="Optional IAM instance profile to attach (for S3 access etc.).",
+    )
+    aws.add_argument(
+        "--aws-profile",
+        default="",
+        help="Optional boto3 profile name (defaults to standard credential chain).",
+    )
     return p
 
 
@@ -129,7 +180,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     try:
-        provider = _resolve_provider(args.remote_provider)
+        provider = _resolve_provider(args.remote_provider, args)
     except (ValueError, NotImplementedError) as exc:
         log.error("%s", exc)
         return 2
