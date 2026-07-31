@@ -17,7 +17,7 @@ from pathlib import Path
 from acestor.remote.bootstrap import REMOTE_WORKSPACE
 from acestor.remote.config_walker import InputPath
 from acestor.remote.providers.base import RemoteHost
-from acestor.remote.ssh import rsync_down, rsync_up
+from acestor.remote.ssh import rsync_down, rsync_up, ssh_exec
 
 log = logging.getLogger(__name__)
 
@@ -126,6 +126,21 @@ def sync_input_datasets(
     behaviour where the operator manages the directory.
     """
     project_root = Path(project_root).resolve()
+    # Ensure the parent directory tree exists on the remote before rsync — the
+    # ``*_datasets/`` gitignore rule means these paths weren't created by the
+    # earlier repo sync, and rsync refuses to auto-mkdir intermediate parents.
+    parents_to_mkdir = {
+        f"{REMOTE_WORKSPACE}/{ip.local_path.relative_to(project_root).parent.as_posix()}"
+        for ip in inputs
+    }
+    if parents_to_mkdir:
+        mkdir_cmd = "mkdir -p " + " ".join(f"'{p}'" for p in sorted(parents_to_mkdir))
+        rc = ssh_exec(host, mkdir_cmd, stream=False)
+        if rc != 0:
+            raise RuntimeError(
+                f"sync_input_datasets: mkdir -p on remote failed (rc={rc})"
+            )
+
     for ip in inputs:
         rel = ip.local_path.relative_to(project_root)
         remote_dir = f"{REMOTE_WORKSPACE}/{rel.as_posix()}"
