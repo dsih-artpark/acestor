@@ -64,9 +64,12 @@ def _opts(
         artifacts_local_root=tmp_path / "artifacts",
     )
     base.update(overrides)
-    # Give the runner a repo dir to sync from
+    # Give the runner a repo dir + a stub config file to sync from
     (base["repo_root"]).mkdir(parents=True, exist_ok=True)
     (base["repo_root"] / "pyproject.toml").write_text("[project]\nname='fake'\n")
+    cfg_rel = Path(base["config"])
+    (base["repo_root"] / cfg_rel.parent).mkdir(parents=True, exist_ok=True)
+    (base["repo_root"] / cfg_rel).write_text("data: {}\n")
     return RemoteRunOptions(**base)
 
 

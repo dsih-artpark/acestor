@@ -13,6 +13,7 @@ import logging
 from pathlib import Path
 
 from acestor.remote.bootstrap import REMOTE_WORKSPACE
+from acestor.remote.config_walker import InputPath
 from acestor.remote.providers.base import RemoteHost
 from acestor.remote.ssh import rsync_down, rsync_up
 
@@ -60,6 +61,41 @@ def sync_repo(host: RemoteHost, repo_root: Path | str) -> None:
         exclude=_REPO_EXCLUDES,
         delete=True,
     )
+
+
+def sync_input_datasets(
+    host: RemoteHost,
+    inputs: list[InputPath],
+    project_root: Path | str,
+) -> None:
+    """Rsync each discovered local input directory to the same relative path
+    on the remote workspace, so the pipeline finds it exactly where the
+    config points.
+
+    E.g. local ``<repo>/ap_datasets/geojsons`` → remote
+    ``<workspace>/ap_datasets/geojsons``. ``--delete`` is off — inputs
+    accumulate across runs on the (in-process) remote, matching local
+    behaviour where the operator manages the directory.
+    """
+    project_root = Path(project_root).resolve()
+    for ip in inputs:
+        rel = ip.local_path.relative_to(project_root)
+        remote_dir = f"{REMOTE_WORKSPACE}/{rel.as_posix()}"
+        log.info(
+            "sync_input_datasets: [%s] %s → %s@%s:%s",
+            ip.key_path,
+            ip.local_path,
+            host.ssh_user,
+            host.ip,
+            remote_dir,
+        )
+        rsync_up(
+            host=host,
+            local_dir=ip.local_path,
+            remote_dir=remote_dir,
+            exclude=["__pycache__", "*.pyc"],
+            delete=False,
+        )
 
 
 def sync_artifacts_back(

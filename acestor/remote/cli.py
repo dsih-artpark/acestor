@@ -151,6 +151,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Leave the remote host RUNNING if the run fails, so you can ssh in "
         "and debug. WARNING: you are billed until you manually terminate.",
     )
+    p.add_argument(
+        "--forward-env",
+        action="append",
+        default=None,
+        metavar="NAME",
+        help="Local env var name to forward into the remote pipeline (repeatable). "
+        "Values live only in the remote process — never written to disk. "
+        "Defaults to DASHBOARD_* + CDSAPI_* — pass this flag one or more times "
+        "to override the default set.",
+    )
+    p.add_argument(
+        "--skip-input-sync",
+        action="store_true",
+        help="Skip the config-walked local dataset rsync. Use when every "
+        "data source is dashboard/API-based and there's nothing local to push.",
+    )
 
     # ---- AWS-provider knobs (only read when --remote-provider aws) -----
     aws = p.add_argument_group("AWS provider (--remote-provider aws)")
@@ -226,6 +242,12 @@ def main(argv: list[str] | None = None) -> int:
         uv_extras=args.uv_extras,
         skip_run=bool(args.skip_run),
         keep_alive_on_failure=bool(args.keep_alive_on_failure),
+        forward_env=(
+            tuple(args.forward_env)
+            if args.forward_env is not None
+            else RemoteRunOptions.__dataclass_fields__["forward_env"].default
+        ),
+        skip_input_sync=bool(args.skip_input_sync),
     )
 
     outcome = run_remote(opts)

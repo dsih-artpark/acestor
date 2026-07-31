@@ -23,6 +23,8 @@ from acestor.remote.bootstrap import (
     system_bootstrap_script,
     uv_sync_command,
 )
+from acestor.remote.config_walker import find_input_paths
+from acestor.remote.env_forward import DEFAULT_FORWARD_ENV, compose_env_prefix
 from acestor.remote.ledger import (
     DEFAULT_LEDGER_PATH,
     ExitStatus,
@@ -32,7 +34,11 @@ from acestor.remote.ledger import (
 )
 from acestor.remote.providers.base import CloudProvider, Lifecycle, RemoteHost
 from acestor.remote.ssh import ssh_exec
-from acestor.remote.sync import sync_artifacts_back, sync_repo
+from acestor.remote.sync import (
+    sync_artifacts_back,
+    sync_input_datasets,
+    sync_repo,
+)
 
 log = logging.getLogger(__name__)
 
@@ -57,6 +63,8 @@ class RemoteRunOptions:
     uv_extras: str = "all"  # forwarded to bootstrap.uv_sync_command
     skip_run: bool = False  # bootstrap + sync only, don't execute the pipeline
     keep_alive_on_failure: bool = False  # leave host up for debugging (charges!)
+    forward_env: tuple[str, ...] = DEFAULT_FORWARD_ENV  # env vars to forward
+    skip_input_sync: bool = False  # skip config-walked dataset rsync
 
 
 @dataclass
@@ -125,6 +133,23 @@ def run_remote(opts: RemoteRunOptions) -> RemoteRunOutcome:
                 error = f"repo sync failed: {exc}"
                 raise
 
+            # ── 2b. Input dataset sync (skips gracefully when configs
+            #        use dashboard sources, since no local dirs exist) ──
+            if not opts.skip_input_sync:
+                try:
+                    inputs = _load_input_paths(opts.config, repo_root)
+                    if inputs:
+                        sync_input_datasets(host, inputs, repo_root)
+                    else:
+                        log.info(
+                            "remote runner: no local input datasets to sync "
+                            "(all sources appear to fetch data at runtime)"
+                        )
+                except Exception as exc:
+                    exit_status = "sync_failed"
+                    error = f"input dataset sync failed: {exc}"
+                    raise
+
             # ── 3. Bootstrap (system deps + uv install + uv sync) ───────
             log.info("remote runner: bootstrapping remote host")
             rc = ssh_exec(host, system_bootstrap_script(), stream=True)
@@ -146,7 +171,8 @@ def run_remote(opts: RemoteRunOptions) -> RemoteRunOutcome:
                 )
                 exit_status = "ok"
             else:
-                cmd = remote_run_command(
+                env_prefix = compose_env_prefix(list(opts.forward_env))
+                cmd = env_prefix + remote_run_command(
                     pipeline=opts.pipeline,
                     config=opts.config,
                     run_id=opts.run_id,
@@ -234,6 +260,25 @@ def run_remote(opts: RemoteRunOptions) -> RemoteRunOutcome:
 
 def generate_run_id() -> str:
     return uuid.uuid4().hex[:12]
+
+
+def _load_input_paths(config_path: str, repo_root: Path):
+    """Load ``config_path`` as YAML and walk it for local input directories.
+
+    ``config_path`` is resolved relative to ``repo_root`` if not absolute —
+    same rule as ``acestor.run`` uses when invoked from the project root.
+    """
+    import yaml  # local import — keeps the module import light
+
+    p = Path(config_path)
+    if not p.is_absolute():
+        p = repo_root / p
+    if not p.is_file():
+        raise FileNotFoundError(
+            f"remote runner: config file not found for input walk: {p}"
+        )
+    raw = yaml.safe_load(p.read_text()) or {}
+    return find_input_paths(raw, repo_root)
 
 
 def _find_repo_root() -> Path:
