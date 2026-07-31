@@ -60,8 +60,6 @@ class PrepDownloadWeatherDataStep(BaseStep[NoInputs, PrepWeatherDownloadResult])
             normalize_records,
         )
 
-        source = load_source(cfg.source_mode)
-
         data_raw = context.config.get("data") or {}
         geojson_base = str((data_raw.get("geojson") or {}).get("base_path", "")).strip()
 
@@ -69,6 +67,8 @@ class PrepDownloadWeatherDataStep(BaseStep[NoInputs, PrepWeatherDownloadResult])
             **dataclasses.asdict(cfg),
             "geojson_base_path": geojson_base,
         }
+
+        source = load_source(cfg.source_mode, source_config)
 
         start = pd.Timestamp(cfg.start_date)
         run_date = ((context.config.get("run") or {}).get("run_date") or "").strip()

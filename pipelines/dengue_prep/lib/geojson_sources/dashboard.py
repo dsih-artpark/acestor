@@ -4,10 +4,15 @@ The dashboard returns a full GeoJSON ``FeatureCollection`` with per-region
 geometry. This source unpacks it into ``{base_path}/{region_type}s/{region_id}.geojson``
 files — matching the on-disk layout every acestor step already reads from.
 
-**Cache policy is permanent**: once a region's file is on disk, it is not
-re-downloaded on subsequent runs — geographic boundaries change on the order
-of years, not weeks. Set ``refresh: true`` in the ``data.geojson`` config
-block to force re-download.
+**Cache policy is permanent + gap-filling**: on every run this source first
+hits ``/api/regions/lite`` (a cheap 36 KB listing) to learn which region_ids
+should exist at the requested level, then compares against files already on
+disk. If everything is present, no full fetch happens. If anything is
+missing (a new region was added upstream, or the cache dir is fresh), the
+full FeatureCollection is pulled once and *only* the missing files are
+written — cached ones are left alone. Geographic boundaries change on the
+order of years, so set ``refresh: true`` in the ``data.geojson`` config
+block to force re-download of everything.
 
 Auth reuses the same dashboard credentials as the case source
 (``DASHBOARD_URL``, ``DASHBOARD_CLIENT_ID``, ``DASHBOARD_CLIENT_SECRET``), so
@@ -50,6 +55,7 @@ log = logging.getLogger("acestor.dengue_prep.geojson_sources.dashboard")
 
 _LOGIN_PATH = "/api/auth/login"
 _REGIONS_PATH = "/api/regions/{scope_id}"
+_REGIONS_LITE_PATH = "/api/regions/lite"
 
 
 class Source(GeojsonSource):
@@ -134,16 +140,23 @@ class Source(GeojsonSource):
         target = Path(base_path) / f"{region_type}s"
         target.mkdir(parents=True, exist_ok=True)
 
-        # Permanent cache: if the directory already has any geojsons for this
-        # region_type and refresh is False, treat as complete and return
-        # immediately. Boundaries change slowly; the operator has to opt in
-        # to re-fetch via ``refresh: true``.
-        existing = sorted(target.glob(f"{region_type}_*.geojson"))
-        if existing and not self.refresh:
+        # Step 1: ask the dashboard which region_ids should exist at this level
+        # via the lightweight listing endpoint (36 KB / <200 ms for a state).
+        # We use this to detect *which* regions are missing from the local
+        # cache rather than blindly refetching the full FeatureCollection.
+        expected_ids = self._list_expected_region_ids(region_type)
+
+        # Step 2: figure out what we already have and what's missing.
+        existing_ids = {p.stem for p in target.glob("*.geojson")}
+        cached_expected = expected_ids & existing_ids
+        missing_ids = expected_ids - existing_ids
+
+        if not self.refresh and not missing_ids:
             log.info(
-                "geojson_sources.dashboard: %d %s geojson(s) already cached in %s "
-                "— skipping fetch (set data.geojson.refresh=true to re-download)",
-                len(existing),
+                "geojson_sources.dashboard: all %d expected %s geojson(s) already "
+                "cached in %s — skipping full fetch (set data.geojson.refresh=true "
+                "to re-download)",
+                len(cached_expected),
                 region_type,
                 target,
             )
@@ -151,19 +164,33 @@ class Source(GeojsonSource):
                 region_type=region_type,
                 output_dir=str(target),
                 files_written=0,
-                files_cached=len(existing),
+                files_cached=len(cached_expected),
+            )
+
+        # Step 3: something is missing (or refresh was requested). The dashboard
+        # has no per-region-id endpoint, so we have to fetch the whole
+        # FeatureCollection — but we still only write the files we actually
+        # need (missing_ids), or all of them if refresh=True.
+        if self.refresh:
+            log.info(
+                "geojson_sources.dashboard: refresh=true — refetching all %d "
+                "expected %s geojson(s) for scope=%r",
+                len(expected_ids),
+                region_type,
+                self.scope_id,
+            )
+        else:
+            log.info(
+                "geojson_sources.dashboard: %d/%d %s geojson(s) missing from cache "
+                "(%s) — fetching full FeatureCollection to fill gaps",
+                len(missing_ids),
+                len(expected_ids),
+                region_type,
+                sorted(missing_ids)[:5] + (["..."] if len(missing_ids) > 5 else []),
             )
 
         url = f"{self.base_url}{_REGIONS_PATH.format(scope_id=self.scope_id)}"
         headers = {"Authorization": f"Bearer {self._get_access_token()}"}
-        log.info(
-            "geojson_sources.dashboard: fetching %s regions for scope=%r "
-            "from %s (refresh=%s)",
-            region_type,
-            self.scope_id,
-            url,
-            self.refresh,
-        )
         resp = requests.get(
             url, headers=headers, params={"level": region_type}, timeout=120
         )
@@ -185,9 +212,10 @@ class Source(GeojsonSource):
                 f"Check that the scope exists and has {region_type}-level regions loaded."
             )
 
-        # Split into per-region files.
+        # Only write the ones we're missing (or all, when refresh=True).
+        want_ids = expected_ids if self.refresh else missing_ids
         written = 0
-        skipped = 0
+        skipped_no_id = 0
         for feat in features:
             props = feat.get("properties") or {}
             rid = props.get("region_id") or feat.get("id")
@@ -197,24 +225,59 @@ class Source(GeojsonSource):
                     "properties keys: %s",
                     sorted(props.keys()),
                 )
-                skipped += 1
+                skipped_no_id += 1
+                continue
+            if rid not in want_ids:
                 continue
             fc = {"type": "FeatureCollection", "features": [feat]}
-            out_path = target / f"{rid}.geojson"
-            out_path.write_text(json.dumps(fc), encoding="utf-8")
+            (target / f"{rid}.geojson").write_text(json.dumps(fc), encoding="utf-8")
             written += 1
 
         log.info(
             "geojson_sources.dashboard: wrote %d %s geojson(s) to %s "
-            "(%d feature(s) skipped for missing region_id)",
+            "(%d previously cached, %d feature(s) skipped for missing region_id)",
             written,
             region_type,
             target,
-            skipped,
+            len(cached_expected) if not self.refresh else 0,
+            skipped_no_id,
         )
         return GeojsonFetchResult(
             region_type=region_type,
             output_dir=str(target),
             files_written=written,
-            files_cached=0,
+            files_cached=len(cached_expected) if not self.refresh else 0,
         )
+
+    def _list_expected_region_ids(self, region_type: str) -> set[str]:
+        """Fetch /api/regions/lite and return the region_ids at ``region_type``.
+
+        Cheap (~36 KB, <200 ms for a state-sized scope). Lets us detect
+        missing files without pulling the full FeatureCollection.
+        """
+        url = f"{self.base_url}{_REGIONS_LITE_PATH}"
+        headers = {"Authorization": f"Bearer {self._get_access_token()}"}
+        resp = requests.get(
+            url, headers=headers, params={"scope_id": self.scope_id}, timeout=30
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+        if not isinstance(payload, list):
+            raise RuntimeError(
+                f"geojson_sources.dashboard: expected a list from {url}, got "
+                f"{type(payload).__name__}"
+            )
+        ids = {
+            str(item["id"])
+            for item in payload
+            if isinstance(item, dict)
+            and item.get("level") == region_type
+            and item.get("id")
+        }
+        if not ids:
+            raise RuntimeError(
+                f"geojson_sources.dashboard: /api/regions/lite returned no "
+                f"regions at level={region_type!r} for scope={self.scope_id!r} "
+                f"({len(payload)} total items). Check the scope + level are correct."
+            )
+        return ids

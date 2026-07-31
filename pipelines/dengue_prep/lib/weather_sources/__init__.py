@@ -59,6 +59,16 @@ _BUILTIN_DIR = os.path.dirname(__file__)
 class WeatherSource(ABC):
     should_persist: bool = True
 
+    @classmethod
+    def build(cls, config: Mapping[str, Any]) -> "WeatherSource":  # noqa: ARG003
+        """Default builder — subclasses with construction args should override.
+
+        Sources that take no init args (openmeteo, filesystem) inherit this
+        no-arg builder; parametrised sources (e.g. dashboard) override to
+        pull their kwargs out of the config mapping.
+        """
+        return cls()
+
     @abstractmethod
     def get_weather_all_regions(
         self,
@@ -190,7 +200,9 @@ def normalize_records(
 # ---------------------------------------------------------------------------
 
 
-def load_source(source_mode: str) -> WeatherSource:
+def load_source(
+    source_mode: str, config: Mapping[str, Any] | None = None
+) -> WeatherSource:
     """Load a WeatherSource by name or path.
 
     Resolution order
@@ -237,4 +249,10 @@ def load_source(source_mode: str) -> WeatherSource:
         raise ImportError(
             f"Weather source {source_mode!r} must expose a class named 'Source'"
         )
-    return module.Source()
+    source_cls = module.Source
+    if not (isinstance(source_cls, type) and issubclass(source_cls, WeatherSource)):
+        raise TypeError(
+            f"Weather source {source_mode!r}: 'Source' must be a subclass of "
+            f"WeatherSource, got {source_cls!r}"
+        )
+    return source_cls.build(config or {})
