@@ -161,6 +161,52 @@ def sync_input_datasets(
         )
 
 
+def sync_hyperparams_up(
+    host: RemoteHost,
+    local_artifacts_root: Path | str,
+    project_root: Path | str,
+) -> int:
+    """Push every local ``artifacts/**/hp/`` directory to the remote so
+    tuned hyperparameters survive across spot-instance runs.
+
+    ``hp/<model>_<region_type>_best_params.json`` files land at the
+    artifact-base level (e.g. ``artifacts/gba_zone/hp/rf_zone_best_params.json``),
+    not inside a per-run subfolder. Without this push, every fresh spot
+    instance re-tunes from scratch (~15 min per model per region).
+
+    Returns the count of hp/ directories pushed. Local artifacts root not
+    existing → no-op, returns 0 (first-ever run on this machine).
+    """
+    local_root = Path(local_artifacts_root)
+    if not local_root.exists():
+        return 0
+    hp_dirs = sorted(local_root.glob("*/hp"))
+    if not hp_dirs:
+        return 0
+    project_root = Path(project_root).resolve()
+    # Ensure parent dirs exist remotely (artifacts/<config-scope>/) so rsync
+    # can land into the deep path without failing.
+    parents = {
+        f"{REMOTE_WORKSPACE}/{d.parent.relative_to(project_root).as_posix()}"
+        for d in hp_dirs
+    }
+    mkdir_cmd = "mkdir -p " + " ".join(f"'{p}'" for p in sorted(parents))
+    rc = ssh_exec(host, mkdir_cmd, stream=False)
+    if rc != 0:
+        raise RuntimeError(f"sync_hyperparams_up: remote mkdir -p failed (rc={rc})")
+    for hp in hp_dirs:
+        remote_dir = f"{REMOTE_WORKSPACE}/{hp.relative_to(project_root).as_posix()}"
+        log.info(
+            "sync_hyperparams_up: %s → %s@%s:%s",
+            hp,
+            host.ssh_user,
+            host.ip,
+            remote_dir,
+        )
+        rsync_up(host=host, local_dir=hp, remote_dir=remote_dir, delete=False)
+    return len(hp_dirs)
+
+
 def sync_output_datasets_back(
     host: RemoteHost,
     outputs: list[InputPath],

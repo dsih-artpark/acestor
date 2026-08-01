@@ -36,6 +36,7 @@ from acestor.remote.providers.base import CloudProvider, Lifecycle, RemoteHost
 from acestor.remote.ssh import ssh_exec
 from acestor.remote.sync import (
     sync_artifacts_back,
+    sync_hyperparams_up,
     sync_input_datasets,
     sync_output_datasets_back,
     sync_repo,
@@ -154,6 +155,17 @@ def run_remote(opts: RemoteRunOptions) -> RemoteRunOutcome:
                         log.info(
                             "remote runner: no local input/output datasets to "
                             "sync (all sources appear to fetch data at runtime)"
+                        )
+                    # Also push tuned-hyperparameter caches so the remote
+                    # can skip retuning when fingerprints match.
+                    hp_count = sync_hyperparams_up(
+                        host, local_artifacts_root, repo_root
+                    )
+                    if hp_count:
+                        log.info(
+                            "remote runner: pushed %d hp/ cache dir(s) — remote "
+                            "will reuse tuned params where fingerprints match",
+                            hp_count,
                         )
                 except Exception as exc:
                     exit_status = "sync_failed"
