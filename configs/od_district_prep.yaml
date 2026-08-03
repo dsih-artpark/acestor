@@ -16,13 +16,16 @@ data:
 
   geojson:
     base_path: "od_datasets/geojsons/geojsons_OD"
+    source_mode: dashboard
+    scope_id: odisha
+    refresh: false
 
   case_download:
     enabled: true
     source_mode: dashboard
     source_path: "od_datasets/raw_case"
-    base_url: "https://apps.artpark.ai/disease-dashboard"
     date_start: "2021-01-01"
+    selected_region_id: "odisha"
     backfill_days: 30
     disease: "Dengue"
 
@@ -37,8 +40,8 @@ data:
 
   weather_download:
     enabled: true
-    source_mode: "openmeteo"
-    source_path: "od_datasets/weather"
+    source_mode: dashboard
+    scope_id: "odisha"    # try lowercase first; dashboard weather-endpoint quirk may require "Odisha"
     parsed_output_path: "od_datasets/weather"
     temperature_unit: "celsius"    # openmeteo returns °C — parser converts to K on disk
     precipitation_unit: "mm"       # openmeteo returns mm — parser converts to m on disk

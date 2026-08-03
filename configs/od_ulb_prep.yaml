@@ -16,9 +16,17 @@ data:
 
   geojson:
     base_path: "od_datasets/geojsons/geojsons_OD"
+    source_mode: dashboard
+    scope_id: odisha
+    refresh: false
 
   case_download:
     enabled: true
+    source_mode: dashboard
+    date_start: "2021-01-01"
+    selected_region_id: "odisha"
+    backfill_days: 30
+    disease: "Dengue"
     source_path: "od_datasets/raw_case"
 
   case_parse:

@@ -22,6 +22,9 @@ data:
 
   case_download:
     enabled: true
+    source_mode: dashboard
+    date_start: "2022-01-01"
+    selected_region_id: "karnataka"
     source_path: "ka_datasets/raw_case"
 
   case_parse:
@@ -45,7 +48,7 @@ data:
   weather_download:
     enabled: true
     source_mode: dashboard
-    scope_id: "Karnataka"
+    scope_id: "karnataka"
     parsed_output_path: "ka_datasets/weather"
     temperature_unit: "celsius"
     precipitation_unit: "mm"
