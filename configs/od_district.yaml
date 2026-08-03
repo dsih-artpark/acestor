@@ -59,7 +59,7 @@ thresholds:
 
 model:
   spatial_res: "district"
-  models: [rf, xgb, tse, timesfm]
+  models: [rf, timesfm]
   ensemble: mean
   output: both
   data_features:
@@ -82,25 +82,14 @@ model:
 model_configs:
   rf:
     lag:
-      lag_temp: [4, 5, 6, 7, 8, 9, 10, 11, 12]
-      lag_rainfall: [4]
-      lag_humidity: [4]
+      lag_temp: [1,2,3,4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+      lag_rainfall: [1,2,3,4]
+      lag_humidity: [1,2,3,4]
       lag_cases: [1, 2, 3, 4, 5]
     years_to_exclude: []
     years_to_include: []
     tune: false
-    n_trials: 100
-
-  xgb:
-    lag:
-      lag_temp: [4, 5, 6, 7, 8, 9, 10, 11, 12]
-      lag_rainfall: [4]
-      lag_humidity: [4]
-      lag_cases: [1, 2, 3, 4, 5]
-    years_to_exclude: []
-    years_to_include: []
-    tune: false
-    n_trials: 100
+    n_trials: 200
   
   timesfm:
     
