@@ -34,12 +34,14 @@ from pipelines.dengue_prep.lib.upsert import write_csv as _write_csv
 from pipelines.dengue_prep.results import (
     PrepCaseDownloadResult,
     PrepCaseParseResult,
+    PrepGeojsonDownloadResult,
 )
 
 
 @dataclass(frozen=True)
 class PrepParseCaseDataInputs:
     download_case_data: PrepCaseDownloadResult
+    download_geojsons: PrepGeojsonDownloadResult
 
 
 class PrepParseCaseDataStep(BaseStep[PrepParseCaseDataInputs, PrepCaseParseResult]):

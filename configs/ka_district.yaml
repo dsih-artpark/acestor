@@ -87,7 +87,7 @@ model_configs:
     years_to_exclude: []
     years_to_include: []
     tune: false
-    n_trials: 100
+    n_trials: 200
 
 assess:
   total_district_regions: 31

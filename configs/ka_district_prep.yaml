@@ -16,11 +16,16 @@ data:
 
   geojson:
     base_path: "ka_datasets/geojsons"
+    source_mode: dashboard          # auto-fetch from dashboard if base_path is empty
+    scope_id: karnataka             # or DASHBOARD_SELECTED_REGION_ID env var
+    refresh: false                  # true = re-download even if cached
 
   case_download:
     enabled: true
     source_mode: dashboard
     source_path: "ka_datasets/raw_case"
+    date_start: "2022-01-01"
+    selected_region_id: "karnataka"
 
   case_parse:
     region_types:
@@ -42,10 +47,10 @@ data:
 
   weather_download:
     enabled: true
-    source_mode: "filesystem"
-    source_path: "ka_datasets/weather"
+    source_mode: dashboard           # was filesystem — avoids Open-Meteo rate limits + gets fresh daily data
+    scope_id: "Karnataka"               # dashboard /api/weather/observed expects this exact spelling
     parsed_output_path: "ka_datasets/weather"
-    temperature_unit: "celsius"
+    temperature_unit: "celsius"      # what dashboard returns natively — parser converts to K/m on disk
     precipitation_unit: "mm"
 
 logging:

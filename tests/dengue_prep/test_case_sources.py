@@ -111,11 +111,33 @@ def _mock_bytes_response(content: bytes, status: int = 200) -> MagicMock:
     return m
 
 
+def _mock_stream_response(ndjson_lines: list[str], status: int = 200) -> MagicMock:
+    """Mock a streaming ``requests.get`` used as a context manager with iter_lines."""
+    m = MagicMock()
+    m.status_code = status
+    m.raise_for_status = MagicMock()
+    m.iter_lines = MagicMock(return_value=iter(ndjson_lines))
+    m.__enter__ = MagicMock(return_value=m)
+    m.__exit__ = MagicMock(return_value=False)
+    return m
+
+
+# Two minimal IHIP-shaped records for streaming tests. Field names match what
+# the parser expects; values don't have to be realistic since we only assert
+# on the wrapper (stage-and-count), not the content itself.
+_FAKE_STREAM_LINES = [
+    '{"Region Id": "district_524", "Date Of Onset": "2026-01-15", "Test Suspected For": "Dengue"}',
+    '{"Region Id": "district_525", "Date Of Onset": "2026-02-10", "Test Suspected For": "Dengue"}',
+]
+
+
 @patch.dict("os.environ", _DASHBOARD_ENV, clear=False)
 def test_dashboard_source_logs_in_and_stages_xlsx(tmp_path: Path) -> None:
+    import pandas as pd
+
     with patch("requests.post") as mock_post, patch("requests.get") as mock_get:
         mock_post.return_value = _mock_json_response({"access_token": "T0K3N"})
-        mock_get.return_value = _mock_bytes_response(_FAKE_XLSX)
+        mock_get.return_value = _mock_stream_response(_FAKE_STREAM_LINES)
 
         source = load_source(
             "dashboard",
@@ -129,7 +151,11 @@ def test_dashboard_source_logs_in_and_stages_xlsx(tmp_path: Path) -> None:
 
     assert listed == ["dashboard_2026-01-01_to_2026-06-30.xlsx"]
     staged = tmp_path / "staging" / listed[0]
-    assert staged.read_bytes() == _FAKE_XLSX
+    # File was materialised as a real xlsx from the NDJSON stream; parseable
+    # and contains one row per NDJSON line.
+    df = pd.read_excel(staged)
+    assert len(df) == len(_FAKE_STREAM_LINES)
+    assert set(df.columns) >= {"Region Id", "Date Of Onset", "Test Suspected For"}
 
     # /api/auth/login called with email/password (env vars mapped)
     post_call = mock_post.call_args
@@ -139,12 +165,13 @@ def test_dashboard_source_logs_in_and_stages_xlsx(tmp_path: Path) -> None:
         "password": "hunter2",
     }
 
-    # /api/cases/export.xlsx called with bearer + from/to
+    # /api/cases/export/stream called with bearer + from/to + stream=True
     get_call = mock_get.call_args
-    assert get_call.args[0].endswith("/api/cases/export.xlsx")
+    assert get_call.args[0].endswith("/api/cases/export/stream")
     assert get_call.kwargs["headers"]["Authorization"] == "Bearer T0K3N"
     assert get_call.kwargs["params"]["from"] == "2026-01-01"
     assert get_call.kwargs["params"]["to"] == "2026-06-30"
+    assert get_call.kwargs["stream"] is True
 
 
 @patch.dict("os.environ", {}, clear=True)
@@ -167,28 +194,42 @@ def test_dashboard_missing_date_start_raises(tmp_path: Path) -> None:
 
 
 @patch.dict("os.environ", _DASHBOARD_ENV, clear=False)
-def test_dashboard_empty_response_raises(tmp_path: Path) -> None:
+def test_dashboard_empty_stream_stages_empty_xlsx(tmp_path: Path) -> None:
+    """Empty NDJSON stream = valid 'no cases in window' — stage an empty xlsx.
+
+    The ihip parser recognises header-only files and skips them cleanly, so
+    the caller shouldn't treat an empty window as an error.
+    """
+    import pandas as pd
+
     with patch("requests.post") as mock_post, patch("requests.get") as mock_get:
         mock_post.return_value = _mock_json_response({"access_token": "T0K3N"})
-        mock_get.return_value = _mock_bytes_response(b"")
+        mock_get.return_value = _mock_stream_response([])
         source = load_source(
             "dashboard",
             {"source_path": str(tmp_path), "date_start": "2026-01-01"},
         )
-        with pytest.raises(RuntimeError, match="zero bytes"):
-            source.list_objects()
+        listed = source.list_objects()
+
+    assert len(listed) == 1
+    staged = tmp_path / listed[0]
+    assert staged.exists()
+    # Empty NDJSON → empty DataFrame → header-only xlsx (readable, zero rows).
+    df = pd.read_excel(staged)
+    assert len(df) == 0
 
 
 @patch.dict("os.environ", _DASHBOARD_ENV, clear=False)
-def test_dashboard_non_xlsx_response_raises(tmp_path: Path) -> None:
+def test_dashboard_invalid_ndjson_raises(tmp_path: Path) -> None:
+    """Non-NDJSON body (e.g. HTML error page bled through) → clear failure."""
     with patch("requests.post") as mock_post, patch("requests.get") as mock_get:
         mock_post.return_value = _mock_json_response({"access_token": "T0K3N"})
-        mock_get.return_value = _mock_bytes_response(b"<html>error</html>")
+        mock_get.return_value = _mock_stream_response(["<html>error</html>"])
         source = load_source(
             "dashboard",
             {"source_path": str(tmp_path), "date_start": "2026-01-01"},
         )
-        with pytest.raises(RuntimeError, match="non-XLSX bytes"):
+        with pytest.raises(RuntimeError, match="unparseable NDJSON"):
             source.list_objects()
 
 

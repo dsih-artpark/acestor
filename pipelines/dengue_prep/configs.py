@@ -38,6 +38,46 @@ class PrepOutputConfig:
 
 
 # ---------------------------------------------------------------------------
+# Geojson download
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PrepGeojsonConfig:
+    """Config for the download_geojsons step + downstream lookups.
+
+    ``base_path`` is the cache directory (per-region files land under
+    ``{base_path}/{region_type}s/{region_id}.geojson``). The prep step's
+    behaviour is driven by ``source_mode``:
+
+    - ``filesystem`` (default): files must already exist under ``base_path``.
+      The step verifies + counts them, no network.
+    - ``dashboard``: fetch from the disease-dashboard's
+      ``GET /api/regions/{scope_id}?level=<region_type>`` endpoint, split
+      into per-region files. Cached forever unless ``refresh=True``.
+    """
+
+    base_path: str
+    source_mode: str = "filesystem"
+    scope_id: str = (
+        ""  # dashboard source: which scope to fetch (or DASHBOARD_SELECTED_REGION_ID env)
+    )
+    refresh: bool = False  # dashboard source: force re-download even if cached
+    base_url: str = ""  # dashboard source: override base URL (or DASHBOARD_URL env)
+
+    @classmethod
+    def from_raw(cls, raw: Mapping[str, Any]) -> "PrepGeojsonConfig":
+        return cls(
+            base_path=str(raw.get("base_path", "")).strip(),
+            source_mode=str(raw.get("source_mode", "filesystem")).strip()
+            or "filesystem",
+            scope_id=str(raw.get("scope_id", "")).strip(),
+            refresh=bool(raw.get("refresh", False)),
+            base_url=str(raw.get("base_url", "")).strip(),
+        )
+
+
+# ---------------------------------------------------------------------------
 # Case download
 # ---------------------------------------------------------------------------
 
@@ -304,6 +344,10 @@ class PrepWeatherDownloadConfig:
     end_date: str
     temperature_unit: str  # unit the source returns: "celsius" | "kelvin"
     precipitation_unit: str  # unit the source returns: "mm" | "m"
+    # Force-refetch the last N days of past months on every run. Catches late
+    # upstream revisions (ERA5 publishes with a ~5-day lag and later corrects,
+    # dashboard re-imports on the same cadence). Set 0 to disable.
+    backfill_days: int = 7
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any]) -> PrepWeatherDownloadConfig:
@@ -344,6 +388,7 @@ class PrepWeatherDownloadConfig:
             or "celsius",
             precipitation_unit=str(raw.get("precipitation_unit", "mm")).strip().lower()
             or "mm",
+            backfill_days=int(raw.get("backfill_days", 7)),
         )
 
 

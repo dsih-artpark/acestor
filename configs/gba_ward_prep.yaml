@@ -16,6 +16,9 @@ data:
 
   geojson:
     base_path: "gba_datasets/geojsons/geojsons_GBA"
+    source_mode: dashboard
+    scope_id: gulb_gba
+    refresh: false
     # Wards live under <base>/ward/ or <base>/wards/. The geocoding resolver
     # auto-detects either layout.
 

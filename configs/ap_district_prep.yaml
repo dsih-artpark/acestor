@@ -21,8 +21,8 @@ data:
 
   case_download:
     enabled: true
-    source_mode: dashboard
-    source_path: "./cache/dashboard_ap_cases"
+    source_mode: filesystem
+    source_path: "ap_datasets/raw_case"
 
   case_parse:
     region_types:
