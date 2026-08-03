@@ -48,7 +48,7 @@ data:
   weather_download:
     enabled: true
     source_mode: dashboard           # was filesystem — avoids Open-Meteo rate limits + gets fresh daily data
-    scope_id: "Karnataka"               # dashboard /api/weather/observed expects this exact spelling
+    scope_id: "karnataka"               # dashboard /api/weather/observed expects this exact spelling
     parsed_output_path: "ka_datasets/weather"
     temperature_unit: "celsius"      # what dashboard returns natively — parser converts to K/m on disk
     precipitation_unit: "mm"

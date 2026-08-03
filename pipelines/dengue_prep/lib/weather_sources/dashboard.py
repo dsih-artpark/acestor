@@ -25,18 +25,16 @@ YAML (``data.weather_download``):
       weather_download:
         enabled: true
         source_mode: dashboard
-        scope_id: "Karnataka"                 # matches case + geojson dashboard sources
+        scope_id: "karnataka"                 # matches case + geojson dashboard sources
         base_url: "https://apps.artpark.ai/disease-dashboard"  # or DASHBOARD_URL env
         temperature_unit: "celsius"           # what THIS source returns natively
         precipitation_unit: "mm"              # what THIS source returns natively
 
-**Dashboard-side quirk (worth knowing):** the ``/api/weather/observed?state=``
-query param currently accepts inconsistent values per scope — ``"Karnataka"``
-(title-case) for KA, ``"gulb_gba"`` (scope_id) for GBA. Whatever scope_id
-value works today for a given deployment is what goes into this config; the
-source passes it through to the ``state=`` query param unchanged. When the
-dashboard normalises to accept scope_id verbatim across the API, this
-mismatch goes away.
+Pass the scope_id lowercase — the dashboard's ``/api/weather/observed?state=``
+query param accepts scope_id verbatim (``karnataka``, ``odisha``, ``gulb_gba``).
+Earlier versions of this docstring flagged a title-case quirk for KA; the
+dashboard has since normalised and lowercase now works across scopes.
+Title-case (``"Karnataka"``, ``"Odisha"``) currently returns an empty list.
 """
 
 from __future__ import annotations
@@ -146,11 +144,9 @@ class Source(WeatherSource):
         """GET /api/weather/observed and flatten into per-day-per-region records."""
         url = f"{self.base_url}{_OBSERVED_PATH}"
         headers = {"Authorization": f"Bearer {self._get_access_token()}"}
-        # NOTE: the dashboard endpoint's query param is literally named `state`,
-        # but the acceptable value differs per scope — "Karnataka" (title-case)
-        # for KA, "gulb_gba" (scope_id) for GBA. Once dsih-artpark/disease-
-        # dashboard normalises to accept the scope_id verbatim across the API
-        # (issue #<TBD>), this pass-through is correct as-is.
+        # NOTE: the dashboard endpoint's query param is literally named `state`
+        # but takes the scope_id verbatim (`karnataka`, `odisha`, `gulb_gba`).
+        # Title-case values return an empty list.
         params = {
             "state": self.scope_id,
             "from_date": start_date,
