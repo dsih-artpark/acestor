@@ -46,6 +46,7 @@ dependencies = [
     { name = "pandas", version = "3.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
+    { name = "requests" },
     { name = "rich" },
     { name = "tqdm" },
     { name = "xarray", version = "2025.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -83,6 +84,9 @@ dev = [
     { name = "pytest-cov" },
     { name = "ruff" },
 ]
+remote-aws = [
+    { name = "boto3" },
+]
 s3 = [
     { name = "boto3" },
     { name = "botocore", extra = ["crt"] },
@@ -111,6 +115,7 @@ docs = [
 requires-dist = [
     { name = "apscheduler", specifier = ">=3.10" },
     { name = "black", marker = "extra == 'dev'" },
+    { name = "boto3", marker = "extra == 'remote-aws'" },
     { name = "boto3", marker = "extra == 's3'" },
     { name = "botocore", extras = ["crt"], marker = "extra == 's3'" },
     { name = "cdsapi", marker = "extra == 'cds'" },
@@ -132,6 +137,7 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "pyyaml" },
+    { name = "requests", specifier = ">=2.31" },
     { name = "rich", specifier = ">=13" },
     { name = "ruff", marker = "extra == 'dev'" },
     { name = "scikit-learn", marker = "extra == 'dengue'" },
@@ -142,7 +148,7 @@ requires-dist = [
     { name = "xarray", marker = "extra == 'cds'" },
     { name = "xgboost", marker = "extra == 'dengue'" },
 ]
-provides-extras = ["s3", "api", "dengue", "cds", "timesfm", "dev"]
+provides-extras = ["s3", "remote-aws", "api", "dengue", "cds", "timesfm", "dev"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pre-commit", specifier = ">=4.5.1" }]

@@ -16,6 +16,7 @@ dependencies = [
     "pandas>=2.3.3",
     "python-dotenv>=1.2.2",
     "pyyaml",
+    "requests>=2.31",
     "rich>=13",
     "tqdm>=4.0",
     "xarray>=2025.6.1",
@@ -25,6 +26,12 @@ dependencies = [
 s3 = [
     "boto3",
     "botocore[crt]",
+]
+# Remote runner (issue #111) — AWS EC2 provider needs boto3. Kept optional
+# so 'python -m acestor.run' installs stay lean; only 'python -m acestor.remote'
+# users need it.
+remote-aws = [
+    "boto3",
 ]
 api = [
     "fastapi",
