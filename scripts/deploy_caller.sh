@@ -123,6 +123,15 @@ ${ACESTOR_AWS_AMI:+Environment=ACESTOR_AWS_AMI=${ACESTOR_AWS_AMI}}
 ExecStart=/home/ubuntu/acestor-work/.venv-remote/bin/python /home/ubuntu/acestor-work/scripts/run_schedules_remote.py
 Restart=on-failure
 RestartSec=30s
+# Default KillMode=control-group would SIGTERM every acestor.remote subprocess
+# on 'systemctl restart' — orphaning their compute EC2s and truncating any
+# in-flight rsync. KillMode=process only stops the main scheduler process;
+# child subprocesses keep running through their pipeline / artifact-sync /
+# terminate sequence unaffected. Their downstream tasks won't fire after the
+# restart (in-memory DAG state is lost), but the next hourly cron re-runs
+# the full DAG so downstream picks up on the next tick.
+KillMode=process
+TimeoutStopSec=30s
 StandardOutput=append:/home/ubuntu/acestor-work/logs/scheduler.log
 StandardError=append:/home/ubuntu/acestor-work/logs/scheduler.log
 
