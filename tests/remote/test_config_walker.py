@@ -9,20 +9,15 @@ from acestor.remote.config_walker import find_input_paths, find_output_paths
 
 def test_finds_existing_input_dirs(tmp_path: Path):
     (tmp_path / "ka_datasets" / "geojsons").mkdir(parents=True)
-    (tmp_path / "ka_datasets" / "raw_case").mkdir(parents=True)
 
     cfg = {
         "data": {
             "geojson": {"base_path": "ka_datasets/geojsons"},
-            "case_download": {"source_path": "ka_datasets/raw_case"},
         }
     }
     paths = find_input_paths(cfg, tmp_path)
     keys = {p.key_path for p in paths}
-    assert keys == {
-        "data.geojson.base_path",
-        "data.case_download.source_path",
-    }
+    assert keys == {"data.geojson.base_path"}
     for p in paths:
         assert p.local_path.exists()
         assert p.local_path.is_dir()
@@ -34,7 +29,7 @@ def test_skips_paths_that_do_not_exist_locally(tmp_path: Path):
     cfg = {
         "data": {
             "geojson": {"base_path": "ka_datasets/geojsons"},  # not created
-            "case_download": {"source_path": "ka_datasets/raw_case"},
+            "weather_download": {"source_path": "ka_datasets/weather"},
         }
     }
     assert find_input_paths(cfg, tmp_path) == []
@@ -62,12 +57,17 @@ def test_refuses_paths_outside_project_root(tmp_path: Path):
 
 
 def test_deduplicates_paths_that_appear_twice(tmp_path: Path):
-    shared = tmp_path / "ka_datasets" / "geojsons"
-    shared.mkdir(parents=True)
+    """If two config keys point at the same directory (misconfig or shared
+    cache), the walker returns one InputPath — rsyncing it twice would be
+    wasteful."""
+    shared = tmp_path / "shared_cache"
+    shared.mkdir()
     cfg = {
         "data": {
-            "geojson": {"base_path": "ka_datasets/geojsons"},
-            "case_download": {"source_path": "ka_datasets/geojsons"},
+            "weather_download": {
+                "source_path": "shared_cache",
+                "filesystem_base_path": "shared_cache",
+            }
         }
     }
     paths = find_input_paths(cfg, tmp_path)
@@ -106,3 +106,17 @@ def test_output_walker_does_not_require_local_dir_to_exist(tmp_path: Path):
         "data.prepared_data.base_dir",
         "data.weather_download.parsed_output_path",
     }
+
+
+def test_case_download_source_path_is_treated_as_output(tmp_path: Path):
+    """case_download.source_path is an OUTPUT so the dashboard source's
+    freshly-fetched xlsx files get rsync'd back to the caller. Enables
+    incremental caching: next run's push-up seeds prior xlsx files, and
+    the dashboard source's containment/trim logic only fetches the delta."""
+    cfg = {"data": {"case_download": {"source_path": "ka_datasets/raw_case"}}}
+
+    ins = find_input_paths(cfg, tmp_path)
+    outs = find_output_paths(cfg, tmp_path)
+
+    assert [p.key_path for p in ins] == []  # NOT an input
+    assert [p.key_path for p in outs] == ["data.case_download.source_path"]

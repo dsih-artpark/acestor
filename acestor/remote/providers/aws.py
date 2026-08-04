@@ -196,7 +196,21 @@ class AWSProvider(CloudProvider):
             instance_id,
             public_ip,
         )
-        self._wait_for_ssh(public_ip)
+        # If SSH never comes up, the instance is still billing — terminate
+        # before re-raising so a failed provision doesn't leak compute.
+        # (The runner's outer finally-block can't do this: provision hasn't
+        # returned a RemoteHost yet, so runner.host is still None.)
+        try:
+            self._wait_for_ssh(public_ip)
+        except Exception:
+            log.warning(
+                "aws provider: SSH never came up on %s — terminating instance %s "
+                "to avoid orphan compute charges",
+                public_ip,
+                instance_id,
+            )
+            self._terminate(ec2, instance_id)
+            raise
 
         return RemoteHost(
             id=instance_id,
