@@ -118,6 +118,7 @@ WorkingDirectory=/home/ubuntu/acestor-work
 Environment=PATH=/home/ubuntu/acestor-work/.venv-remote/bin:/home/ubuntu/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=PYTHONPATH=/home/ubuntu/acestor-work
 ${ACESTOR_AWS_KEY_NAME:+Environment=ACESTOR_AWS_KEY_NAME=${ACESTOR_AWS_KEY_NAME}}
+${ACESTOR_AWS_KEY_NAME:+Environment=ACESTOR_AWS_KEY_PATH=/home/ubuntu/.ssh/${ACESTOR_AWS_KEY_NAME}.pem}
 ${ACESTOR_AWS_AMI:+Environment=ACESTOR_AWS_AMI=${ACESTOR_AWS_AMI}}
 ExecStart=/home/ubuntu/acestor-work/.venv-remote/bin/python /home/ubuntu/acestor-work/scripts/run_schedules_remote.py
 Restart=on-failure
