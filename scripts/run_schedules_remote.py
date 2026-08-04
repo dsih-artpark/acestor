@@ -61,8 +61,11 @@ AWS_KEY_NAME = os.environ.get("ACESTOR_AWS_KEY_NAME", "acestor-smoke-20260731143
 AWS_KEY_PATH = os.path.expanduser(
     os.environ.get("ACESTOR_AWS_KEY_PATH", "~/.ssh/acestor-smoke.pem")
 )
-# Tier-2 AMI baked 2026-08-03 (ubuntu 24.04 + python + uv + build-deps).
-AWS_AMI = os.environ.get("ACESTOR_AWS_AMI", "ami-0b8a9646e50319028")
+# Optional custom AMI (tier-2: ubuntu + python + uv + build-deps pre-installed
+# → skips ~30-60s of apt-install per spawn). If unset, acestor.remote falls
+# back to the latest Ubuntu 24.04 AMI via SSM — works on any AWS account with
+# no prior bake step, just slower per run.
+AWS_AMI = os.environ.get("ACESTOR_AWS_AMI") or None
 FORWARD_ENV = (
     "DASHBOARD_URL",
     "DASHBOARD_CLIENT_ID",
@@ -224,9 +227,9 @@ def _build_remote_cmd(state: str, task: Task, run_id: str) -> list[str]:
         AWS_KEY_NAME,
         "--aws-key-path",
         AWS_KEY_PATH,
-        "--aws-ami",
-        AWS_AMI,
     ]
+    if AWS_AMI:
+        cmd.extend(["--aws-ami", AWS_AMI])
     for env_name in FORWARD_ENV:
         cmd.extend(["--forward-env", env_name])
     return cmd
