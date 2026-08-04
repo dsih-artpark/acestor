@@ -143,6 +143,29 @@ def test_provision_terminates_orphan_when_no_ip(cfg):
     ec2.terminate_instances.assert_called_once_with(InstanceIds=["i-0abc123"])
 
 
+def test_provision_terminates_orphan_when_ssh_never_comes_up(cfg):
+    """If _wait_for_ssh raises (e.g. security group blocks 22), the instance
+    is already running and billing. provision() must terminate before
+    re-raising — the runner's outer finally-block can't help because
+    provision hasn't returned a RemoteHost yet."""
+    ec2 = _fake_ec2_client()
+    ssm = _fake_ssm_client()
+    p = AWSProvider(cfg)
+    p._client = MagicMock(  # type: ignore[method-assign]
+        side_effect=lambda service, region: ssm if service == "ssm" else ec2
+    )
+
+    with patch.object(
+        AWSProvider,
+        "_wait_for_ssh",
+        side_effect=TimeoutError("SSH port 22 on 1.2.3.4 not reachable within 300s"),
+    ):
+        with pytest.raises(TimeoutError, match="not reachable"):
+            p.provision("c7i.2xlarge", "on-demand", "ap-south-1")
+
+    ec2.terminate_instances.assert_called_once_with(InstanceIds=["i-0abc123"])
+
+
 def test_terminate_is_idempotent_on_not_found(cfg):
     ec2 = _fake_ec2_client()
     ec2.terminate_instances.side_effect = RuntimeError(
