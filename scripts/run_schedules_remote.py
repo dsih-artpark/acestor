@@ -38,10 +38,12 @@ Dashboard credentials come from ``~/.env`` via python-dotenv. Set:
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, Future
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -76,6 +78,28 @@ FORWARD_ENV = (
 # Global cap on concurrent EC2 spawns across ALL state DAGs. Bump if you
 # have more per-region vCPU / instance quota headroom.
 MAX_CONCURRENT = int(os.environ.get("ACESTOR_MAX_CONCURRENT", "4"))
+
+# Hard timeout per task (minutes) — subprocess.run raises TimeoutExpired.
+# 45 min covers the slowest observed forecast comfortably; anything longer
+# is almost certainly hung. On timeout the subprocess is killed → its
+# compute EC2 will be reaped by scripts/reap_orphan_compute.sh on the next
+# cron tick.
+MAX_TASK_MINUTES = int(os.environ.get("ACESTOR_MAX_TASK_MINUTES", "45"))
+
+# Retry a task up to this many times if the subprocess was killed by a
+# signal (SIGTERM/SIGKILL) or hit MAX_TASK_MINUTES. Real pipeline errors
+# (exit 1 etc.) are NOT retried — they'd just fail again wasting compute.
+MAX_ATTEMPTS = int(os.environ.get("ACESTOR_MAX_ATTEMPTS", "2"))
+RETRY_BACKOFF_SEC = int(os.environ.get("ACESTOR_RETRY_BACKOFF_SEC", "30"))
+
+# Append-only JSONL log of every task attempt. Serves two purposes:
+#   1. Post-hoc audit: which tasks retried, why, when
+#   2. On future scheduler restart, could be replayed for cross-restart
+#      retry state — not implemented today since the DAG runner itself
+#      doesn't survive restarts, so the retry-state bookkeeping alone
+#      would be dangling.
+ATTEMPTS_LOG_PATH = Path.home() / ".acestor" / "scheduler_attempts.jsonl"
+_attempts_lock = threading.Lock()
 
 
 @dataclass
@@ -245,20 +269,91 @@ def _build_remote_cmd(state: str, task: Task, run_id: str) -> list[str]:
     return cmd
 
 
-def _execute_task(state: str, task: Task, run_stamp: str) -> int:
-    """Shell out to ``acestor.remote`` for one task; return its exit code."""
-    run_id = f"{state}-{task.name}_{run_stamp}"
+def _record_attempt(
+    state: str,
+    dag_run_id: str,
+    task: str,
+    attempt: int,
+    exit_status: str,
+    exit_code: int,
+    wall_seconds: float,
+) -> None:
+    """Append one JSON line to the scheduler attempts log."""
+    row = {
+        "ts": datetime.utcnow().isoformat() + "Z",
+        "state": state,
+        "dag_run_id": dag_run_id,
+        "task": task,
+        "attempt": attempt,
+        "exit_status": exit_status,  # "ok" | "fail" | "signal" | "timeout"
+        "exit_code": exit_code,
+        "wall_seconds": round(wall_seconds, 1),
+    }
+    line = json.dumps(row, separators=(",", ":"))
+    with _attempts_lock:
+        ATTEMPTS_LOG_PATH.parent.mkdir(exist_ok=True)
+        with open(ATTEMPTS_LOG_PATH, "a") as f:
+            f.write(line + "\n")
+
+
+def _classify_exit(exit_code: int, timed_out: bool) -> str:
+    """Turn a subprocess return code into a coarse category for the ledger
+    + retry decision.
+
+    Real pipeline error → 'fail' (exit 1 etc., don't retry).
+    Killed by signal / timeout → 'signal' or 'timeout' (retry).
+    """
+    if timed_out:
+        return "timeout"
+    if exit_code == 0:
+        return "ok"
+    # Python subprocess: negative returncode = killed by signal (unhandled).
+    # Positive 128+N convention = shell reported the signal.
+    if exit_code < 0 or exit_code in (130, 137, 143):  # SIGINT/SIGKILL/SIGTERM
+        return "signal"
+    return "fail"
+
+
+def _execute_task(
+    state: str, task: Task, run_stamp: str, attempt: int
+) -> tuple[int, str, float]:
+    """Shell out to ``acestor.remote`` once; return (exit_code, classification, wall_s).
+
+    Enforces a hard MAX_TASK_MINUTES timeout via subprocess.run — anything
+    slower than that is presumed hung, subprocess is killed, and the compute
+    EC2 will be reaped by reap_orphan_compute.sh on its cron cycle.
+    """
+    suffix = "" if attempt == 1 else f"_r{attempt - 1}"
+    run_id = f"{state}-{task.name}_{run_stamp}{suffix}"
     log_path = LOGS_DIR / f"{state}-{task.name}" / run_stamp[:10] / f"{run_id}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    _print(f"START  {state}/{task.name} → {log_path}")
-    with open(log_path, "w") as f:
-        result = subprocess.run(
-            _build_remote_cmd(state, task, run_id),
-            stdout=f,
-            stderr=f,
-            cwd=str(ROOT),
+    tag = f"{state}/{task.name}" + (f" [attempt {attempt}]" if attempt > 1 else "")
+    _print(f"START  {tag} → {log_path}")
+    started = time.monotonic()
+    timed_out = False
+    try:
+        with open(log_path, "w") as f:
+            result = subprocess.run(
+                _build_remote_cmd(state, task, run_id),
+                stdout=f,
+                stderr=f,
+                cwd=str(ROOT),
+                timeout=MAX_TASK_MINUTES * 60,
+            )
+        exit_code = result.returncode
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        exit_code = -1
+        _print(
+            f"TIMEOUT {tag}: exceeded {MAX_TASK_MINUTES}m wall — "
+            f"subprocess killed; reaper will terminate the compute EC2"
         )
-    return result.returncode
+    wall_s = time.monotonic() - started
+    classification = _classify_exit(exit_code, timed_out)
+    _record_attempt(
+        state, run_stamp, task.name, attempt, classification, exit_code, wall_s
+    )
+    return exit_code, classification, wall_s
 
 
 def _run_dag(state: str, dag: list[Task]) -> None:
@@ -271,45 +366,90 @@ def _run_dag(state: str, dag: list[Task]) -> None:
     _validate_dag(state, dag)
 
     status: dict[str, str] = {}  # name → "ok" | "fail" | "skip"
+    attempts: dict[str, int] = {}  # name → attempts fired so far
     futures: dict[str, Future] = {}
     completed = threading.Event()
+    lock = threading.Lock()  # protects status/attempts/futures across callbacks
 
     run_stamp = datetime.utcnow().strftime("%Y-%m-%d_%H%M%S")
     _print(f"DAG    {state}: starting run @ {run_stamp} — {len(dag)} task(s)")
 
+    def _submit_task(t: Task) -> None:
+        """Increment attempt counter + submit to the pool."""
+        attempts[t.name] = attempts.get(t.name, 0) + 1
+        fut = _pool.submit(_execute_task, state, t, run_stamp, attempts[t.name])
+        futures[t.name] = fut
+        fut.add_done_callback(lambda f, name=t.name: _on_done(name, f))
+
     def _submit_ready() -> None:
-        """Submit any task whose deps are all done + OK, that hasn't run yet."""
-        for t in dag:
-            if t.name in status or t.name in futures:
-                continue  # already handled
-            deps_status = [status.get(dep) for dep in t.needs]
-            if any(s is None for s in deps_status):
-                continue  # some dep still in flight
-            if any(s != "ok" for s in deps_status):
-                status[t.name] = "skip"
-                _print(
-                    f"SKIP   {state}/{t.name}: upstream failed "
-                    f"({[(d, status.get(d)) for d in t.needs]})"
-                )
-                continue
-            fut = _pool.submit(_execute_task, state, t, run_stamp)
-            futures[t.name] = fut
-            fut.add_done_callback(lambda f, name=t.name: _on_done(name, f))
+        """Submit any task whose deps are all done + OK, not yet running."""
+        with lock:
+            for t in dag:
+                if t.name in status or t.name in futures:
+                    continue  # already handled or in flight
+                deps_status = [status.get(dep) for dep in t.needs]
+                if any(s is None for s in deps_status):
+                    continue  # some dep still in flight
+                if any(s != "ok" for s in deps_status):
+                    status[t.name] = "skip"
+                    _print(
+                        f"SKIP   {state}/{t.name}: upstream failed "
+                        f"({[(d, status.get(d)) for d in t.needs]})"
+                    )
+                    continue
+                _submit_task(t)
+
+    def _retry_after_backoff(t: Task) -> None:
+        time.sleep(RETRY_BACKOFF_SEC)
+        with lock:
+            futures.pop(t.name, None)
+            _submit_task(t)
 
     def _on_done(name: str, fut: Future) -> None:
+        task_obj = next(t for t in dag if t.name == name)
         try:
-            rc = fut.result()
-            status[name] = "ok" if rc == 0 else "fail"
-            _print(
-                f"{'OK   ' if rc == 0 else 'FAIL '} "
-                f"{state}/{name}: acestor.remote exit={rc}"
-            )
+            exit_code, classification, _ = fut.result()
         except Exception as exc:
-            status[name] = "fail"
+            classification = "fail"
+            exit_code = -1
             _print(f"FAIL  {state}/{name}: raised {type(exc).__name__}: {exc}")
+
+        with lock:
+            futures.pop(name, None)
+
+        if classification == "ok":
+            with lock:
+                status[name] = "ok"
+            _print(f"OK    {state}/{name}: acestor.remote exit=0")
+        elif (
+            classification in ("signal", "timeout")
+            and attempts[name] < MAX_ATTEMPTS + 1
+        ):
+            # Retry-eligible: killed by signal (external or self-timeout)
+            # rather than a real pipeline error. Spin a helper thread to
+            # sleep the backoff then re-submit (can't sleep in the pool
+            # callback — that would burn a worker slot).
+            _print(
+                f"RETRY {state}/{name}: classification={classification} "
+                f"exit={exit_code} → sleeping {RETRY_BACKOFF_SEC}s then "
+                f"attempt {attempts[name] + 1}/{MAX_ATTEMPTS + 1}"
+            )
+            threading.Thread(
+                target=_retry_after_backoff, args=(task_obj,), daemon=True
+            ).start()
+            return  # don't count as terminal
+        else:
+            with lock:
+                status[name] = "fail"
+            _print(
+                f"FAIL  {state}/{name}: classification={classification} "
+                f"exit={exit_code} (attempts={attempts[name]})"
+            )
+
         _submit_ready()
-        if len(status) == len(dag):
-            completed.set()
+        with lock:
+            if len(status) == len(dag):
+                completed.set()
 
     _submit_ready()
     completed.wait()

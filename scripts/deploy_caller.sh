@@ -138,7 +138,18 @@ StandardError=append:/home/ubuntu/acestor-work/logs/scheduler.log
 [Install]
 WantedBy=multi-user.target
 UNIT
-mkdir -p "\$HOME/acestor-work/logs"
+mkdir -p "\$HOME/acestor-work/logs" "\$HOME/.acestor"
+
+echo "== Install orphan-reaper cron (every 15 min)"
+# Runs independently of the scheduler so it catches orphans from
+# every failure mode including scheduler restarts + spot reclamation.
+REAPER_LINE="*/15 * * * * AWS_REGION=${AWS_REGION} bash /home/ubuntu/acestor-work/scripts/reap_orphan_compute.sh >> /home/ubuntu/acestor-work/logs/orphan-reaper.log 2>&1"
+(
+  crontab -l 2>/dev/null | grep -v 'reap_orphan_compute.sh' || true
+  echo "\$REAPER_LINE"
+) | crontab -
+echo "  installed:"
+crontab -l | grep reap_orphan_compute || echo "  WARN: crontab entry not visible"
 
 echo "== Restart scheduler"
 sudo systemctl daemon-reload
