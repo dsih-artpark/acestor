@@ -1,27 +1,39 @@
-"""Remote-run scheduler — a sibling of ``run_schedules.py`` that shells out
-to ``acestor.remote`` (spawn EC2, run pipeline, terminate) instead of
-``acestor.run`` (local process).
+"""Remote-run scheduler — DAG-per-state, one trigger cron per state.
 
-Meant to live on the caller box (see docs/deployment/remote-runner.md).
-Edit ``PIPELINES`` below, then:
+Sibling of ``run_schedules.py`` but shells out to ``acestor.remote`` (spawn
+EC2 → run pipeline → terminate) instead of ``acestor.run`` (local process).
+
+Meant to live on the caller box (t3.nano / t3.small). Edit the ``STATES``
+dict below, then:
 
     Foreground:   python scripts/run_schedules_remote.py
     Background:   nohup python scripts/run_schedules_remote.py > .acestor/remote-scheduler.out 2>&1 &
 
-Cross-job dependency chaining is honoured via the ``depends_on`` field:
-a job with ``depends_on: "ka-prep"`` won't run unless ``ka-prep`` completed
-successfully in the same UTC calendar day. The dependency state lives
-in-memory — a scheduler restart forgets prior successes, so any downstream
-job that fires before its dependency has run again that day gets skipped
-(a warning is logged, not an error — trigger it manually if you care).
+DAG semantics
+-------------
+Each state entry is a *directed acyclic graph* of ``Task`` objects. When
+that state's cron fires, we build the graph, launch a thread pool, and:
 
-Dashboard credentials are read from ``~/.env`` via python-dotenv. Put:
+  * tasks with no ``needs`` start immediately
+  * as each task exits ``ok``, any dependent whose full ``needs`` list is
+    satisfied becomes eligible and gets submitted to the pool
+  * if any task in the DAG fails, its transitive dependents are skipped
+    (logged as SKIP, not FAIL — nothing to do about it in this run)
+  * independent branches (e.g. ``subdistrict`` and ``ward`` both hanging
+    off ``forecast``) run in parallel
+
+A global ``MAX_CONCURRENT`` cap limits how many EC2 instances the caller
+has in flight at once (default 4). Cross-state DAG runs share this cap.
+
+Spot lifecycle by default: reclamation mid-run just fails that task, its
+downstream is skipped, and the next cron tick tries again. Explicit
+checkpoint/resume is not implemented — deferred until it hurts.
+
+Dashboard credentials come from ``~/.env`` via python-dotenv. Set:
 
     DASHBOARD_URL=https://apps.artpark.ai/disease-dashboard-staging
     DASHBOARD_CLIENT_ID=admin@dengue.local
     DASHBOARD_CLIENT_SECRET=...
-
-there and never hardcode them in this file.
 """
 
 from __future__ import annotations
@@ -29,17 +41,19 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-from datetime import date, datetime
+import threading
+from concurrent.futures import ThreadPoolExecutor, Future
+from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
-from apscheduler.schedulers.blocking import BlockingScheduler
+from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
 LOGS_DIR = ROOT / "logs"
 
-# Load ~/.env (dashboard creds etc.) before we read the environment.
 load_dotenv(Path.home() / ".env")
 
 # ── Static remote runner config ────────────────────────────────────────────────
@@ -47,8 +61,7 @@ AWS_KEY_NAME = os.environ.get("ACESTOR_AWS_KEY_NAME", "acestor-smoke-20260731143
 AWS_KEY_PATH = os.path.expanduser(
     os.environ.get("ACESTOR_AWS_KEY_PATH", "~/.ssh/acestor-smoke.pem")
 )
-# Tier-2 AMI baked 2026-08-03 (ubuntu 24.04 + python + uv + git/rsync/build-deps).
-# Overridable via env so bumping to a new AMI doesn't need a code change.
+# Tier-2 AMI baked 2026-08-03 (ubuntu 24.04 + python + uv + build-deps).
 AWS_AMI = os.environ.get("ACESTOR_AWS_AMI", "ami-0b8a9646e50319028")
 FORWARD_ENV = (
     "DASHBOARD_URL",
@@ -57,70 +70,156 @@ FORWARD_ENV = (
     "DASHBOARD_SELECTED_REGION_ID",
 )
 
-# ── Configure your pipelines here ──────────────────────────────────────────────
-# Each entry:
-#   name             — short label used for job id + log path
-#   cron             — 5-field crontab expression, UTC
-#   pipeline         — module:callable, forwarded verbatim to acestor.remote
-#   config           — path to yaml, forwarded verbatim
-#   remote_instance  — EC2 shape (e.g. t3.large for prep, c7i.4xlarge for
-#                      heavy forecast)
-#   remote_lifecycle — "spot" (cheaper, may be reclaimed) or "on-demand"
-#                      NOTE: spot interruption handling is not yet implemented
-#                      — if a spot instance is reclaimed mid-run, the job
-#                      simply fails, its ledger row shows the failure, and
-#                      the next cron tick tries again. Fine for nightly runs
-#                      where a lost run doesn't block anything critical.
-#   depends_on       — optional job name; this one only runs if that one
-#                      completed OK today (UTC calendar day)
-PIPELINES = [
-    {
-        "name": "ka-prep",
+# Global cap on concurrent EC2 spawns across ALL state DAGs. Bump if you
+# have more per-region vCPU / instance quota headroom.
+MAX_CONCURRENT = int(os.environ.get("ACESTOR_MAX_CONCURRENT", "4"))
+
+
+@dataclass
+class Task:
+    """One node in a state's DAG.
+
+    ``needs`` is a list of sibling ``name``s that must all reach ``ok``
+    before this task becomes eligible.
+    """
+
+    name: str
+    pipeline: str
+    config: str
+    instance: str
+    lifecycle: str = "spot"  # or "on-demand"
+    needs: list[str] = field(default_factory=list)
+
+
+_PREP = "pipelines.dengue_prep.pipeline:build_pipeline"
+_FORECAST = "pipelines.dengue.pipeline:build_pipeline"
+_DOWNSCALE = "pipelines.dengue_downscale.pipeline:build_pipeline"
+_ROLLUP = "pipelines.dengue_rollup.pipeline:build_pipeline"
+
+# ── Per-state DAGs — edit below to add / remove pipelines ─────────────────────
+STATES: dict[str, dict] = {
+    "ka": {
         "cron": "0 2 * * *",  # 02:00 UTC daily
-        "pipeline": "pipelines.dengue_prep.pipeline:build_pipeline",
-        "config": "configs/ka_district_prep.yaml",
-        "remote_instance": "t3.large",
-        "remote_lifecycle": "spot",
+        "dag": [
+            Task("prep", _PREP, "configs/ka_district_prep.yaml", "t3.large"),
+            Task(
+                "forecast",
+                _FORECAST,
+                "configs/ka_district.yaml",
+                "c7i.4xlarge",
+                needs=["prep"],
+            ),
+            # Add subdistrict downscale once the config is validated end-to-end:
+            # Task("subdistrict", _DOWNSCALE, "configs/ka_district_to_subdistrict.yaml",
+            #      "c7i.2xlarge", needs=["forecast"]),
+        ],
     },
-    {
-        "name": "ka-forecast",
-        "cron": "0 3 * * *",  # 03:00 UTC daily, after ka-prep
-        "pipeline": "pipelines.dengue.pipeline:build_pipeline",
-        "config": "configs/ka_district.yaml",
-        "remote_instance": "c7i.4xlarge",
-        "remote_lifecycle": "spot",
-        "depends_on": "ka-prep",
+    "gba": {
+        "cron": "30 2 * * *",  # 02:30 UTC daily
+        # Zone is the source-of-truth level for GBA:
+        # * prep zone/corp/ward in parallel
+        # * forecast at zone
+        # * rollup zone→corp AND downscale zone→ward in parallel
+        "dag": [
+            Task("zone-prep", _PREP, "configs/gba_zone_prep.yaml", "t3.large"),
+            Task("corp-prep", _PREP, "configs/gba_corp_prep.yaml", "t3.medium"),
+            Task("ward-prep", _PREP, "configs/gba_ward_prep.yaml", "t3.medium"),
+            Task(
+                "zone-forecast",
+                _FORECAST,
+                "configs/gba_zone.yaml",
+                "c7i.4xlarge",
+                needs=["zone-prep"],
+            ),
+            Task(
+                "corp-rollup",
+                _ROLLUP,
+                "configs/gba_zone_to_corp.yaml",
+                "c7i.2xlarge",
+                needs=["zone-forecast", "corp-prep"],
+            ),
+            Task(
+                "ward-downscale",
+                _DOWNSCALE,
+                "configs/gba_zone_to_ward.yaml",
+                "c7i.2xlarge",
+                needs=["zone-forecast", "ward-prep"],
+            ),
+        ],
     },
-]
+    "od": {
+        "cron": "0 3 * * *",  # 03:00 UTC daily
+        # District is source-of-truth; block + ulb are parallel downscales,
+        # ulb_ward hangs off ulb.
+        "dag": [
+            Task("district-prep", _PREP, "configs/od_district_prep.yaml", "t3.large"),
+            Task("block-prep", _PREP, "configs/od_block_prep.yaml", "t3.medium"),
+            Task("ulb-prep", _PREP, "configs/od_ulb_prep.yaml", "t3.medium"),
+            Task(
+                "ulb-ward-prep",
+                _PREP,
+                "configs/od_ulb_ward_prep.yaml",
+                "t3.medium",
+            ),
+            Task(
+                "district-forecast",
+                _FORECAST,
+                "configs/od_district.yaml",
+                "c7i.4xlarge",
+                needs=["district-prep"],
+            ),
+            Task(
+                "block-downscale",
+                _DOWNSCALE,
+                "configs/od_district_to_block.yaml",
+                "c7i.2xlarge",
+                needs=["district-forecast", "block-prep"],
+            ),
+            Task(
+                "ulb-downscale",
+                _DOWNSCALE,
+                "configs/od_district_to_ulb.yaml",
+                "c7i.2xlarge",
+                needs=["district-forecast", "ulb-prep"],
+            ),
+            Task(
+                "ulb-ward-downscale",
+                _DOWNSCALE,
+                "configs/od_ulb_to_ward.yaml",
+                "c7i.2xlarge",
+                needs=["ulb-downscale", "ulb-ward-prep"],
+            ),
+        ],
+    },
+}
 # ──────────────────────────────────────────────────────────────────────────────
 
-# job_name → UTC date of last successful run. Used for depends_on checks.
-# In-memory only; wipes on scheduler restart. That's fine — a missed
-# dependency check just skips a run, doesn't produce wrong data.
-LAST_SUCCESS: dict[str, date] = {}
+
+# Global executor shared across all state DAG runs → cross-state parallelism
+# naturally caps at MAX_CONCURRENT. Threads are fine here because every task
+# just supervises a subprocess (network-bound), no CPU-bound work in-process.
+_pool = ThreadPoolExecutor(max_workers=MAX_CONCURRENT, thread_name_prefix="acestor-dag")
 
 
 def _print(msg: str) -> None:
-    """Prefixed print so scheduler stdout mixes coherently with pipeline logs."""
     print(f"[{datetime.utcnow().isoformat()}Z] scheduler: {msg}", flush=True)
 
 
-def _build_remote_cmd(spec: dict, run_id: str) -> list[str]:
-    """Assemble the acestor.remote CLI invocation for ``spec``."""
+def _build_remote_cmd(state: str, task: Task, run_id: str) -> list[str]:
     cmd = [
         sys.executable,
         "-m",
         "acestor.remote",
         "--pipeline",
-        spec["pipeline"],
+        task.pipeline,
         "--config",
-        spec["config"],
+        task.config,
         "--run-id",
         run_id,
         "--remote-instance",
-        spec["remote_instance"],
+        task.instance,
         "--remote-lifecycle",
-        spec.get("remote_lifecycle", "on-demand"),
+        task.lifecycle,
         "--aws-key-name",
         AWS_KEY_NAME,
         "--aws-key-path",
@@ -133,76 +232,150 @@ def _build_remote_cmd(spec: dict, run_id: str) -> list[str]:
     return cmd
 
 
-def make_job(spec: dict):
-    def run():
-        name = spec["name"]
+def _execute_task(state: str, task: Task, run_stamp: str) -> int:
+    """Shell out to ``acestor.remote`` for one task; return its exit code."""
+    run_id = f"{state}-{task.name}_{run_stamp}"
+    log_path = LOGS_DIR / f"{state}-{task.name}" / run_stamp[:10] / f"{run_id}.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    _print(f"START  {state}/{task.name} → {log_path}")
+    with open(log_path, "w") as f:
+        result = subprocess.run(
+            _build_remote_cmd(state, task, run_id),
+            stdout=f,
+            stderr=f,
+            cwd=str(ROOT),
+        )
+    return result.returncode
 
-        dep = spec.get("depends_on")
-        if dep:
-            today = datetime.utcnow().date()
-            if LAST_SUCCESS.get(dep) != today:
+
+def _run_dag(state: str, dag: list[Task]) -> None:
+    """Traverse ``dag`` respecting deps + concurrency cap.
+
+    A task is submitted the moment all its ``needs`` have completed OK.
+    Failed / skipped tasks poison their transitive dependents (skipped,
+    not retried within this cron tick).
+    """
+    _validate_dag(state, dag)
+
+    status: dict[str, str] = {}  # name → "ok" | "fail" | "skip"
+    futures: dict[str, Future] = {}
+    completed = threading.Event()
+
+    run_stamp = datetime.utcnow().strftime("%Y-%m-%d_%H%M%S")
+    _print(f"DAG    {state}: starting run @ {run_stamp} — {len(dag)} task(s)")
+
+    def _submit_ready() -> None:
+        """Submit any task whose deps are all done + OK, that hasn't run yet."""
+        for t in dag:
+            if t.name in status or t.name in futures:
+                continue  # already handled
+            deps_status = [status.get(dep) for dep in t.needs]
+            if any(s is None for s in deps_status):
+                continue  # some dep still in flight
+            if any(s != "ok" for s in deps_status):
+                status[t.name] = "skip"
                 _print(
-                    f"SKIP {name}: dep {dep!r} has not completed OK today "
-                    f"(last success: {LAST_SUCCESS.get(dep, 'never')})"
+                    f"SKIP   {state}/{t.name}: upstream failed "
+                    f"({[(d, status.get(d)) for d in t.needs]})"
                 )
-                return
+                continue
+            fut = _pool.submit(_execute_task, state, t, run_stamp)
+            futures[t.name] = fut
+            fut.add_done_callback(lambda f, name=t.name: _on_done(name, f))
 
-        now = datetime.utcnow()
-        run_id = f"{name}_{now.strftime('%Y-%m-%d_%H%M%S')}"
-        log_path = LOGS_DIR / name / now.strftime("%Y-%m-%d") / f"{run_id}.log"
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        _print(f"START {name} → {log_path}")
-
-        with open(log_path, "w") as f:
-            result = subprocess.run(
-                _build_remote_cmd(spec, run_id),
-                stdout=f,
-                stderr=f,
-                cwd=str(ROOT),
+    def _on_done(name: str, fut: Future) -> None:
+        try:
+            rc = fut.result()
+            status[name] = "ok" if rc == 0 else "fail"
+            _print(
+                f"{'OK   ' if rc == 0 else 'FAIL '} "
+                f"{state}/{name}: acestor.remote exit={rc}"
             )
+        except Exception as exc:
+            status[name] = "fail"
+            _print(f"FAIL  {state}/{name}: raised {type(exc).__name__}: {exc}")
+        _submit_ready()
+        if len(status) == len(dag):
+            completed.set()
 
-        if result.returncode == 0:
-            LAST_SUCCESS[name] = datetime.utcnow().date()
-            _print(f"OK    {name} — ran acestor.remote to completion")
-        else:
-            _print(f"FAIL  {name} — acestor.remote exited {result.returncode}")
+    _submit_ready()
+    completed.wait()
 
-    return run
+    ok = sum(1 for s in status.values() if s == "ok")
+    fail = sum(1 for s in status.values() if s == "fail")
+    skip = sum(1 for s in status.values() if s == "skip")
+    _print(f"DAG    {state}: done — ok={ok} fail={fail} skip={skip} " f"of {len(dag)}")
 
 
-def main():
+def _validate_dag(state: str, dag: list[Task]) -> None:
+    names = {t.name for t in dag}
+    for t in dag:
+        for dep in t.needs:
+            if dep not in names:
+                raise ValueError(
+                    f"{state}: task {t.name!r} needs {dep!r} which is not defined."
+                )
+    # cycle check: repeated Kahn topological sort
+    remaining = {t.name: set(t.needs) for t in dag}
+    while remaining:
+        free = [n for n, deps in remaining.items() if not deps]
+        if not free:
+            raise ValueError(f"{state}: DAG has a cycle involving {sorted(remaining)}")
+        for n in free:
+            remaining.pop(n)
+            for deps in remaining.values():
+                deps.discard(n)
+
+
+def _make_dag_trigger(state: str, dag: list[Task]):
+    def trigger() -> None:
+        try:
+            _run_dag(state, dag)
+        except Exception as exc:  # pragma: no cover
+            _print(f"FATAL  {state}: DAG runner crashed — {type(exc).__name__}: {exc}")
+
+    return trigger
+
+
+def main() -> None:
     LOGS_DIR.mkdir(exist_ok=True)
-    scheduler = BlockingScheduler(timezone="UTC")
+    if not STATES:
+        raise SystemExit("STATES is empty — nothing to schedule.")
 
-    # Validate depends_on references before starting the loop.
-    names = {p["name"] for p in PIPELINES}
-    for p in PIPELINES:
-        dep = p.get("depends_on")
-        if dep and dep not in names:
-            raise ValueError(
-                f"pipeline {p['name']!r} depends_on {dep!r} which is not defined."
-            )
+    # Fail fast on bad DAG shapes before starting the scheduler loop.
+    for state, spec in STATES.items():
+        _validate_dag(state, spec["dag"])
 
-    for p in PIPELINES:
-        scheduler.add_job(
-            make_job(p),
-            CronTrigger.from_crontab(p["cron"], timezone="UTC"),
-            id=p["name"],
-            name=p["name"],
+    # BackgroundScheduler because our trigger callables block on the DAG run
+    # (which itself blocks on the thread pool). A BlockingScheduler + long
+    # trigger callable would starve other state crons. Background + our own
+    # ThreadPoolExecutor keeps everything responsive.
+    sched = BackgroundScheduler(timezone="UTC")
+
+    for state, spec in STATES.items():
+        sched.add_job(
+            _make_dag_trigger(state, spec["dag"]),
+            CronTrigger.from_crontab(spec["cron"], timezone="UTC"),
+            id=f"dag-{state}",
+            name=f"dag-{state}",
             misfire_grace_time=3600,
+            max_instances=1,  # if a DAG run overruns, skip the next tick
         )
-        dep_note = f", depends_on={p['depends_on']}" if p.get("depends_on") else ""
-        print(
-            f"Scheduled: {p['name']}  ({p['cron']} UTC, "
-            f"{p['remote_instance']} {p.get('remote_lifecycle', 'on-demand')}"
-            f"{dep_note})"
-        )
+        task_names = [t.name for t in spec["dag"]]
+        print(f"Scheduled: {state}  ({spec['cron']} UTC) → {task_names}")
 
-    print("Remote scheduler running. Ctrl+C to stop.")
+    print(
+        f"Remote scheduler running (max_concurrent={MAX_CONCURRENT}). "
+        f"Ctrl+C to stop."
+    )
+    sched.start()
     try:
-        scheduler.start()
+        threading.Event().wait()  # sleep forever; APScheduler runs in the background
     except (KeyboardInterrupt, SystemExit):
-        print("Remote scheduler stopped.")
+        print("Stopping scheduler…")
+        sched.shutdown(wait=True)
+        _pool.shutdown(wait=True, cancel_futures=True)
+        print("Stopped.")
 
 
 if __name__ == "__main__":
