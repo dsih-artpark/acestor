@@ -17,10 +17,19 @@ name: Deploy acestor-caller
 on:
   push:
     branches: [production]
+    # Broad paths: the caller's ~/acestor-work is rsync'd to every compute
+    # spawn, so any pipeline/config change also needs a redeploy to land.
+    # Cheaper to over-deploy than to hit "why is my code change not live"
+    # confusion — the deploy is idempotent + takes ~60s.
     paths:
       - "scripts/run_schedules_remote.py"
       - "scripts/deploy_caller.sh"
       - ".github/workflows/deploy-caller.yml"
+      - "acestor/**"
+      - "pipelines/**"
+      - "configs/**"
+      - "pyproject.toml"
+      - "uv.lock"
   workflow_dispatch:
     inputs:
       ref:
