@@ -142,12 +142,22 @@ REMOTE_SCRIPT
 )
 
 echo "==> Submitting SSM SendCommand"
+# AWS-RunShellScript runs the joined commands via /bin/sh (dash on Ubuntu),
+# but our payload uses bash-only syntax ([[ ]], arrays, ${:+…}). Base64-
+# encode it and decode+exec via bash on the target — bulletproof against
+# shell escaping AND makes the CloudTrail entry a single opaque blob
+# rather than an easily-grepped script.
+if base64 --version 2>/dev/null | grep -q GNU; then
+  DEPLOY_SCRIPT_B64=$(base64 -w0 <<< "$DEPLOY_SCRIPT")
+else
+  DEPLOY_SCRIPT_B64=$(base64 <<< "$DEPLOY_SCRIPT" | tr -d '\n')
+fi
 CMD_ID=$(aws ssm send-command --region "$AWS_REGION" \
   --instance-ids "$INSTANCE_ID" \
   --document-name "AWS-RunShellScript" \
   --comment "acestor deploy $(date -u +%FT%TZ)" \
   --timeout-seconds 900 \
-  --parameters "commands=[$(jq -Rs . <<< "$DEPLOY_SCRIPT")]" \
+  --parameters "commands=[\"echo ${DEPLOY_SCRIPT_B64} | base64 -d | bash\"]" \
   --query 'Command.CommandId' --output text)
 echo "  command id: ${CMD_ID}"
 
