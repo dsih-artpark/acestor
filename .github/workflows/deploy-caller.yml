@@ -46,6 +46,38 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Fail fast with a friendly message when Secrets/Variables haven't been
+      # configured yet — happens the first time this workflow triggers (on
+      # merge) before the operator has had a chance to run bootstrap_infra.sh
+      # + paste values into repo settings. Without this preflight, the AWS
+      # OIDC action fails with an opaque "aws-region required" error.
+      - name: Preflight — required Secrets & Variables
+        env:
+          AWS_DEPLOY_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
+          DASHBOARD_CLIENT_ID: ${{ secrets.DASHBOARD_CLIENT_ID }}
+          DASHBOARD_CLIENT_SECRET: ${{ secrets.DASHBOARD_CLIENT_SECRET }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          CALLER_INSTANCE_TAG_NAME: ${{ vars.CALLER_INSTANCE_TAG_NAME }}
+        run: |
+          missing=()
+          for v in AWS_DEPLOY_ROLE_ARN DASHBOARD_URL DASHBOARD_CLIENT_ID \
+                   DASHBOARD_CLIENT_SECRET AWS_REGION CALLER_INSTANCE_TAG_NAME; do
+            if [[ -z "${!v}" ]]; then
+              missing+=("$v")
+            fi
+          done
+          if (( ${#missing[@]} )); then
+            echo "::error::Missing required GitHub Secrets/Variables: ${missing[*]}"
+            echo ""
+            echo "This workflow needs the AWS + dashboard config to have been set up."
+            echo "First-time setup: run scripts/bootstrap_infra.sh locally, then paste"
+            echo "the printed Secrets/Variables into repo Settings → Secrets and variables → Actions."
+            echo "Full runbook: docs/CALLER_DEPLOYMENT.md"
+            exit 1
+          fi
+          echo "All required Secrets/Variables present."
+
       - name: Assume AWS role via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
