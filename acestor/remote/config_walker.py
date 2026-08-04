@@ -7,7 +7,6 @@ keys the prep + main pipelines use.
 
 **Input-ish keys** (push up before the run; the pipeline reads from them):
 
-    data.geojson.base_path
     data.weather_download.source_path
     data.weather_download.filesystem_base_path
     data.weather_download.netcdf_cache_path
@@ -21,13 +20,17 @@ point of running prep remotely is lost.
     data.prepared_data.base_dir
     data.weather_download.parsed_output_path
     data.case_download.source_path
+    data.geojson.base_path
 
-``case_download.source_path`` lives in OUTPUT (not INPUT) because the
-dashboard case source *writes* freshly-fetched xlsx files there and its
-containment/trim logic (see PR #108) does incremental fetches when
-prior-run xlsx files are present. Pulling it back lets the next run's
-push-up phase seed those xlsx files, so subsequent nightly runs
-only fetch the delta instead of re-streaming years of history.
+``case_download.source_path`` and ``geojson.base_path`` live in OUTPUT
+(not INPUT) because the dashboard case + geojson sources *write* freshly-
+fetched files there during prep runs. Keeping them in OUTPUT means:
+  * pull-back after each prep run → caller accumulates the cache
+  * push-up before every subsequent run (any pipeline) → the fetched
+    files reach the compute box so downstream steps (e.g. the forecast's
+    generate_maps that reads geojsons/districts/) don't crash
+Without the pull-back these dirs would stay empty on the caller and
+never propagate to non-prep pipelines.
 
 ``storages.artifacts.filesystem.base_path`` is handled separately by
 :func:`acestor.remote.sync.sync_artifacts_back`, which pulls the entire
@@ -51,7 +54,6 @@ log = logging.getLogger(__name__)
 
 # Ordered so config walkers scan predictable, stable locations first.
 INPUT_KEY_PATHS: tuple[tuple[str, ...], ...] = (
-    ("data", "geojson", "base_path"),
     ("data", "weather_download", "source_path"),
     ("data", "weather_download", "filesystem_base_path"),
     ("data", "weather_download", "netcdf_cache_path"),
@@ -63,6 +65,7 @@ OUTPUT_KEY_PATHS: tuple[tuple[str, ...], ...] = (
     ("data", "prepared_data", "base_dir"),
     ("data", "weather_download", "parsed_output_path"),
     ("data", "case_download", "source_path"),
+    ("data", "geojson", "base_path"),
 )
 
 
