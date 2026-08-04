@@ -1,0 +1,70 @@
+name: Deploy acestor-caller
+
+# Deploys the acestor remote-run scheduler onto the caller EC2 instance
+# via AWS SSM SendCommand — no SSH keys anywhere.
+#
+# Preconditions (set up once via scripts/bootstrap_infra.sh):
+#   * OIDC provider + IAM role github-actions-deploy-caller
+#   * Caller EC2 running with tag Name=acestor-caller + SSM agent + SSM policy
+#
+# Required repo Secrets:
+#   AWS_DEPLOY_ROLE_ARN, DASHBOARD_URL, DASHBOARD_CLIENT_ID, DASHBOARD_CLIENT_SECRET
+# Required repo Variables:
+#   AWS_REGION, CALLER_INSTANCE_TAG_NAME
+# Optional repo Variables:
+#   ACESTOR_AWS_KEY_NAME, ACESTOR_AWS_AMI
+
+on:
+  push:
+    branches: [production]
+    paths:
+      - "scripts/run_schedules_remote.py"
+      - "scripts/deploy_caller.sh"
+      - ".github/workflows/deploy-caller.yml"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to deploy on the caller (defaults to production)"
+        required: false
+        default: "production"
+
+# One deployment at a time — protects the caller from racing SSM invocations.
+concurrency:
+  group: deploy-caller
+  cancel-in-progress: false
+
+# OIDC needs id-token: write. contents: read is the default.
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Assume AWS role via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: gha-deploy-caller-${{ github.run_id }}
+
+      - name: Verify identity
+        run: aws sts get-caller-identity
+
+      - name: Run deploy_caller.sh (SSM SendCommand → caller)
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          CALLER_INSTANCE_TAG_NAME: ${{ vars.CALLER_INSTANCE_TAG_NAME }}
+          ACESTOR_REPO_URL: https://github.com/${{ github.repository }}.git
+          ACESTOR_REPO_REF: ${{ inputs.ref || 'production' }}
+          ACESTOR_AWS_KEY_NAME: ${{ vars.ACESTOR_AWS_KEY_NAME }}
+          ACESTOR_AWS_AMI: ${{ vars.ACESTOR_AWS_AMI }}
+          DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
+          DASHBOARD_CLIENT_ID: ${{ secrets.DASHBOARD_CLIENT_ID }}
+          DASHBOARD_CLIENT_SECRET: ${{ secrets.DASHBOARD_CLIENT_SECRET }}
+        run: bash scripts/deploy_caller.sh
