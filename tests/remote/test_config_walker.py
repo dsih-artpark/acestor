@@ -8,16 +8,16 @@ from acestor.remote.config_walker import find_input_paths, find_output_paths
 
 
 def test_finds_existing_input_dirs(tmp_path: Path):
-    (tmp_path / "ka_datasets" / "geojsons").mkdir(parents=True)
+    (tmp_path / "ka_datasets" / "weather").mkdir(parents=True)
 
     cfg = {
         "data": {
-            "geojson": {"base_path": "ka_datasets/geojsons"},
+            "weather_download": {"source_path": "ka_datasets/weather"},
         }
     }
     paths = find_input_paths(cfg, tmp_path)
     keys = {p.key_path for p in paths}
-    assert keys == {"data.geojson.base_path"}
+    assert keys == {"data.weather_download.source_path"}
     for p in paths:
         assert p.local_path.exists()
         assert p.local_path.is_dir()
@@ -28,7 +28,6 @@ def test_skips_paths_that_do_not_exist_locally(tmp_path: Path):
     pipeline creates them on the remote. Walker must silently skip."""
     cfg = {
         "data": {
-            "geojson": {"base_path": "ka_datasets/geojsons"},  # not created
             "weather_download": {"source_path": "ka_datasets/weather"},
         }
     }
@@ -50,7 +49,7 @@ def test_ignores_output_keys(tmp_path: Path):
 def test_refuses_paths_outside_project_root(tmp_path: Path):
     outside = tmp_path.parent / "some_other_project"
     outside.mkdir(exist_ok=True)
-    cfg = {"data": {"geojson": {"base_path": str(outside)}}}
+    cfg = {"data": {"weather_download": {"source_path": str(outside)}}}
     project_root = tmp_path
     (project_root / "pyproject.toml").write_text("[project]\n")
     assert find_input_paths(cfg, project_root) == []
@@ -77,7 +76,7 @@ def test_deduplicates_paths_that_appear_twice(tmp_path: Path):
 def test_handles_missing_config_sections_gracefully(tmp_path: Path):
     assert find_input_paths({}, tmp_path) == []
     assert find_input_paths({"data": None}, tmp_path) == []
-    assert find_input_paths({"data": {"geojson": None}}, tmp_path) == []
+    assert find_input_paths({"data": {"weather_download": None}}, tmp_path) == []
 
 
 def test_output_walker_picks_up_prepared_data(tmp_path: Path):
@@ -120,3 +119,18 @@ def test_case_download_source_path_is_treated_as_output(tmp_path: Path):
 
     assert [p.key_path for p in ins] == []  # NOT an input
     assert [p.key_path for p in outs] == ["data.case_download.source_path"]
+
+
+def test_geojson_base_path_is_treated_as_output(tmp_path: Path):
+    """geojson.base_path is an OUTPUT so dashboard-fetched geojsons rsync
+    back to the caller after each prep run. Without this, downstream
+    non-prep pipelines (e.g. forecast's generate_maps step reading
+    geojsons/districts/) crash with FileNotFoundError because the caller
+    has nothing to push up before the compute box starts."""
+    cfg = {"data": {"geojson": {"base_path": "ka_datasets/geojsons"}}}
+
+    ins = find_input_paths(cfg, tmp_path)
+    outs = find_output_paths(cfg, tmp_path)
+
+    assert [p.key_path for p in ins] == []  # NOT an input
+    assert [p.key_path for p in outs] == ["data.geojson.base_path"]

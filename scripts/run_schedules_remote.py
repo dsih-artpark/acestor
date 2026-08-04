@@ -126,7 +126,7 @@ _ROLLUP = "pipelines.dengue_rollup.pipeline:build_pipeline"
 # ── Per-state DAGs — edit below to add / remove pipelines ─────────────────────
 STATES: dict[str, dict] = {
     "ka": {
-        "cron": "0 * * * *",  # TEMP: every hour for testing (was: 02:00 UTC daily)
+        "cron": "0 2 * * *",  # 02:00 UTC daily
         "dag": [
             Task("prep", _PREP, "configs/ka_district_prep.yaml", "t3.large"),
             Task(
@@ -152,7 +152,7 @@ STATES: dict[str, dict] = {
         ],
     },
     "gba": {
-        "cron": "0 * * * *",  # TEMP: every hour for testing (was: 02:30 UTC daily)
+        "cron": "30 2 * * *",  # 02:30 UTC daily
         # Zone is the source-of-truth level for GBA:
         # * prep zone/corp/ward in parallel
         # * forecast at zone
@@ -185,7 +185,7 @@ STATES: dict[str, dict] = {
         ],
     },
     "od": {
-        "cron": "0 * * * *",  # TEMP: every hour for testing (was: 03:00 UTC daily)
+        "cron": "0 3 * * *",  # 03:00 UTC daily
         # District is source-of-truth; block + ulb are parallel downscales,
         # ulb_ward hangs off ulb.
         "dag": [
