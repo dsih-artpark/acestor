@@ -63,8 +63,16 @@ class PrepDownloadWeatherDataStep(BaseStep[NoInputs, PrepWeatherDownloadResult])
         data_raw = context.config.get("data") or {}
         geojson_base = str((data_raw.get("geojson") or {}).get("base_path", "")).strip()
 
+        # Merge the RAW YAML weather_download section on top of the dataclass
+        # output so plugin-specific fields (scope_id, base_url, refresh, …)
+        # survive parsing. PrepWeatherDownloadConfig only declares the fields
+        # the core pipeline uses; without this merge the dataclass silently
+        # strips plugin fields and the source blows up with 'X is required'.
+        # Same pattern as download_case_data.py did in PR #108.
+        raw_weather_section = dict(data_raw.get("weather_download") or {})
         source_config: dict[str, Any] = {
             **dataclasses.asdict(cfg),
+            **raw_weather_section,
             "geojson_base_path": geojson_base,
         }
 
