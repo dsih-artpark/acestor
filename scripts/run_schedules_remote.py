@@ -65,7 +65,12 @@ FORWARD_ENV = (
 #   config           — path to yaml, forwarded verbatim
 #   remote_instance  — EC2 shape (e.g. t3.large for prep, c7i.4xlarge for
 #                      heavy forecast)
-#   remote_lifecycle — "on-demand" (safer) or "spot" (cheaper, may be reclaimed)
+#   remote_lifecycle — "spot" (cheaper, may be reclaimed) or "on-demand"
+#                      NOTE: spot interruption handling is not yet implemented
+#                      — if a spot instance is reclaimed mid-run, the job
+#                      simply fails, its ledger row shows the failure, and
+#                      the next cron tick tries again. Fine for nightly runs
+#                      where a lost run doesn't block anything critical.
 #   depends_on       — optional job name; this one only runs if that one
 #                      completed OK today (UTC calendar day)
 PIPELINES = [
@@ -75,7 +80,7 @@ PIPELINES = [
         "pipeline": "pipelines.dengue_prep.pipeline:build_pipeline",
         "config": "configs/ka_district_prep.yaml",
         "remote_instance": "t3.large",
-        "remote_lifecycle": "on-demand",
+        "remote_lifecycle": "spot",
     },
     {
         "name": "ka-forecast",
@@ -83,7 +88,7 @@ PIPELINES = [
         "pipeline": "pipelines.dengue.pipeline:build_pipeline",
         "config": "configs/ka_district.yaml",
         "remote_instance": "c7i.4xlarge",
-        "remote_lifecycle": "on-demand",
+        "remote_lifecycle": "spot",
         "depends_on": "ka-prep",
     },
 ]
