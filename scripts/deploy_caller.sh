@@ -152,12 +152,18 @@ if base64 --version 2>/dev/null | grep -q GNU; then
 else
   DEPLOY_SCRIPT_B64=$(base64 <<< "$DEPLOY_SCRIPT" | tr -d '\n')
 fi
+# SSM agent runs as root; our payload needs to operate on the ubuntu-owned
+# repo (~/acestor-work) and end up with ubuntu-owned files. Git 2.35+ refuses
+# to touch a repo whose owner differs from the current user — hence we run
+# the whole payload as user ubuntu via sudo -u. Inside the payload, `sudo`
+# still works for apt/systemctl because ubuntu has NOPASSWD in the default
+# cloud-init sudoers.
 CMD_ID=$(aws ssm send-command --region "$AWS_REGION" \
   --instance-ids "$INSTANCE_ID" \
   --document-name "AWS-RunShellScript" \
   --comment "acestor deploy $(date -u +%FT%TZ)" \
   --timeout-seconds 900 \
-  --parameters "commands=[\"echo ${DEPLOY_SCRIPT_B64} | base64 -d | bash\"]" \
+  --parameters "commands=[\"echo ${DEPLOY_SCRIPT_B64} | base64 -d | sudo -u ubuntu -H bash\"]" \
   --query 'Command.CommandId' --output text)
 echo "  command id: ${CMD_ID}"
 
