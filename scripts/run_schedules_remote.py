@@ -106,15 +106,25 @@ STATES: dict[str, dict] = {
         "dag": [
             Task("prep", _PREP, "configs/ka_district_prep.yaml", "t3.large"),
             Task(
+                "subdistrict-prep",
+                _PREP,
+                "configs/ka_subdistrict_prep.yaml",
+                "t3.large",
+            ),
+            Task(
                 "forecast",
                 _FORECAST,
                 "configs/ka_district.yaml",
                 "c7i.4xlarge",
                 needs=["prep"],
             ),
-            # Add subdistrict downscale once the config is validated end-to-end:
-            # Task("subdistrict", _DOWNSCALE, "configs/ka_district_to_subdistrict.yaml",
-            #      "c7i.2xlarge", needs=["forecast"]),
+            Task(
+                "subdistrict-downscale",
+                _DOWNSCALE,
+                "configs/ka_district_to_subdistrict.yaml",
+                "c7i.2xlarge",
+                needs=["forecast", "subdistrict-prep"],
+            ),
         ],
     },
     "gba": {
