@@ -848,7 +848,7 @@ def trigger_run(
             cmd.extend(["--aws-ami", ami])
 
     logf = open(log_path, "w")
-    proc = subprocess.Popen(
+    subprocess.Popen(
         cmd,
         stdout=logf,
         stderr=subprocess.STDOUT,
@@ -856,15 +856,10 @@ def trigger_run(
         start_new_session=True,
     )
 
-    return HTMLResponse(
-        f"""<html><body style="font-family:system-ui;padding:2em">
-        <h2>Triggered · {mode}</h2>
-        <p><strong>run_id:</strong> {run_id}</p>
-        <p><strong>pid:</strong> {proc.pid}</p>
-        <p><strong>log:</strong> <code>{log_path}</code></p>
-        <p><a href="{_ROOT}/">← back</a></p>
-        </body></html>"""
-    )
+    # Jump straight to the live log viewer for this run. The tail page polls
+    # every 2s, so the user watches output stream in as the pipeline runs.
+    log_relpath = str(log_path.relative_to(logs_root))
+    return RedirectResponse(f"{_ROOT}/log-view?path={log_relpath}", status_code=303)
 
 
 # ── Settings routes ──────────────────────────────────────────────────────────
