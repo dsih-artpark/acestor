@@ -42,6 +42,9 @@
 {% else %}
   <span class="dim">· local run (no ledger row)</span>
 {% endif %}
+{% if scheduler_log_relpath %}
+  · <a href="/log-view?path={{ scheduler_log_relpath }}" style="font-size:0.7em">📜 live log</a>
+{% endif %}
 </h1>
 
 {% if row %}

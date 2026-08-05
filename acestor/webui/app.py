@@ -340,6 +340,18 @@ def run_detail(request: Request, run_id: str, cfg: Settings = Depends(get_cfg)):
         )
     ]
 
+    # Best-effort compute of the scheduler log path for this run.
+    # Scheduler naming: <state>-<task>_<yyyy-mm-dd>_<hhmmss>[_r<n>]
+    # log lives at logs/<state>-<task>/<yyyy-mm-dd>/<run_id>.log
+    scheduler_log_relpath = ""
+    logs_root = cfg.resolved("logs_root")
+    parts = run_id.split("_", 1)
+    if len(parts) == 2:
+        state_task, stamp = parts
+        candidate = logs_root / state_task / stamp[:10] / f"{run_id}.log"
+        if candidate.is_file():
+            scheduler_log_relpath = str(candidate.relative_to(logs_root))
+
     return TEMPLATES.TemplateResponse(
         "run_detail.html",
         {
@@ -352,8 +364,52 @@ def run_detail(request: Request, run_id: str, cfg: Settings = Depends(get_cfg)):
             "artifact_tree": _build_artifact_tree(artifact_files),
             "attempts": attempts,
             "cfg": cfg,
+            "scheduler_log_relpath": scheduler_log_relpath,
         },
     )
+
+
+# ── Live log tailing ─────────────────────────────────────────────────────────
+def _resolve_log_path(path: str, logs_root: Path) -> Path:
+    """Path validation shared by the tail routes."""
+    full = (logs_root / path).resolve()
+    if not str(full).startswith(str(logs_root)):
+        raise HTTPException(400, "path escapes logs root")
+    if not full.is_file():
+        raise HTTPException(404, "not found")
+    return full
+
+
+@app.get("/log-view", response_class=HTMLResponse)
+def log_view(request: Request, path: str, cfg: Settings = Depends(get_cfg)):
+    """HTML page that live-tails the given log file (polling every 2s)."""
+    logs_root = cfg.resolved("logs_root")
+    full = _resolve_log_path(path, logs_root)
+    return TEMPLATES.TemplateResponse(
+        "tail_log.html",
+        {"request": request, "path": path, "filename": full.name},
+    )
+
+
+@app.get("/log-raw", response_class=PlainTextResponse)
+def log_raw(path: str, tail_kb: int = 128, cfg: Settings = Depends(get_cfg)):
+    """Return the last ``tail_kb`` KiB of the log file. Used by the poller.
+
+    Capped at 1 MiB per fetch — larger tails would defeat the purpose.
+    """
+    logs_root = cfg.resolved("logs_root")
+    full = _resolve_log_path(path, logs_root)
+    tail_bytes = max(1, min(tail_kb, 1024)) * 1024
+    size = full.stat().st_size
+    start = max(0, size - tail_bytes)
+    with open(full, "rb") as f:
+        f.seek(start)
+        data = f.read()
+    text = data.decode(errors="replace")
+    # If we started mid-line, drop the first partial line for readability.
+    if start > 0 and "\n" in text:
+        text = text.split("\n", 1)[1]
+    return text
 
 
 @app.get("/artifacts/{path:path}")
