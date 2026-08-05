@@ -144,11 +144,14 @@ class Source(WeatherSource):
         """GET /api/weather/observed and flatten into per-day-per-region records."""
         url = f"{self.base_url}{_OBSERVED_PATH}"
         headers = {"Authorization": f"Bearer {self._get_access_token()}"}
-        # NOTE: the dashboard endpoint's query param is literally named `state`
-        # but takes the scope_id verbatim (`karnataka`, `odisha`, `gulb_gba`).
-        # Title-case values return an empty list.
+        # The endpoint's query param name was `state=` originally, later
+        # renamed to `scope_id=` (dashboard normalising around a single
+        # canonical name across all endpoints). Empirically as of
+        # 2026-08-05 the endpoint returns HTTP 422 for `state=` and only
+        # accepts `scope_id=`. Value is the same lowercase scope id used
+        # by the case + geojson dashboard sources.
         params = {
-            "state": self.scope_id,
+            "scope_id": self.scope_id,
             "from_date": start_date,
             "to_date": end_date,
             "bucket": "daily",
