@@ -104,28 +104,34 @@ class AWSProvider(CloudProvider):
     # ------------------------------------------------------------------
 
     def provision(
-        self, instance_type: str, lifecycle: Lifecycle, region: str
+        self,
+        instance_type: str,
+        lifecycle: Lifecycle,
+        region: str,
+        run_id: str = "",
     ) -> RemoteHost:
         self._region = region
         ec2 = self._client("ec2", region)
         ami = self._resolve_ami(region)
 
+        # Tags: acestor:run-id lets the webui + operator tools correlate a
+        # running compute box back to its scheduler log / ledger row.
+        tags = [
+            {"Key": "acestor:remote-runner", "Value": "true"},
+            {"Key": "acestor:lifecycle", "Value": lifecycle},
+        ]
+        if run_id:
+            tags.append({"Key": "acestor:run-id", "Value": run_id})
+            # Also set the Name tag for readability in the AWS console.
+            tags.append({"Key": "Name", "Value": f"acestor:{run_id}"})
+        tags.extend({"Key": k, "Value": v} for k, v in self.cfg.tags.items())
         run_kwargs: dict[str, Any] = {
             "ImageId": ami,
             "InstanceType": instance_type,
             "KeyName": self.cfg.key_name,
             "MinCount": 1,
             "MaxCount": 1,
-            "TagSpecifications": [
-                {
-                    "ResourceType": "instance",
-                    "Tags": [
-                        {"Key": "acestor:remote-runner", "Value": "true"},
-                        {"Key": "acestor:lifecycle", "Value": lifecycle},
-                        *({"Key": k, "Value": v} for k, v in self.cfg.tags.items()),
-                    ],
-                }
-            ],
+            "TagSpecifications": [{"ResourceType": "instance", "Tags": tags}],
         }
         if self.cfg.root_volume_gb:
             run_kwargs["BlockDeviceMappings"] = [

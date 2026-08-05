@@ -108,4 +108,6 @@ jobs:
           DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
           DASHBOARD_CLIENT_ID: ${{ secrets.DASHBOARD_CLIENT_ID }}
           DASHBOARD_CLIENT_SECRET: ${{ secrets.DASHBOARD_CLIENT_SECRET }}
+          WEB_UI_USERNAME: ${{ secrets.WEB_UI_USERNAME }}
+          WEB_UI_PASSWORD: ${{ secrets.WEB_UI_PASSWORD }}
         run: bash scripts/deploy_caller.sh

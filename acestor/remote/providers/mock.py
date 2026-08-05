@@ -18,7 +18,11 @@ class MockProvider(CloudProvider):
     name = "mock"
 
     def provision(
-        self, instance_type: str, lifecycle: Lifecycle, region: str
+        self,
+        instance_type: str,
+        lifecycle: Lifecycle,
+        region: str,
+        run_id: str = "",
     ) -> RemoteHost:
         log.info(
             "mock provider: pretending to provision %s (%s) in %s",

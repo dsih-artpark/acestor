@@ -118,6 +118,7 @@ def run_remote(opts: RemoteRunOptions) -> RemoteRunOutcome:
             instance_type=opts.instance_type,
             lifecycle=opts.lifecycle,
             region=opts.region,
+            run_id=opts.run_id,
         )
         log.info(
             "remote runner: host ready — id=%s ip=%s user=%s",

@@ -49,7 +49,11 @@ def test_runner_records_provision_failure(tmp_path: Path) -> None:
         name = "broken"
 
         def provision(
-            self, instance_type: str, lifecycle: Lifecycle, region: str
+            self,
+            instance_type: str,
+            lifecycle: Lifecycle,
+            region: str,
+            run_id: str = "",
         ) -> RemoteHost:
             raise RuntimeError("quota exceeded")
 

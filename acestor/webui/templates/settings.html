@@ -1,0 +1,113 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Settings · acestor web-UI</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2em; max-width: 900px; }
+    h1 { margin: 0 0 0.5em; }
+    h1 a { color: inherit; text-decoration: none; }
+    nav { float: right; font-size: 0.9em; }
+    nav a { margin-left: 15px; color: #2a5f9e; text-decoration: none; }
+    p.intro { color: #555; margin-bottom: 2em; }
+    fieldset { border: 1px solid #ddd; border-radius: 6px; padding: 1.5em; margin-bottom: 2em; }
+    legend { font-weight: 600; padding: 0 8px; }
+    .row { display: grid; grid-template-columns: 200px 1fr auto; gap: 12px 15px; align-items: center; margin-bottom: 12px; }
+    .row label { text-align: right; font-weight: 500; }
+    .row input { padding: 6px 8px; font-size: 0.95em; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .row .default { font-size: 0.8em; color: #888; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+    button { padding: 10px 24px; background: #2a5f9e; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 1em; }
+    button:hover { background: #204a7d; }
+    .dim { color: #888; font-size: 0.85em; }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a href="{{ root }}/">Dashboard</a>
+  <a href="{{ root }}/settings">Settings</a>
+</nav>
+<h1><a href="{{ root }}/">acestor</a> <span class="dim">web-UI · Settings</span></h1>
+
+<p class="intro">
+  Every path below is optional. Leave blank to fall back to the built-in default
+  (shown in <span class="dim">grey</span>). Settings are saved to
+  <code>~/.acestor/webui_settings.json</code> and re-read on every request —
+  no service restart needed.
+</p>
+
+<form method="post" action="{{ root }}/settings">
+
+  <fieldset>
+    <legend>Data source paths</legend>
+
+    <div class="row">
+      <label>artifacts_root</label>
+      <input name="artifacts_root" value="{{ cfg.artifacts_root }}" placeholder="{{ defaults.artifacts_root }}">
+      <span class="default">default: {{ defaults.artifacts_root }}</span>
+    </div>
+
+    <div class="row">
+      <label>configs_root</label>
+      <input name="configs_root" value="{{ cfg.configs_root }}" placeholder="{{ defaults.configs_root }}">
+      <span class="default">default: {{ defaults.configs_root }}</span>
+    </div>
+
+    <div class="row">
+      <label>logs_root</label>
+      <input name="logs_root" value="{{ cfg.logs_root }}" placeholder="{{ defaults.logs_root }}">
+      <span class="default">default: {{ defaults.logs_root }}</span>
+    </div>
+
+    <div class="row">
+      <label>ledger_path</label>
+      <input name="ledger_path" value="{{ cfg.ledger_path }}" placeholder="{{ defaults.ledger_path }}">
+      <span class="default">default: {{ defaults.ledger_path }}</span>
+    </div>
+
+    <div class="row">
+      <label>attempts_path</label>
+      <input name="attempts_path" value="{{ cfg.attempts_path }}" placeholder="{{ defaults.attempts_path }}">
+      <span class="default">default: {{ defaults.attempts_path }}</span>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Display</legend>
+
+    <div class="row">
+      <label>recent_runs_limit</label>
+      <input name="recent_runs_limit" type="number" min="1" max="500" value="{{ cfg.recent_runs_limit }}">
+      <span class="default">how many runs to show on the dashboard</span>
+    </div>
+
+    <div class="row">
+      <label>auto_refresh_sec</label>
+      <input name="auto_refresh_sec" type="number" min="0" max="600" value="{{ cfg.auto_refresh_sec }}">
+      <span class="default">0 = don't auto-refresh</span>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Trigger form defaults</legend>
+
+    <div class="row">
+      <label>default_instance</label>
+      <input name="default_instance" value="{{ cfg.default_instance }}">
+      <span class="default">e.g. t3.large, c7i.4xlarge</span>
+    </div>
+
+    <div class="row">
+      <label>default_lifecycle</label>
+      <input name="default_lifecycle" value="{{ cfg.default_lifecycle }}">
+      <span class="default">spot or on-demand</span>
+    </div>
+  </fieldset>
+
+  <button type="submit">Save</button>
+  <span class="dim" style="margin-left: 15px">Takes effect immediately.</span>
+
+</form>
+
+</body>
+</html>
