@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>{{ relpath }}</title>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 20px; }
+    nav { margin-bottom: 15px; }
+    nav a { margin-right: 15px; color: #2a5f9e; text-decoration: none; }
+    .dim { color: #888; }
+    .mono { font-family: ui-monospace, monospace; font-size: 0.85em; }
+    h1 { font-size: 1.2em; margin: 5px 0 10px; }
+    .warn { color: #b06; margin: 8px 0; }
+    .wrap { overflow-x: auto; max-height: 80vh; overflow-y: auto; border: 1px solid #ddd; }
+    table { border-collapse: collapse; font-size: 0.85em; }
+    th, td { padding: 4px 8px; border-bottom: 1px solid #eee; border-right: 1px solid #eee; white-space: nowrap; }
+    th { background: #f0f0f0; position: sticky; top: 0; text-align: left; font-weight: 600; }
+    tr:hover td { background: #fafafa; }
+  </style>
+</head>
+<body>
+<nav>
+  <a href="{{ root }}/">Dashboard</a>
+  <a href="{{ root }}/datasets">Datasets</a>
+  <a href="{{ root }}/datasets/{{ relpath }}?download=1">⬇ download raw</a>
+</nav>
+<h1 class="mono">{{ relpath }}</h1>
+<p class="dim">{{ row_count }} data rows shown · {{ header|length }} columns</p>
+{% if truncated %}
+<p class="warn">Truncated at {{ cap }} rows for browser preview. <a href="{{ root }}/datasets/{{ relpath }}?download=1">Download the full file</a> to see the rest.</p>
+{% endif %}
+<div class="wrap">
+<table>
+  <thead>
+    <tr>{% for h in header %}<th>{{ h }}</th>{% endfor %}</tr>
+  </thead>
+  <tbody>
+    {% for row in body %}
+    <tr>{% for cell in row %}<td>{{ cell }}</td>{% endfor %}</tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+</body>
+</html>

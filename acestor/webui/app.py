@@ -509,6 +509,160 @@ def serve_artifact(path: str, download: int = 0, cfg: Settings = Depends(get_cfg
     return FileResponse(full)
 
 
+# ── CSV → HTML table (in-browser preview, capped rows) ──────────────────────
+_CSV_ROW_CAP = 1000
+
+
+def _render_csv_page(request: Request, full: Path, relpath: str) -> HTMLResponse:
+    import csv as _csv
+
+    rows: list[list[str]] = []
+    truncated = False
+    try:
+        with full.open("r", encoding="utf-8", errors="replace", newline="") as f:
+            reader = _csv.reader(f)
+            for i, row in enumerate(reader):
+                if i >= _CSV_ROW_CAP + 1:  # +1 for header
+                    truncated = True
+                    break
+                rows.append(row)
+    except Exception as exc:
+        return PlainTextResponse(f"failed to parse CSV: {exc}", status_code=500)
+    header = rows[0] if rows else []
+    body = rows[1:] if rows else []
+    return TEMPLATES.TemplateResponse(
+        request,
+        "csv_view.html",
+        {
+            "request": request,
+            "relpath": relpath,
+            "header": header,
+            "body": body,
+            "row_count": len(body),
+            "truncated": truncated,
+            "cap": _CSV_ROW_CAP,
+        },
+    )
+
+
+# ── Datasets browser ─────────────────────────────────────────────────────────
+# Shared per-state dataset dirs (`ka_datasets/`, `gba_datasets/`, …) that
+# `acestor.remote` rsyncs back after prep runs. Not run-scoped — files from
+# many runs land here — but this is the fastest way to grab the prepared
+# CSVs / hyperparam JSONs from the browser.
+def _datasets_project_root() -> Path:
+    return Path.cwd()
+
+
+def _list_dataset_roots() -> list[Path]:
+    root = _datasets_project_root()
+    return sorted(p for p in root.glob("*_datasets") if p.is_dir())
+
+
+def _resolve_dataset_path(rel: str) -> Path:
+    """Validate `rel` stays inside one of the *_datasets dirs at project root."""
+    project = _datasets_project_root().resolve()
+    full = (project / rel).resolve()
+    if not str(full).startswith(str(project) + os.sep) and full != project:
+        raise HTTPException(400, "path escapes project root")
+    # First segment must be a *_datasets dir
+    try:
+        first = full.relative_to(project).parts[0]
+    except (ValueError, IndexError):
+        raise HTTPException(400, "path outside datasets") from None
+    if not first.endswith("_datasets"):
+        raise HTTPException(400, "path outside datasets") from None
+    return full
+
+
+def _dataset_dir_entries(p: Path) -> list[dict]:
+    entries = []
+    for child in sorted(p.iterdir(), key=lambda x: (x.is_file(), x.name)):
+        try:
+            stat = child.stat()
+        except OSError:
+            continue
+        entries.append(
+            {
+                "name": child.name,
+                "is_dir": child.is_dir(),
+                "size": stat.st_size if child.is_file() else 0,
+                "size_pretty": _humanise_bytes(stat.st_size) if child.is_file() else "",
+                "mtime": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(
+                    timespec="seconds"
+                ),
+            }
+        )
+    return entries
+
+
+@app.get("/datasets", response_class=HTMLResponse)
+def datasets_index(request: Request, cfg: Settings = Depends(get_cfg)):
+    roots = _list_dataset_roots()
+    project = _datasets_project_root().resolve()
+    top = [
+        {
+            "name": r.name,
+            "relpath": str(r.relative_to(project)),
+        }
+        for r in roots
+    ]
+    return TEMPLATES.TemplateResponse(
+        request,
+        "datasets.html",
+        {
+            "request": request,
+            "top": top,
+            "here": "",
+            "parent": "",
+            "entries": [],
+            "cfg": cfg,
+        },
+    )
+
+
+@app.get("/datasets/{path:path}")
+def datasets_browse(
+    request: Request,
+    path: str,
+    download: int = 0,
+    cfg: Settings = Depends(get_cfg),
+):
+    full = _resolve_dataset_path(path)
+    if full.is_file():
+        if download:
+            return FileResponse(full, filename=full.name)
+        if full.suffix.lower() == ".csv":
+            return _render_csv_page(request, full, path)
+        if full.suffix.lower() in {".yaml", ".yml", ".md", ".json", ".log", ".txt"}:
+            try:
+                return PlainTextResponse(full.read_text(errors="replace"))
+            except Exception:
+                pass
+        return FileResponse(full)
+    # Directory — render browser
+    project = _datasets_project_root().resolve()
+    here = str(full.relative_to(project))
+    entries = _dataset_dir_entries(full)
+    parent = str(full.parent.relative_to(project)) if full != project else ""
+    top = [
+        {"name": r.name, "relpath": str(r.relative_to(project))}
+        for r in _list_dataset_roots()
+    ]
+    return TEMPLATES.TemplateResponse(
+        request,
+        "datasets.html",
+        {
+            "request": request,
+            "top": top,
+            "here": here,
+            "parent": parent,
+            "entries": entries,
+            "cfg": cfg,
+        },
+    )
+
+
 @app.post("/trigger")
 def trigger_run(
     mode: str = Form("remote"),  # "local" (acestor.run) or "remote" (acestor.remote)

@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>acestor · datasets</title>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; margin: 20px; max-width: 1400px; }
+    nav { margin-bottom: 20px; }
+    nav a { margin-right: 15px; color: #2a5f9e; text-decoration: none; }
+    h1 { margin-bottom: 5px; }
+    .dim { color: #888; }
+    .mono { font-family: ui-monospace, monospace; font-size: 0.9em; }
+    table { border-collapse: collapse; width: 100%; margin-top: 15px; }
+    th, td { padding: 6px 10px; text-align: left; border-bottom: 1px solid #eee; }
+    th { background: #f7f7f7; font-weight: 600; }
+    tr:hover { background: #fafafa; }
+    .dir { font-weight: 500; }
+    .dl { color: #2a5f9e; text-decoration: none; margin-left: 8px; font-size: 0.85em; }
+    .crumb { color: #444; }
+    .crumb a { color: #2a5f9e; text-decoration: none; }
+    .roots { margin: 15px 0; padding: 10px; background: #f7f7f7; border-radius: 4px; }
+    .roots a { margin-right: 12px; }
+  </style>
+</head>
+<body>
+<nav>
+  <a href="{{ root }}/">Dashboard</a>
+  <a href="{{ root }}/datasets">Datasets</a>
+  <a href="{{ root }}/settings">Settings</a>
+</nav>
+
+<h1><a href="{{ root }}/" style="text-decoration:none;color:inherit">acestor</a> <span class="dim">web-UI · Datasets</span></h1>
+
+<div class="roots">
+  <strong>State roots:</strong>
+  {% for r in top %}<a href="{{ root }}/datasets/{{ r.relpath }}">{{ r.name }}</a>{% endfor %}
+</div>
+
+{% if here %}
+  <p class="crumb">
+    <a href="{{ root }}/datasets">datasets</a>
+    {% set parts = here.split('/') %}
+    {% set acc = [] %}
+    {% for p in parts %}
+      {% set _ = acc.append(p) %}
+      / <a href="{{ root }}/datasets/{{ acc | join('/') }}">{{ p }}</a>
+    {% endfor %}
+  </p>
+{% endif %}
+
+{% if entries %}
+<table>
+  <tr><th>name</th><th>size</th><th>modified (UTC)</th><th></th></tr>
+  {% if parent is defined and parent %}
+  <tr><td colspan="4"><a href="{{ root }}/datasets/{{ parent }}" class="mono">..</a></td></tr>
+  {% elif here %}
+  <tr><td colspan="4"><a href="{{ root }}/datasets" class="mono">..</a></td></tr>
+  {% endif %}
+  {% for e in entries %}
+  <tr>
+    <td class="{% if e.is_dir %}dir{% endif %}">
+      {% if e.is_dir %}📁 <a href="{{ root }}/datasets/{{ here }}/{{ e.name }}" class="mono">{{ e.name }}/</a>
+      {% else %}📄 <a href="{{ root }}/datasets/{{ here }}/{{ e.name }}" class="mono" target="_blank">{{ e.name }}</a>
+      {% endif %}
+    </td>
+    <td class="dim mono">{{ e.size_pretty }}</td>
+    <td class="dim mono">{{ e.mtime }}</td>
+    <td>{% if not e.is_dir %}<a href="{{ root }}/datasets/{{ here }}/{{ e.name }}?download=1" class="dl">[download]</a>{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% elif here %}
+<p class="dim">Empty folder.</p>
+{% else %}
+<p class="dim">Pick a state root above to start browsing.</p>
+{% endif %}
+
+</body>
+</html>
