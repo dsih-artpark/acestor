@@ -7,6 +7,10 @@ pipeline:
 run:
   source_run_id: "latest"
 
+data:
+  prepared_data:
+    base_dir: "ka_datasets/prepared_data"
+
 downscale:
   parent_level: district
   child_level: subdistrict
