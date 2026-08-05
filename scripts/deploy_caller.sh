@@ -155,12 +155,12 @@ WorkingDirectory=/home/ubuntu/acestor-work
 Environment=PATH=/home/ubuntu/acestor-work/.venv-remote/bin:/home/ubuntu/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=PYTHONPATH=/home/ubuntu/acestor-work
 Environment=AWS_REGION=${AWS_REGION}
-Environment=MINI_UI_HOST=127.0.0.1
-Environment=MINI_UI_PORT=8000
+Environment=WEB_UI_HOST=127.0.0.1
+Environment=WEB_UI_PORT=8000
 EnvironmentFile=-/home/ubuntu/.env
 ${ACESTOR_AWS_KEY_NAME:+Environment=ACESTOR_AWS_KEY_NAME=${ACESTOR_AWS_KEY_NAME}}
 ${ACESTOR_AWS_AMI:+Environment=ACESTOR_AWS_AMI=${ACESTOR_AWS_AMI}}
-ExecStart=/home/ubuntu/acestor-work/.venv-remote/bin/python /home/ubuntu/acestor-work/scripts/mini_ui/main.py
+ExecStart=/home/ubuntu/acestor-work/.venv-remote/bin/python -m acestor.webui
 Restart=on-failure
 RestartSec=30s
 StandardOutput=append:/home/ubuntu/acestor-work/logs/webui.log

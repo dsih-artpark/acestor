@@ -1,0 +1,138 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>acestor web-UI</title>
+  {% if cfg.auto_refresh_sec %}<meta http-equiv="refresh" content="{{ cfg.auto_refresh_sec }}">{% endif %}
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2em; max-width: 1400px; }
+    h1 { margin: 0 0 0.5em; }
+    h1 a { color: inherit; text-decoration: none; }
+    h2 { margin-top: 2em; padding-bottom: 0.3em; border-bottom: 1px solid #ddd; }
+    nav { float: right; font-size: 0.9em; }
+    nav a { margin-left: 15px; color: #2a5f9e; text-decoration: none; }
+    table { border-collapse: collapse; width: 100%; margin-bottom: 1em; font-size: 0.9em; }
+    th, td { padding: 6px 10px; text-align: left; border-bottom: 1px solid #eee; }
+    th { background: #f5f5f5; font-weight: 600; }
+    tr:hover { background: #fafafa; }
+    .ok    { color: #2a7f2a; font-weight: 600; }
+    .fail  { color: #b73030; font-weight: 600; }
+    .skip  { color: #808080; }
+    .mono  { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 0.85em; }
+    .dim   { color: #888; font-size: 0.85em; }
+    .tag-local  { background: #e6f4ea; color: #1a6f3a; padding: 1px 6px; border-radius: 8px; font-size: 0.75em; }
+    .tag-remote { background: #e6efff; color: #2a4f8e; padding: 1px 6px; border-radius: 8px; font-size: 0.75em; }
+    form  { display: grid; grid-template-columns: auto 1fr; gap: 10px 15px; max-width: 700px; align-items: center; padding: 1em; background: #fafafa; border: 1px solid #ddd; border-radius: 6px; }
+    form label { text-align: right; font-weight: 600; }
+    form input, form select { padding: 6px 8px; font-size: 0.95em; }
+    form button { grid-column: 2; padding: 8px 16px; background: #2a5f9e; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.95em; }
+    form button:hover { background: #204a7d; }
+    .empty { color: #888; font-style: italic; }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a href="/">Dashboard</a>
+  <a href="/settings">Settings</a>
+</nav>
+<h1><a href="/">acestor</a> <span class="dim">web-UI · {{ now }}</span></h1>
+
+{% if schedule %}
+<h2>Scheduled DAGs</h2>
+<table>
+  <tr><th>state</th><th>cron (UTC)</th><th>next fire</th><th>tasks</th></tr>
+  {% for s in schedule %}
+  <tr>
+    <td><strong>{{ s.state }}</strong></td>
+    <td class="mono">{{ s.cron }}</td>
+    <td class="mono">{{ s.next_fire }}</td>
+    <td class="dim">{{ s.tasks|join(', ') }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+
+{% if running %}
+<h2>Currently running <span class="dim">({{ running|length }} compute EC2(s))</span></h2>
+<table>
+  <tr><th>instance</th><th>type</th><th>lifecycle</th><th>launched</th><th>age</th></tr>
+  {% for r in running %}
+  <tr>
+    <td class="mono">{{ r.id }}</td>
+    <td>{{ r.type }}</td>
+    <td>{{ r.lifecycle or "-" }}</td>
+    <td class="mono dim">{{ r.launched }}</td>
+    <td>{{ r.age_min }}m</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+
+<h2>Recent runs <span class="dim">— {{ runs|length }} · newest first · local & remote</span></h2>
+{% if runs %}
+<table>
+  <tr><th>when</th><th>run_id</th><th>mode</th><th>config</th><th>type</th><th>wall</th><th>status</th></tr>
+  {% for r in runs %}
+  <tr>
+    <td class="mono dim">{{ r.sort_key[:19] }}</td>
+    <td><a href="/run/{{ r.run_id }}" class="mono">{{ r.run_id }}</a></td>
+    <td><span class="tag-{{ r.source }}">{{ r.source }}</span></td>
+    <td class="mono dim">{{ r.config or ("[" ~ r.group ~ "]") }}</td>
+    <td>{% if r.instance_type %}{{ r.instance_type }} <span class="dim">{{ r.lifecycle }}</span>{% else %}<span class="dim">-</span>{% endif %}</td>
+    <td>{{ r.wall_pretty or "-" }}</td>
+    <td class="{% if r.exit_status == 'ok' %}ok{% elif r.exit_status == 'skip' %}skip{% elif r.exit_status %}fail{% else %}dim{% endif %}">{{ r.exit_status or "-" }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="empty">No runs yet. Trigger one below or check <a href="/settings">Settings</a> to point at the right artifacts / ledger paths.</p>
+{% endif %}
+
+<h2>Trigger a run</h2>
+{% if not configs %}
+<p class="empty">No configs found under <code class="mono">{{ cfg.resolved('configs_root') }}</code>. Fix in <a href="/settings">Settings</a>.</p>
+{% else %}
+<form method="post" action="/trigger">
+  <label>Mode:</label>
+  <select name="mode">
+    <option value="local">local (acestor.run)</option>
+    <option value="remote" selected>remote (acestor.remote, spawns EC2)</option>
+  </select>
+
+  <label>Pipeline:</label>
+  <select name="pipeline">
+    <option value="pipelines.dengue_prep.pipeline:build_pipeline">dengue_prep</option>
+    <option value="pipelines.dengue.pipeline:build_pipeline">dengue (forecast)</option>
+    <option value="pipelines.dengue_downscale.pipeline:build_pipeline">dengue_downscale</option>
+    <option value="pipelines.dengue_rollup.pipeline:build_pipeline">dengue_rollup</option>
+  </select>
+
+  <label>Config:</label>
+  <select name="config">
+    {% for c in configs %}<option>{{ c }}</option>{% endfor %}
+  </select>
+
+  <label>Instance (remote only):</label>
+  <select name="remote_instance">
+    <option value="t3.small">t3.small</option>
+    <option value="t3.medium">t3.medium</option>
+    <option value="t3.large" {% if cfg.default_instance == 't3.large' %}selected{% endif %}>t3.large — good for prep</option>
+    <option value="c7i.2xlarge" {% if cfg.default_instance == 'c7i.2xlarge' %}selected{% endif %}>c7i.2xlarge</option>
+    <option value="c7i.4xlarge" {% if cfg.default_instance == 'c7i.4xlarge' %}selected{% endif %}>c7i.4xlarge — good for forecast</option>
+  </select>
+
+  <label>Lifecycle (remote only):</label>
+  <select name="remote_lifecycle">
+    <option value="spot" {% if cfg.default_lifecycle == 'spot' %}selected{% endif %}>spot</option>
+    <option value="on-demand" {% if cfg.default_lifecycle == 'on-demand' %}selected{% endif %}>on-demand</option>
+  </select>
+
+  <button type="submit">Trigger</button>
+</form>
+{% endif %}
+
+{% if cfg.auto_refresh_sec %}<p class="dim" style="margin-top: 2em">Page auto-refreshes every {{ cfg.auto_refresh_sec }}s.</p>{% endif %}
+
+</body>
+</html>
