@@ -9,6 +9,10 @@ run:
   # Use "latest" to automatically pick the most recent run under artifacts/ap/.
   source_run_id: "latest"
 
+data:
+  prepared_data:
+    base_dir: "ap_datasets/prepared_data"
+
 downscale:
   parent_level: district    # singular — matches region_type convention
   child_level: mandal       # singular — matches region_type convention

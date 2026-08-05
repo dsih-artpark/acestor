@@ -7,6 +7,10 @@ pipeline:
 run:
   source_run_id: "latest"
 
+data:
+  prepared_data:
+    base_dir: "gba_datasets/prepared_data"
+
 downscale:
   parent_level: zone
   child_level: ward

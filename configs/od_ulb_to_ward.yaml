@@ -10,6 +10,10 @@ run:
   # downscale to bring to ward level.
   source_run_id: "latest"
 
+data:
+  prepared_data:
+    base_dir: "od_datasets/prepared_data"
+
 downscale:
   parent_level: ulb
   child_level: ulb_ward

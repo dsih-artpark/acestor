@@ -11,6 +11,10 @@ run:
   # ./artifacts/gba_corp for a zone_* run and finds nothing.
   source_artifacts_dir: "artifacts/gba_zone"
 
+data:
+  prepared_data:
+    base_dir: "gba_datasets/prepared_data"
+
 rollup:
   source_level: zone
   target_level: corp
