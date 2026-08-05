@@ -575,6 +575,22 @@ def _resolve_dataset_path(rel: str) -> Path:
     return full
 
 
+def _dir_stats(p: Path, cap: int = 5000) -> tuple[int, int]:
+    """Return (file_count, total_bytes) under ``p``. Caps at ``cap`` files."""
+    n = 0
+    total = 0
+    for f in p.rglob("*"):
+        if n >= cap:
+            break
+        try:
+            if f.is_file():
+                total += f.stat().st_size
+                n += 1
+        except OSError:
+            continue
+    return n, total
+
+
 def _dataset_dir_entries(p: Path) -> list[dict]:
     entries = []
     for child in sorted(p.iterdir(), key=lambda x: (x.is_file(), x.name)):
@@ -582,18 +598,60 @@ def _dataset_dir_entries(p: Path) -> list[dict]:
             stat = child.stat()
         except OSError:
             continue
+        if child.is_dir():
+            n_files, total = _dir_stats(child)
+        else:
+            n_files, total = 1, stat.st_size
         entries.append(
             {
                 "name": child.name,
                 "is_dir": child.is_dir(),
-                "size": stat.st_size if child.is_file() else 0,
-                "size_pretty": _humanise_bytes(stat.st_size) if child.is_file() else "",
+                "size": stat.st_size if child.is_file() else total,
+                "size_pretty": _humanise_bytes(
+                    total if child.is_dir() else stat.st_size
+                ),
+                "file_count": n_files,
                 "mtime": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(
                     timespec="seconds"
                 ),
             }
         )
     return entries
+
+
+def _state_prefix_of(rel: str) -> str:
+    """Return the state prefix of a datasets-relative path.
+
+    e.g. 'gba_datasets/prepared_data/zone' → 'gba'
+    """
+    first = rel.split("/", 1)[0]
+    if first.endswith("_datasets"):
+        return first[: -len("_datasets")]
+    return ""
+
+
+def _running_state_prefixes(region: str) -> set[str]:
+    """Which state prefixes have a compute EC2 running right now.
+
+    Extracts from run_id tags: scheduler runs like ``gba-zone-forecast_...``
+    → 'gba'; UI runs like ``ui-remote-gba_zone_prep_...`` → 'gba'.
+    """
+    prefixes: set[str] = set()
+    for r in _running_compute(region):
+        rid = (r.get("run_id") or "").lower()
+        if not rid:
+            continue
+        if rid.startswith("ui-"):
+            # ui-<mode>-<config-stem>_<date>_<time>
+            m = re.match(r"ui-[a-z]+-([a-z]+)", rid)
+            if m:
+                prefixes.add(m.group(1))
+        else:
+            # scheduler: <state>-<task>_<date>_<time>
+            m = re.match(r"([a-z]+)-", rid)
+            if m:
+                prefixes.add(m.group(1))
+    return prefixes
 
 
 @app.get("/datasets", response_class=HTMLResponse)
@@ -661,6 +719,43 @@ def datasets_browse(
             "cfg": cfg,
         },
     )
+
+
+@app.post("/datasets-delete")
+def datasets_delete(path: str = Form(...)):
+    """Delete a file or a directory (recursive) inside a *_datasets/ tree.
+
+    Refuses to delete:
+      * the top-level *_datasets/ folder itself (data-root safety)
+      * anything while a compute EC2 for the same state prefix is running
+        (would race with an in-flight pipeline)
+    No undo.
+    """
+    import shutil
+
+    full = _resolve_dataset_path(path)
+    project = _datasets_project_root().resolve()
+    rel = full.relative_to(project)
+    parts = rel.parts
+    if len(parts) < 2:
+        raise HTTPException(400, "refusing to delete a top-level *_datasets/ folder")
+    state = _state_prefix_of(str(rel))
+    running = _running_state_prefixes(os.environ.get("AWS_REGION", "ap-south-1"))
+    if state in running:
+        raise HTTPException(
+            409,
+            f"refusing: a compute EC2 for state={state!r} is running — wait "
+            f"for it to finish (or terminate it) before deleting under "
+            f"{parts[0]}/",
+        )
+    if not full.exists():
+        raise HTTPException(404, "not found")
+    if full.is_dir():
+        shutil.rmtree(full)
+    else:
+        full.unlink()
+    parent = str(rel.parent)
+    return RedirectResponse(f"{_ROOT}/datasets/{parent}", status_code=303)
 
 
 @app.post("/trigger")

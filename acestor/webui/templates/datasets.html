@@ -50,11 +50,11 @@
 
 {% if entries %}
 <table>
-  <tr><th>name</th><th>size</th><th>modified (UTC)</th><th></th></tr>
+  <tr><th>name</th><th>size</th><th>modified (UTC)</th><th></th><th></th></tr>
   {% if parent is defined and parent %}
-  <tr><td colspan="4"><a href="{{ root }}/datasets/{{ parent }}" class="mono">..</a></td></tr>
+  <tr><td colspan="5"><a href="{{ root }}/datasets/{{ parent }}" class="mono">..</a></td></tr>
   {% elif here %}
-  <tr><td colspan="4"><a href="{{ root }}/datasets" class="mono">..</a></td></tr>
+  <tr><td colspan="5"><a href="{{ root }}/datasets" class="mono">..</a></td></tr>
   {% endif %}
   {% for e in entries %}
   <tr>
@@ -63,9 +63,16 @@
       {% else %}📄 <a href="{{ root }}/datasets/{{ here }}/{{ e.name }}" class="mono" target="_blank">{{ e.name }}</a>
       {% endif %}
     </td>
-    <td class="dim mono">{{ e.size_pretty }}</td>
+    <td class="dim mono">{{ e.size_pretty }}{% if e.is_dir %} · {{ e.file_count }} file{% if e.file_count != 1 %}s{% endif %}{% endif %}</td>
     <td class="dim mono">{{ e.mtime }}</td>
     <td>{% if not e.is_dir %}<a href="{{ root }}/datasets/{{ here }}/{{ e.name }}?download=1" class="dl">[download]</a>{% endif %}</td>
+    <td>
+      <form method="post" action="{{ root }}/datasets-delete" style="display:inline"
+            onsubmit="return confirm('Delete {{ e.name }}{% if e.is_dir %}/ and {{ e.file_count }} file{% if e.file_count != 1 %}s{% endif %} inside ({{ e.size_pretty }}){% endif %}?\n\nNo undo.');">
+        <input type="hidden" name="path" value="{{ here }}/{{ e.name }}">
+        <button type="submit" style="background:none;border:none;color:#b73030;cursor:pointer;font-size:0.9em;padding:0" title="delete">🗑</button>
+      </form>
+    </td>
   </tr>
   {% endfor %}
 </table>
