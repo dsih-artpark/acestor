@@ -721,6 +721,34 @@ def datasets_browse(
     )
 
 
+@app.get("/run/new", response_class=HTMLResponse)
+def run_new_page(request: Request, cfg: Settings = Depends(get_cfg)):
+    """Dedicated trigger page with YAML editor for the selected config."""
+    configs_root = cfg.resolved("configs_root")
+    configs = (
+        sorted(p.name for p in configs_root.glob("*.yaml"))
+        if configs_root.exists()
+        else []
+    )
+    return TEMPLATES.TemplateResponse(
+        request,
+        "run_new.html",
+        {"request": request, "configs": configs, "cfg": cfg},
+    )
+
+
+@app.get("/config-yaml")
+def config_yaml(name: str, cfg: Settings = Depends(get_cfg)):
+    """Return the raw YAML of a config for the editor to load."""
+    configs_root = cfg.resolved("configs_root")
+    full = (configs_root / name).resolve()
+    if not str(full).startswith(str(configs_root)):
+        raise HTTPException(400, "path escapes configs root")
+    if not full.is_file():
+        raise HTTPException(404, "not found")
+    return PlainTextResponse(full.read_text())
+
+
 @app.post("/datasets-delete")
 def datasets_delete(path: str = Form(...)):
     """Delete a file or a directory (recursive) inside a *_datasets/ tree.
@@ -765,6 +793,7 @@ def trigger_run(
     config: str = Form(...),
     remote_instance: str = Form("t3.large"),
     remote_lifecycle: str = Form("spot"),
+    yaml_override: str = Form(""),
     cfg: Settings = Depends(get_cfg),
 ):
     """Spawn a run in the background — either local (acestor.run) or remote."""
@@ -791,6 +820,28 @@ def trigger_run(
     run_id = f"ui-{mode}-{cfg_path.stem}_{stamp}"
     log_path = logs_root / "ui-triggered" / stamp[:10] / f"{run_id}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # If the user edited the YAML in the browser, validate + save to a
+    # sibling _user_edits/ tree and launch from there. Never overwrites the
+    # source config so rollback is trivial.
+    if yaml_override.strip():
+        original = cfg_path.read_text()
+        if yaml_override.strip() != original.strip():
+            import yaml as _yaml
+
+            try:
+                _yaml.safe_load(yaml_override)
+            except _yaml.YAMLError as exc:
+                raise HTTPException(400, f"invalid YAML: {exc}") from None
+            edit_dir = configs_root / "_user_edits"
+            edit_dir.mkdir(parents=True, exist_ok=True)
+            new_name = f"{cfg_path.stem}_{stamp}.yaml"
+            new_path = edit_dir / new_name
+            new_path.write_text(yaml_override)
+            cfg_path = new_path
+            run_id = f"ui-{mode}-{cfg_path.stem}_{stamp}"
+            log_path = logs_root / "ui-triggered" / stamp[:10] / f"{run_id}.log"
+            log_path.parent.mkdir(parents=True, exist_ok=True)
 
     if mode == "local":
         cmd = [

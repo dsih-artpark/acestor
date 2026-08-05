@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>acestor · trigger a run</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 20px; max-width: 1400px; }
+    nav { margin-bottom: 20px; }
+    nav a { margin-right: 15px; color: #2a5f9e; text-decoration: none; }
+    h1 { margin: 5px 0 15px; }
+    h2 { border-bottom: 1px solid #ddd; padding-bottom: 5px; margin-top: 25px; }
+    .dim { color: #888; }
+    .mono { font-family: ui-monospace, monospace; font-size: 0.9em; }
+    .grid { display: grid; grid-template-columns: 160px 1fr; gap: 10px 15px; max-width: 750px; align-items: center; }
+    label { text-align: right; font-weight: 600; }
+    input, select { padding: 6px 8px; font-size: 0.95em; }
+    textarea { width: 100%; min-height: 400px; font-family: ui-monospace, monospace; font-size: 0.85em; padding: 8px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+    button { padding: 10px 20px; background: #2a5f9e; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.95em; }
+    button:hover { background: #204a7d; }
+    .actions { margin-top: 15px; }
+    .warn { color: #b06; margin: 8px 0; font-size: 0.9em; }
+    .status { color: #444; font-size: 0.85em; margin-left: 10px; }
+    .status.modified { color: #b06; font-weight: 600; }
+    .status.saved { color: #2a7f2a; }
+  </style>
+</head>
+<body>
+<nav>
+  <a href="{{ root }}/">Dashboard</a>
+  <a href="{{ root }}/datasets">Datasets</a>
+  <a href="{{ root }}/run/new">Trigger</a>
+  <a href="{{ root }}/settings">Settings</a>
+</nav>
+<h1><a href="{{ root }}/" style="text-decoration:none;color:inherit">acestor</a> <span class="dim">web-UI · Trigger a run</span></h1>
+
+{% if not configs %}
+<p class="warn">No configs found under <code class="mono">{{ cfg.resolved('configs_root') }}</code>. Fix in <a href="{{ root }}/settings">Settings</a>.</p>
+{% else %}
+<form method="post" action="{{ root }}/trigger">
+  <h2>Run parameters</h2>
+  <div class="grid">
+    <label>Mode:</label>
+    <select name="mode">
+      <option value="local">local (acestor.run)</option>
+      <option value="remote" selected>remote (acestor.remote, spawns EC2)</option>
+    </select>
+
+    <label>Pipeline:</label>
+    <select name="pipeline">
+      <option value="pipelines.dengue_prep.pipeline:build_pipeline">dengue_prep</option>
+      <option value="pipelines.dengue.pipeline:build_pipeline">dengue (forecast)</option>
+      <option value="pipelines.dengue_downscale.pipeline:build_pipeline">dengue_downscale</option>
+      <option value="pipelines.dengue_rollup.pipeline:build_pipeline">dengue_rollup</option>
+    </select>
+
+    <label>Config:</label>
+    <select name="config" id="config-select">
+      {% for c in configs %}<option>{{ c }}</option>{% endfor %}
+    </select>
+
+    <label>Instance (remote):</label>
+    <select name="remote_instance" id="instance-select">
+      <optgroup label="general-purpose (burst, cheap)">
+        <option value="t3.medium">t3.medium (2 vCPU / 4 GB · ~$0.05/hr on-demand)</option>
+        <option value="t3.large" selected>t3.large (2 vCPU / 8 GB · ~$0.10/hr)</option>
+        <option value="t3.xlarge">t3.xlarge (4 vCPU / 16 GB · ~$0.21/hr)</option>
+        <option value="t3.2xlarge">t3.2xlarge (8 vCPU / 32 GB · ~$0.42/hr)</option>
+      </optgroup>
+      <optgroup label="compute-optimized (AVX-512, no burst throttle)">
+        <option value="c7i.large">c7i.large (2 vCPU / 4 GB · ~$0.11/hr)</option>
+        <option value="c7i.xlarge">c7i.xlarge (4 vCPU / 8 GB · ~$0.21/hr)</option>
+        <option value="c7i.2xlarge">c7i.2xlarge (8 vCPU / 16 GB · ~$0.42/hr)</option>
+        <option value="c7i.4xlarge">c7i.4xlarge (16 vCPU / 32 GB · ~$0.85/hr)</option>
+        <option value="c7i.8xlarge">c7i.8xlarge (32 vCPU / 64 GB · ~$1.70/hr)</option>
+      </optgroup>
+    </select>
+    <span></span>
+    <span id="instance-hint" class="status dim" style="font-size:0.85em"></span>
+
+    <label>Lifecycle (remote):</label>
+    <select name="remote_lifecycle">
+      <option value="spot" selected>spot</option>
+      <option value="on-demand">on-demand</option>
+    </select>
+  </div>
+
+  <h2>Config YAML <span id="yaml-status" class="status dim">— loading…</span></h2>
+  <p class="dim" style="font-size:0.85em">Edit if you want a one-off override. On submit, edits are saved to <code class="mono">configs/_user_edits/&lt;name&gt;_&lt;timestamp&gt;.yaml</code> and that copy is used for the run. Your source config is never touched.</p>
+  <textarea name="yaml_override" id="yaml-editor" spellcheck="false" wrap="off"></textarea>
+
+  <div class="actions">
+    <button type="submit">Trigger</button>
+    <span class="dim" style="margin-left:15px">Will jump to the live log stream.</span>
+  </div>
+</form>
+
+<script>
+// Rough per-pipeline recommendation, distilled from what the scheduler uses
+// and observed wall times. Not a hard rule — for a benchmark you might want
+// to override these on purpose.
+const PIPELINE_HINTS = {
+  'pipelines.dengue_prep.pipeline:build_pipeline':
+    'Prep is I/O-heavy, not compute-heavy → t3.large is usually enough.',
+  'pipelines.dengue.pipeline:build_pipeline':
+    'Forecast with Optuna tuning is CPU-bound → c7i.4xlarge is what the nightly scheduler uses.',
+  'pipelines.dengue_downscale.pipeline:build_pipeline':
+    'Downscale is short and moderate → c7i.2xlarge is the scheduler default.',
+  'pipelines.dengue_rollup.pipeline:build_pipeline':
+    'Rollup is quick → t3.large or c7i.large is fine.',
+};
+const $pipeline = document.querySelector('select[name="pipeline"]');
+const $hint = document.getElementById('instance-hint');
+function updateHint() {
+  $hint.textContent = PIPELINE_HINTS[$pipeline.value] || '';
+}
+$pipeline.addEventListener('change', updateHint);
+updateHint();
+
+const $sel = document.getElementById('config-select');
+const $editor = document.getElementById('yaml-editor');
+const $status = document.getElementById('yaml-status');
+let originalYaml = '';
+
+async function loadYaml(name) {
+  $status.textContent = '— loading…';
+  $status.className = 'status dim';
+  try {
+    const r = await fetch(`{{ root }}/config-yaml?name=${encodeURIComponent(name)}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const txt = await r.text();
+    $editor.value = txt;
+    originalYaml = txt;
+    $status.textContent = `— loaded from ${name}`;
+    $status.className = 'status saved';
+  } catch (e) {
+    $status.textContent = `— failed: ${e.message}`;
+    $status.className = 'status modified';
+  }
+}
+
+$sel.addEventListener('change', () => loadYaml($sel.value));
+$editor.addEventListener('input', () => {
+  if ($editor.value.trim() !== originalYaml.trim()) {
+    $status.textContent = '— modified (a copy will be saved on trigger)';
+    $status.className = 'status modified';
+  } else {
+    $status.textContent = '— unchanged';
+    $status.className = 'status saved';
+  }
+});
+
+loadYaml($sel.value);
+</script>
+{% endif %}
+</body>
+</html>

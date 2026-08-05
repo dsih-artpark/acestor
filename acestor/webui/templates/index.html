@@ -35,6 +35,7 @@
 <nav>
   <a href="{{ root }}/">Dashboard</a>
   <a href="{{ root }}/datasets">Datasets</a>
+  <a href="{{ root }}/run/new">Trigger</a>
   <a href="{{ root }}/settings">Settings</a>
 </nav>
 <h1><a href="{{ root }}/">acestor</a> <span class="dim">web-UI · {{ now }}</span></h1>
@@ -93,48 +94,7 @@
 <p class="empty">No runs yet. Trigger one below or check <a href="{{ root }}/settings">Settings</a> to point at the right artifacts / ledger paths.</p>
 {% endif %}
 
-<h2>Trigger a run</h2>
-{% if not configs %}
-<p class="empty">No configs found under <code class="mono">{{ cfg.resolved('configs_root') }}</code>. Fix in <a href="{{ root }}/settings">Settings</a>.</p>
-{% else %}
-<form method="post" action="{{ root }}/trigger">
-  <label>Mode:</label>
-  <select name="mode">
-    <option value="local">local (acestor.run)</option>
-    <option value="remote" selected>remote (acestor.remote, spawns EC2)</option>
-  </select>
-
-  <label>Pipeline:</label>
-  <select name="pipeline">
-    <option value="pipelines.dengue_prep.pipeline:build_pipeline">dengue_prep</option>
-    <option value="pipelines.dengue.pipeline:build_pipeline">dengue (forecast)</option>
-    <option value="pipelines.dengue_downscale.pipeline:build_pipeline">dengue_downscale</option>
-    <option value="pipelines.dengue_rollup.pipeline:build_pipeline">dengue_rollup</option>
-  </select>
-
-  <label>Config:</label>
-  <select name="config">
-    {% for c in configs %}<option>{{ c }}</option>{% endfor %}
-  </select>
-
-  <label>Instance (remote only):</label>
-  <select name="remote_instance">
-    <option value="t3.small">t3.small</option>
-    <option value="t3.medium">t3.medium</option>
-    <option value="t3.large" {% if cfg.default_instance == 't3.large' %}selected{% endif %}>t3.large — good for prep</option>
-    <option value="c7i.2xlarge" {% if cfg.default_instance == 'c7i.2xlarge' %}selected{% endif %}>c7i.2xlarge</option>
-    <option value="c7i.4xlarge" {% if cfg.default_instance == 'c7i.4xlarge' %}selected{% endif %}>c7i.4xlarge — good for forecast</option>
-  </select>
-
-  <label>Lifecycle (remote only):</label>
-  <select name="remote_lifecycle">
-    <option value="spot" {% if cfg.default_lifecycle == 'spot' %}selected{% endif %}>spot</option>
-    <option value="on-demand" {% if cfg.default_lifecycle == 'on-demand' %}selected{% endif %}>on-demand</option>
-  </select>
-
-  <button type="submit">Trigger</button>
-</form>
-{% endif %}
+<p style="margin-top:2em"><a href="{{ root }}/run/new" style="display:inline-block;padding:10px 20px;background:#2a5f9e;color:white;text-decoration:none;border-radius:4px">▶ Trigger a run</a> <span class="dim" style="margin-left:10px">— dedicated screen with YAML editor and instance picker.</span></p>
 
 {% if cfg.auto_refresh_sec %}<p class="dim" style="margin-top: 2em">Page auto-refreshes every {{ cfg.auto_refresh_sec }}s.</p>{% endif %}
 
