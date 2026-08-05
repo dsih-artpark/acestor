@@ -721,7 +721,7 @@ def datasets_browse(
     )
 
 
-@app.get("/run/new", response_class=HTMLResponse)
+@app.get("/new-run", response_class=HTMLResponse)
 def run_new_page(request: Request, cfg: Settings = Depends(get_cfg)):
     """Dedicated trigger page with YAML editor for the selected config."""
     configs_root = cfg.resolved("configs_root")

@@ -35,7 +35,7 @@
 <nav>
   <a href="{{ root }}/">Dashboard</a>
   <a href="{{ root }}/datasets">Datasets</a>
-  <a href="{{ root }}/run/new">Trigger</a>
+  <a href="{{ root }}/new-run">Trigger</a>
   <a href="{{ root }}/settings">Settings</a>
 </nav>
 <h1><a href="{{ root }}/">acestor</a> <span class="dim">web-UI · {{ now }}</span></h1>
@@ -94,7 +94,7 @@
 <p class="empty">No runs yet. Trigger one below or check <a href="{{ root }}/settings">Settings</a> to point at the right artifacts / ledger paths.</p>
 {% endif %}
 
-<p style="margin-top:2em"><a href="{{ root }}/run/new" style="display:inline-block;padding:10px 20px;background:#2a5f9e;color:white;text-decoration:none;border-radius:4px">▶ Trigger a run</a> <span class="dim" style="margin-left:10px">— dedicated screen with YAML editor and instance picker.</span></p>
+<p style="margin-top:2em"><a href="{{ root }}/new-run" style="display:inline-block;padding:10px 20px;background:#2a5f9e;color:white;text-decoration:none;border-radius:4px">▶ Trigger a run</a> <span class="dim" style="margin-left:10px">— dedicated screen with YAML editor and instance picker.</span></p>
 
 {% if cfg.auto_refresh_sec %}<p class="dim" style="margin-top: 2em">Page auto-refreshes every {{ cfg.auto_refresh_sec }}s.</p>{% endif %}
 
