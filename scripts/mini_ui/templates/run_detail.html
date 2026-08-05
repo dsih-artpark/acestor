@@ -1,0 +1,82 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>{{ row.run_id }} — acestor mini-UI</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2em; max-width: 1400px; }
+    h1 { margin: 0 0 0.5em; font-size: 1.4em; }
+    h2 { margin-top: 2em; padding-bottom: 0.3em; border-bottom: 1px solid #ddd; }
+    a  { color: #2a5f9e; }
+    pre { background: #f7f7f7; padding: 12px; border-radius: 4px; overflow-x: auto; font-size: 0.85em; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 0.85em; }
+    .dim  { color: #888; }
+    .ok   { color: #2a7f2a; font-weight: 600; }
+    .fail { color: #b73030; font-weight: 600; }
+    table { border-collapse: collapse; margin-bottom: 1em; font-size: 0.9em; }
+    th, td { padding: 4px 12px; text-align: left; border-bottom: 1px solid #eee; }
+    th { background: #f5f5f5; text-align: right; padding-right: 15px; }
+    ul { padding-left: 20px; }
+  </style>
+</head>
+<body>
+
+<p><a href="/">← back to dashboard</a></p>
+
+<h1>{{ row.run_id }}
+  <span class="{% if row.exit_status == 'ok' %}ok{% else %}fail{% endif %}">
+    · {{ row.exit_status }}
+  </span>
+</h1>
+
+<h2>Ledger row</h2>
+<table>
+  <tr><th>pipeline</th><td class="mono">{{ row.pipeline }}</td></tr>
+  <tr><th>config</th><td class="mono">{{ row.config }}</td></tr>
+  <tr><th>instance</th><td>{{ row.instance_type }} <span class="dim">({{ row.lifecycle }})</span></td></tr>
+  <tr><th>started</th><td class="mono">{{ row.started_at }}</td></tr>
+  <tr><th>ended</th><td class="mono">{{ row.ended_at }}</td></tr>
+  <tr><th>wall</th><td>{{ row.wall_pretty }}</td></tr>
+  <tr><th>artifact bytes</th><td>{{ row.artifact_bytes }}</td></tr>
+  {% if row.error %}<tr><th>error</th><td class="fail">{{ row.error }}</td></tr>{% endif %}
+</table>
+
+{% if attempts %}
+<h2>Scheduler attempts</h2>
+<table>
+  <tr><th>attempt</th><th>ended</th><th>exit</th><th>wall</th></tr>
+  {% for a in attempts %}
+  <tr>
+    <td>#{{ a.attempt }}</td>
+    <td class="mono dim">{{ a.ts }}</td>
+    <td class="{% if a.exit_status == 'ok' %}ok{% else %}fail{% endif %}">{{ a.exit_status }} ({{ a.exit_code }})</td>
+    <td>{{ a.wall_seconds }}s</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+
+<h2>Artifacts <span class="dim">{{ artifact_files|length }} file(s)</span></h2>
+{% if artifact_files %}
+<ul>
+{% for f in artifact_files %}
+  <li>
+    <a href="/artifacts/{{ f.path }}" target="_blank" class="mono">{{ f.path }}</a>
+    <span class="dim">— {{ f.size_pretty }}</span>
+    · <a href="/artifacts/{{ f.path }}?download=1" class="dim">download</a>
+  </li>
+{% endfor %}
+</ul>
+{% else %}
+<p class="dim">No artifact files found (may have been cleaned, or run failed before writing).</p>
+{% endif %}
+
+<h2>Config <span class="dim mono">{{ config_path }}</span></h2>
+{% if config_text %}
+<pre>{{ config_text }}</pre>
+{% else %}
+<p class="dim">Config file not found or unreadable.</p>
+{% endif %}
+
+</body>
+</html>

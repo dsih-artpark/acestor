@@ -94,7 +94,8 @@ if [[ ! -d .venv-remote ]]; then
   uv venv --python 3.12 .venv-remote
 fi
 uv pip install --python .venv-remote/bin/python \\
-  boto3 pyyaml python-dotenv rich apscheduler >/dev/null
+  boto3 pyyaml python-dotenv rich apscheduler \\
+  fastapi uvicorn jinja2 python-multipart >/dev/null
 
 echo "== Write ~/.env (dashboard creds)"
 umask 077
@@ -138,6 +139,37 @@ StandardError=append:/home/ubuntu/acestor-work/logs/scheduler.log
 [Install]
 WantedBy=multi-user.target
 UNIT
+
+# Mini UI: bound to 127.0.0.1 only. Access via SSM port forwarding —
+# no SG rule opened, no public exposure. IAM-gated via SSM session.
+sudo tee /etc/systemd/system/acestor-webui.service >/dev/null <<UNIT
+[Unit]
+Description=acestor mini-UI (FastAPI dashboard on 127.0.0.1:8000)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/acestor-work
+Environment=PATH=/home/ubuntu/acestor-work/.venv-remote/bin:/home/ubuntu/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONPATH=/home/ubuntu/acestor-work
+Environment=AWS_REGION=${AWS_REGION}
+Environment=MINI_UI_HOST=127.0.0.1
+Environment=MINI_UI_PORT=8000
+EnvironmentFile=-/home/ubuntu/.env
+${ACESTOR_AWS_KEY_NAME:+Environment=ACESTOR_AWS_KEY_NAME=${ACESTOR_AWS_KEY_NAME}}
+${ACESTOR_AWS_AMI:+Environment=ACESTOR_AWS_AMI=${ACESTOR_AWS_AMI}}
+ExecStart=/home/ubuntu/acestor-work/.venv-remote/bin/python /home/ubuntu/acestor-work/scripts/mini_ui/main.py
+Restart=on-failure
+RestartSec=30s
+StandardOutput=append:/home/ubuntu/acestor-work/logs/webui.log
+StandardError=append:/home/ubuntu/acestor-work/logs/webui.log
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
 mkdir -p "\$HOME/acestor-work/logs" "\$HOME/.acestor"
 
 echo "== Install orphan-reaper cron (every 15 min)"
@@ -151,12 +183,14 @@ REAPER_LINE="*/15 * * * * AWS_REGION=${AWS_REGION} bash /home/ubuntu/acestor-wor
 echo "  installed:"
 crontab -l | grep reap_orphan_compute || echo "  WARN: crontab entry not visible"
 
-echo "== Restart scheduler"
+echo "== Restart scheduler + webui"
 sudo systemctl daemon-reload
-sudo systemctl enable acestor-scheduler >/dev/null
+sudo systemctl enable acestor-scheduler acestor-webui >/dev/null
 sudo systemctl restart acestor-scheduler
+sudo systemctl restart acestor-webui
 sleep 2
 sudo systemctl is-active acestor-scheduler
+sudo systemctl is-active acestor-webui
 echo "== DONE"
 REMOTE_SCRIPT
 )
