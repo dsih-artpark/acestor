@@ -67,6 +67,11 @@ class RemoteRunOptions:
     keep_alive_on_failure: bool = False  # leave host up for debugging (charges!)
     forward_env: tuple[str, ...] = DEFAULT_FORWARD_ENV  # env vars to forward
     skip_input_sync: bool = False  # skip config-walked dataset rsync
+    # Extra local dirs to push up in addition to config-walked inputs.
+    # Used for per-run artifact subtrees (e.g. artifacts/od/od-district-
+    # forecast_.../ needed by a downscale) — pushes only that specific
+    # directory instead of the whole artifacts/ tree.
+    extra_input_paths: tuple[str, ...] = ()
 
 
 @dataclass
@@ -149,6 +154,45 @@ def run_remote(opts: RemoteRunOptions) -> RemoteRunOutcome:
                     push_up = list(inputs) + [
                         op for op in outputs if op.local_path.exists()
                     ]
+                    # --extra-input-path: caller passes additional dirs to
+                    # rsync-up (typically per-run artifact subtrees a
+                    # downscale/rollup needs). Resolve, validate, dedup, add.
+                    from acestor.remote.config_walker import InputPath
+
+                    for raw in opts.extra_input_paths:
+                        p = Path(raw)
+                        if not p.is_absolute():
+                            p = (repo_root / p).resolve()
+                        else:
+                            p = p.resolve()
+                        try:
+                            p.relative_to(repo_root)
+                        except ValueError:
+                            log.warning(
+                                "remote runner: --extra-input-path %s is "
+                                "outside project root %s — skipping.",
+                                p,
+                                repo_root,
+                            )
+                            continue
+                        if not p.exists():
+                            log.warning(
+                                "remote runner: --extra-input-path %s does "
+                                "not exist locally — skipping.",
+                                p,
+                            )
+                            continue
+                        if any(existing.local_path == p for existing in push_up):
+                            continue
+                        push_up.append(
+                            InputPath(
+                                key_path=f"--extra-input-path={raw}", local_path=p
+                            )
+                        )
+                        log.info(
+                            "remote runner: --extra-input-path → %s (will rsync up)",
+                            p,
+                        )
                     if push_up:
                         sync_input_datasets(host, push_up, repo_root)
                     else:

@@ -108,6 +108,17 @@ class Task:
 
     ``needs`` is a list of sibling ``name``s that must all reach ``ok``
     before this task becomes eligible.
+
+    ``source_of`` (optional) names the sibling task whose run_id should
+    be inherited as ``run.source_run_id`` for this task. Used by
+    downscale/rollup tasks to point at the parent forecast/downscale
+    they consume. When set, the scheduler:
+      1. Passes ``--set run.source_run_id=<sibling_run_id>`` so this
+         task reads a specific run (not the "latest" sentinel that
+         relies on artifact-directory scanning).
+      2. Passes ``--extra-input-path artifacts/<state>/<sibling_run_id>``
+         so ONLY that run's artifact subtree is rsync'd to the compute
+         box — not the entire artifacts/ tree.
     """
 
     name: str
@@ -116,6 +127,7 @@ class Task:
     instance: str
     lifecycle: str = "spot"  # or "on-demand"
     needs: list[str] = field(default_factory=list)
+    source_of: str | None = None
 
 
 _PREP = "pipelines.dengue_prep.pipeline:build_pipeline"
@@ -148,6 +160,7 @@ STATES: dict[str, dict] = {
                 "configs/ka_district_to_subdistrict.yaml",
                 "c7i.2xlarge",
                 needs=["forecast", "subdistrict-prep"],
+                source_of="forecast",
             ),
         ],
     },
@@ -174,6 +187,7 @@ STATES: dict[str, dict] = {
                 "configs/gba_zone_to_corp.yaml",
                 "c7i.2xlarge",
                 needs=["zone-forecast", "corp-prep"],
+                source_of="zone-forecast",
             ),
             Task(
                 "ward-downscale",
@@ -181,6 +195,7 @@ STATES: dict[str, dict] = {
                 "configs/gba_zone_to_ward.yaml",
                 "c7i.2xlarge",
                 needs=["zone-forecast", "ward-prep"],
+                source_of="zone-forecast",
             ),
         ],
     },
@@ -211,6 +226,7 @@ STATES: dict[str, dict] = {
                 "configs/od_district_to_block.yaml",
                 "c7i.2xlarge",
                 needs=["district-forecast", "block-prep"],
+                source_of="district-forecast",
             ),
             Task(
                 "ulb-downscale",
@@ -218,6 +234,7 @@ STATES: dict[str, dict] = {
                 "configs/od_district_to_ulb.yaml",
                 "c7i.2xlarge",
                 needs=["district-forecast", "ulb-prep"],
+                source_of="district-forecast",
             ),
             Task(
                 "ulb-ward-downscale",
@@ -225,6 +242,7 @@ STATES: dict[str, dict] = {
                 "configs/od_ulb_to_ward.yaml",
                 "c7i.2xlarge",
                 needs=["ulb-downscale", "ulb-ward-prep"],
+                source_of="ulb-downscale",
             ),
         ],
     },
@@ -242,7 +260,7 @@ def _print(msg: str) -> None:
     print(f"[{datetime.utcnow().isoformat()}Z] scheduler: {msg}", flush=True)
 
 
-def _build_remote_cmd(state: str, task: Task, run_id: str) -> list[str]:
+def _build_remote_cmd(state: str, task: Task, run_id: str, run_stamp: str) -> list[str]:
     cmd = [
         sys.executable,
         "-m",
@@ -266,6 +284,17 @@ def _build_remote_cmd(state: str, task: Task, run_id: str) -> list[str]:
         cmd.extend(["--aws-ami", AWS_AMI])
     for env_name in FORWARD_ENV:
         cmd.extend(["--forward-env", env_name])
+
+    # source_of wiring: this task consumes another task's output.
+    # Compute the source's run_id and pass both:
+    #   1. --set run.source_run_id=<...>  → config override so the pipeline
+    #      reads a specific run instead of scanning for "latest"
+    #   2. --extra-input-path artifacts/<state>/<source_run_id>  → push
+    #      only that one run's artifact subtree to the compute box
+    if task.source_of:
+        source_run_id = f"{state}-{task.source_of}_{run_stamp}"
+        cmd.extend(["--set", f"run.source_run_id={source_run_id}"])
+        cmd.extend(["--extra-input-path", f"artifacts/{state}/{source_run_id}"])
     return cmd
 
 
@@ -334,7 +363,7 @@ def _execute_task(
     try:
         with open(log_path, "w") as f:
             result = subprocess.run(
-                _build_remote_cmd(state, task, run_id),
+                _build_remote_cmd(state, task, run_id, run_stamp),
                 stdout=f,
                 stderr=f,
                 cwd=str(ROOT),
