@@ -74,7 +74,7 @@
 <h2>Recent runs <span class="dim">— {{ runs|length }} · newest first · local & remote</span></h2>
 {% if runs %}
 <table>
-  <tr><th>when</th><th>run_id</th><th>mode</th><th>config</th><th>type</th><th>wall</th><th>status</th></tr>
+  <tr><th>when</th><th>run_id</th><th>mode</th><th>config</th><th>type</th><th>wall</th><th>status</th><th>log</th></tr>
   {% for r in runs %}
   <tr>
     <td class="mono dim">{{ r.sort_key[:19] }}</td>
@@ -84,6 +84,7 @@
     <td>{% if r.instance_type %}{{ r.instance_type }} <span class="dim">{{ r.lifecycle }}</span>{% else %}<span class="dim">-</span>{% endif %}</td>
     <td>{{ r.wall_pretty or "-" }}</td>
     <td class="{% if r.exit_status == 'ok' %}ok{% elif r.exit_status == 'skip' %}skip{% elif r.exit_status %}fail{% else %}dim{% endif %}">{{ r.exit_status or "-" }}</td>
+    <td>{% if r.log_relpath %}<a href="{{ root }}/log-view?path={{ r.log_relpath }}">📜</a>{% else %}<span class="dim">-</span>{% endif %}</td>
   </tr>
   {% endfor %}
 </table>

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -287,16 +288,7 @@ def dashboard(request: Request, cfg: Settings = Depends(get_cfg)):
             )
         except Exception:
             r["age_min"] = "?"
-        # Compute log path from run_id (matches scheduler naming convention)
-        r["log_relpath"] = ""
-        rid = r.get("run_id") or ""
-        if rid:
-            parts = rid.split("_", 1)
-            if len(parts) == 2:
-                state_task, stamp = parts
-                candidate = logs_root / state_task / stamp[:10] / f"{rid}.log"
-                if candidate.is_file():
-                    r["log_relpath"] = str(candidate.relative_to(logs_root))
+        r["log_relpath"] = _find_log_relpath(r.get("run_id") or "", logs_root)
 
     # Unified runs: ledger rows (rich metadata) + local dirs (bare bones)
     ledger = _read_jsonl(ledger_path, limit=cfg.recent_runs_limit)
@@ -304,6 +296,7 @@ def dashboard(request: Request, cfg: Settings = Depends(get_cfg)):
     for row in ledger:
         row["wall_pretty"] = _humanise_seconds(row.get("wall_seconds", 0))
         row["source"] = "remote"
+        row["log_relpath"] = _find_log_relpath(row.get("run_id") or "", logs_root)
 
     # Local runs = artifact dirs not present in the ledger
     local_rows = [
@@ -403,17 +396,8 @@ def run_detail(request: Request, run_id: str, cfg: Settings = Depends(get_cfg)):
         )
     ]
 
-    # Best-effort compute of the scheduler log path for this run.
-    # Scheduler naming: <state>-<task>_<yyyy-mm-dd>_<hhmmss>[_r<n>]
-    # log lives at logs/<state>-<task>/<yyyy-mm-dd>/<run_id>.log
-    scheduler_log_relpath = ""
     logs_root = cfg.resolved("logs_root")
-    parts = run_id.split("_", 1)
-    if len(parts) == 2:
-        state_task, stamp = parts
-        candidate = logs_root / state_task / stamp[:10] / f"{run_id}.log"
-        if candidate.is_file():
-            scheduler_log_relpath = str(candidate.relative_to(logs_root))
+    scheduler_log_relpath = _find_log_relpath(run_id, logs_root)
 
     return TEMPLATES.TemplateResponse(
         request,
@@ -434,6 +418,36 @@ def run_detail(request: Request, run_id: str, cfg: Settings = Depends(get_cfg)):
 
 
 # ── Live log tailing ─────────────────────────────────────────────────────────
+def _find_log_relpath(run_id: str, logs_root: Path) -> str:
+    """Locate the log file for a run_id under logs_root.
+
+    Two layouts to check:
+      - scheduler:   <state>-<task>/<yyyy-mm-dd>/<run_id>.log
+      - ui-trigger:  ui-triggered/<yyyy-mm-dd>/<run_id>.log
+    Falls back to a recursive glob if the run_id's date can't be parsed
+    from its suffix.
+    """
+    if not run_id or not logs_root.exists():
+        return ""
+    # UI-triggered runs: run_id = "ui-<mode>-<stem>_<yyyy-mm-dd>_<hhmmss>"
+    m = re.search(r"(\d{4}-\d{2}-\d{2})_\d{6}$", run_id)
+    date = m.group(1) if m else ""
+    candidates: list[Path] = []
+    if date:
+        candidates.append(logs_root / "ui-triggered" / date / f"{run_id}.log")
+        # Scheduler naming: <state>-<task>_<yyyy-mm-dd>_<hhmmss>[_r<n>]
+        parts = run_id.split("_", 1)
+        if len(parts) == 2:
+            candidates.append(logs_root / parts[0] / date / f"{run_id}.log")
+    for c in candidates:
+        if c.is_file():
+            return str(c.relative_to(logs_root))
+    # Fallback: recursive glob — cheap since logs_root has small fanout
+    for match in logs_root.rglob(f"{run_id}.log"):
+        return str(match.relative_to(logs_root))
+    return ""
+
+
 def _resolve_log_path(path: str, logs_root: Path) -> Path:
     """Path validation shared by the tail routes."""
     full = (logs_root / path).resolve()
