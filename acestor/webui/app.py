@@ -543,6 +543,15 @@ def trigger_run(
     else:
         if remote_lifecycle not in {"spot", "on-demand"}:
             raise HTTPException(400, "lifecycle must be spot|on-demand")
+        # Compute box rsyncs the repo to a different absolute path
+        # (e.g. /home/ubuntu/acestor) than the caller
+        # (/home/ubuntu/acestor-work), so absolute caller-side paths break
+        # remote resolution. Pass a repo-root-relative path instead —
+        # acestor.remote cd's into its workspace before running.
+        try:
+            remote_config = str(cfg_path.relative_to(configs_root.parent))
+        except ValueError:
+            remote_config = str(cfg_path)
         cmd = [
             sys.executable,
             "-m",
@@ -550,7 +559,7 @@ def trigger_run(
             "--pipeline",
             pipeline,
             "--config",
-            str(cfg_path),
+            remote_config,
             "--run-id",
             run_id,
             "--remote-instance",
