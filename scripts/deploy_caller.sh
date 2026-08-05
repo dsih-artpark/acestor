@@ -108,7 +108,7 @@ DASHBOARD_CLIENT_SECRET=${DASHBOARD_CLIENT_SECRET}
 ENV
 
 echo "== Install systemd unit"
-sudo tee /etc/systemd/system/acestor-scheduler.service >/dev/null <<UNIT
+sudo tee /etc/systemd/system/acestor-scheduler.service >/dev/null <<'UNIT'
 [Unit]
 Description=acestor remote-run scheduler (DAG-per-state cron)
 After=network-online.target
@@ -144,7 +144,7 @@ UNIT
 
 # Mini UI: bound to 127.0.0.1 only. Access via SSM port forwarding —
 # no SG rule opened, no public exposure. IAM-gated via SSM session.
-sudo tee /etc/systemd/system/acestor-webui.service >/dev/null <<UNIT
+sudo tee /etc/systemd/system/acestor-webui.service >/dev/null <<'UNIT'
 [Unit]
 Description=acestor mini-UI (FastAPI dashboard on 127.0.0.1:8000)
 After=network-online.target
