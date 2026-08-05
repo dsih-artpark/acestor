@@ -8,6 +8,8 @@ run:
   source_run_id: "latest"
 
 data:
+  geojson:
+    base_path: "od_datasets/geojsons/geojsons_OD"
   prepared_data:
     base_dir: "od_datasets/prepared_data"
 
