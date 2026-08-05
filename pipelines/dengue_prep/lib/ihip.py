@@ -431,7 +431,11 @@ def _build_parent_map(geojson_base: str) -> dict[str, str]:
         for feat in features:
             props = feat.get("properties", {}) if isinstance(feat, dict) else {}
             rid = props.get("region_id")
-            parent = props.get("parent")
+            # Prefer `parent_id` (snake) — the dashboard's geojson export has
+            # `parent` = ULB/corporation (wrong for rollup) but `parent_id` =
+            # the true immediate parent from the DB. Local geojsons only set
+            # `parent`, so fall back to it.
+            parent = props.get("parent_id") or props.get("parent")
             if rid and parent and rid not in parent_map:
                 parent_map[rid] = parent
     return parent_map
