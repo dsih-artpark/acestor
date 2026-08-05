@@ -25,7 +25,7 @@ class FakeProvider(CloudProvider):
         self.terminated = 0
 
     def provision(
-        self, instance_type: str, lifecycle: Lifecycle, region: str
+        self, instance_type: str, lifecycle: Lifecycle, region: str, run_id: str = ""
     ) -> RemoteHost:
         self.provisioned += 1
         return self.host

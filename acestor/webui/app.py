@@ -30,6 +30,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import secrets as _secrets
+
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import (
     FileResponse,
@@ -37,13 +39,60 @@ from fastapi.responses import (
     PlainTextResponse,
     RedirectResponse,
 )
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 
 from acestor.webui import settings as _settings
 from acestor.webui.settings import Settings
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
-app = FastAPI(title="acestor web-UI", docs_url=None, redoc_url=None)
+
+# `root` is the path prefix (e.g. "/acestor/web-ui" in deploy, "" in local).
+# Templates prefix every absolute link with `{{ root }}` so nginx sub-path
+# reverse-proxy works without a subdomain.
+TEMPLATES.env.globals["root"] = os.environ.get("WEB_UI_ROOT_PATH", "").rstrip("/")
+
+
+# ── Optional HTTP Basic auth ─────────────────────────────────────────────────
+# If both WEB_UI_USERNAME and WEB_UI_PASSWORD are set in the env, every
+# request must include matching credentials. If either is unset, auth is
+# disabled (fine for laptop dev / behind a trusted network).
+_BASIC = HTTPBasic(auto_error=False)
+
+
+def require_auth(creds: HTTPBasicCredentials | None = Depends(_BASIC)) -> None:
+    user_env = os.environ.get("WEB_UI_USERNAME") or ""
+    pass_env = os.environ.get("WEB_UI_PASSWORD") or ""
+    if not (user_env and pass_env):
+        return  # auth disabled
+    if creds is None:
+        raise HTTPException(
+            status_code=401,
+            detail="auth required",
+            headers={"WWW-Authenticate": "Basic realm=acestor"},
+        )
+    u_ok = _secrets.compare_digest(creds.username.encode(), user_env.encode())
+    p_ok = _secrets.compare_digest(creds.password.encode(), pass_env.encode())
+    if not (u_ok and p_ok):
+        raise HTTPException(
+            status_code=401,
+            detail="invalid credentials",
+            headers={"WWW-Authenticate": "Basic realm=acestor"},
+        )
+
+
+# App-level dependency: every route gets auth-checked with no per-handler
+# boilerplate. When auth-envs are unset, require_auth is a no-op.
+# WEB_UI_ROOT_PATH lets nginx reverse-proxy under a sub-path (e.g.
+# apps.artpark.ai/acestor/web-ui) without breaking url_for / absolute links.
+# Unset in local dev — served at "/" directly.
+app = FastAPI(
+    title="acestor web-UI",
+    docs_url=None,
+    redoc_url=None,
+    dependencies=[Depends(require_auth)],
+    root_path=os.environ.get("WEB_UI_ROOT_PATH", ""),
+)
 
 
 def get_cfg() -> Settings:
@@ -138,7 +187,8 @@ def _running_compute(region: str) -> list[dict[str, Any]]:
                 "Name=instance-state-name,Values=running,pending",
                 "--query",
                 "Reservations[].Instances[].{id:InstanceId,type:InstanceType,"
-                "launched:LaunchTime,lifecycle:Tags[?Key==`acestor:lifecycle`]|[0].Value}",
+                "launched:LaunchTime,lifecycle:Tags[?Key==`acestor:lifecycle`]|[0].Value,"
+                "run_id:Tags[?Key==`acestor:run-id`]|[0].Value}",
                 "--output",
                 "json",
             ],
@@ -227,6 +277,7 @@ def dashboard(request: Request, cfg: Settings = Depends(get_cfg)):
 
     # Currently running (AWS query — no-op if creds unavailable)
     running = _running_compute(os.environ.get("AWS_REGION", "ap-south-1"))
+    logs_root = cfg.resolved("logs_root")
     for r in running:
         try:
             launched = datetime.fromisoformat(r["launched"].replace("Z", "+00:00"))
@@ -235,6 +286,16 @@ def dashboard(request: Request, cfg: Settings = Depends(get_cfg)):
             )
         except Exception:
             r["age_min"] = "?"
+        # Compute log path from run_id (matches scheduler naming convention)
+        r["log_relpath"] = ""
+        rid = r.get("run_id") or ""
+        if rid:
+            parts = rid.split("_", 1)
+            if len(parts) == 2:
+                state_task, stamp = parts
+                candidate = logs_root / state_task / stamp[:10] / f"{rid}.log"
+                if candidate.is_file():
+                    r["log_relpath"] = str(candidate.relative_to(logs_root))
 
     # Unified runs: ledger rows (rich metadata) + local dirs (bare bones)
     ledger = _read_jsonl(ledger_path, limit=cfg.recent_runs_limit)

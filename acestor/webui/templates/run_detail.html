@@ -31,10 +31,10 @@
 <body>
 
 <nav>
-  <a href="/">Dashboard</a>
-  <a href="/settings">Settings</a>
+  <a href="{{ root }}/">Dashboard</a>
+  <a href="{{ root }}/settings">Settings</a>
 </nav>
-<p><a href="/">← back to dashboard</a></p>
+<p><a href="{{ root }}/">← back to dashboard</a></p>
 
 <h1>{{ run_id }}
 {% if row %}
@@ -43,8 +43,13 @@
   <span class="dim">· local run (no ledger row)</span>
 {% endif %}
 {% if scheduler_log_relpath %}
-  · <a href="/log-view?path={{ scheduler_log_relpath }}" style="font-size:0.7em">📜 live log</a>
+  · <a href="{{ root }}/log-view?path={{ scheduler_log_relpath }}" style="font-size:0.7em">📜 scheduler log</a>
 {% endif %}
+{% for f in artifact_files %}
+  {% if f.path.endswith('/run.log') or f.path.endswith('.log') %}
+  · <a href="{{ root }}/artifacts/{{ f.path }}" style="font-size:0.7em" target="_blank">📜 {{ f.path.split('/')[-1] }} ({{ f.size_pretty }})</a>
+  {% endif %}
+{% endfor %}
 </h1>
 
 {% if row %}
@@ -85,9 +90,9 @@
     {% endfor %}
     {% for f in node.files %}
       <div class="file-row">
-        · <a href="/artifacts/{{ f.path }}" target="_blank">{{ f.name }}</a>
+        · <a href="{{ root }}/artifacts/{{ f.path }}" target="_blank">{{ f.name }}</a>
         <span class="size">— {{ f.size_pretty }}</span>
-        <a href="/artifacts/{{ f.path }}?download=1" class="dl">[download]</a>
+        <a href="{{ root }}/artifacts/{{ f.path }}?download=1" class="dl">[download]</a>
       </div>
     {% endfor %}
   {% else %}
@@ -99,9 +104,9 @@
         {% endfor %}
         {% for f in node.files %}
           <div class="file-row">
-            · <a href="/artifacts/{{ f.path }}" target="_blank">{{ f.name }}</a>
+            · <a href="{{ root }}/artifacts/{{ f.path }}" target="_blank">{{ f.name }}</a>
             <span class="size">— {{ f.size_pretty }}</span>
-            <a href="/artifacts/{{ f.path }}?download=1" class="dl">[download]</a>
+            <a href="{{ root }}/artifacts/{{ f.path }}?download=1" class="dl">[download]</a>
           </div>
         {% endfor %}
       </div>

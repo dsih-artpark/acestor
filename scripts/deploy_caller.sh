@@ -21,6 +21,8 @@
 #   DASHBOARD_URL             (required)
 #   DASHBOARD_CLIENT_ID       (required)
 #   DASHBOARD_CLIENT_SECRET   (required)
+#   WEB_UI_USERNAME           (optional; if both set, webui requires HTTP Basic auth)
+#   WEB_UI_PASSWORD           (optional; if unset, webui is unauthenticated)
 #
 # What runs on the caller:
 #   1. git clone (first-time) or git pull (subsequent) ~/acestor-work
@@ -155,8 +157,11 @@ WorkingDirectory=/home/ubuntu/acestor-work
 Environment=PATH=/home/ubuntu/acestor-work/.venv-remote/bin:/home/ubuntu/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=PYTHONPATH=/home/ubuntu/acestor-work
 Environment=AWS_REGION=${AWS_REGION}
-Environment=WEB_UI_HOST=127.0.0.1
+Environment=WEB_UI_HOST=0.0.0.0
 Environment=WEB_UI_PORT=8000
+Environment=WEB_UI_ROOT_PATH=/acestor/web-ui
+${WEB_UI_USERNAME:+Environment=WEB_UI_USERNAME=${WEB_UI_USERNAME}}
+${WEB_UI_PASSWORD:+Environment=WEB_UI_PASSWORD=${WEB_UI_PASSWORD}}
 EnvironmentFile=-/home/ubuntu/.env
 ${ACESTOR_AWS_KEY_NAME:+Environment=ACESTOR_AWS_KEY_NAME=${ACESTOR_AWS_KEY_NAME}}
 ${ACESTOR_AWS_AMI:+Environment=ACESTOR_AWS_AMI=${ACESTOR_AWS_AMI}}

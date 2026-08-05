@@ -25,8 +25,8 @@
 
 <header>
   <div>
-    <a href="/">← Dashboard</a>
-    <a href="/settings">Settings</a>
+    <a href="{{ root }}/">← Dashboard</a>
+    <a href="{{ root }}/settings">Settings</a>
   </div>
   <div class="status"><span class="pulse"></span><span id="status">tailing…</span></div>
 </header>
@@ -35,7 +35,7 @@
 <div class="toolbar">
   <label><input type="checkbox" id="autoscroll" checked> auto-scroll to bottom</label>
   <label><input type="checkbox" id="polling" checked> live-refresh every 2s</label>
-  <a href="/log-raw?path={{ path }}&tail_kb=1024" target="_blank" style="color:#2a5f9e;text-decoration:none;margin-left:15px">open raw (1 MB)</a>
+  <a href="{{ root }}/log-raw?path={{ path }}&tail_kb=1024" target="_blank" style="color:#2a5f9e;text-decoration:none;margin-left:15px">open raw (1 MB)</a>
 </div>
 
 <pre id="log">(loading…)</pre>
@@ -51,7 +51,7 @@ let lastSize = 0;
 
 async function fetchTail() {
   try {
-    const r = await fetch(`/log-raw?path=${encodeURIComponent(path)}&tail_kb=128`, {cache: "no-store"});
+    const r = await fetch(`{{ root }}/log-raw?path=${encodeURIComponent(path)}&tail_kb=128`, {cache: "no-store"});
     if (!r.ok) { $status.textContent = `HTTP ${r.status}`; return; }
     const text = await r.text();
     if (text.length !== lastSize) {

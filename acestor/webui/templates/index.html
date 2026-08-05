@@ -33,15 +33,15 @@
 <body>
 
 <nav>
-  <a href="/">Dashboard</a>
-  <a href="/settings">Settings</a>
+  <a href="{{ root }}/">Dashboard</a>
+  <a href="{{ root }}/settings">Settings</a>
 </nav>
-<h1><a href="/">acestor</a> <span class="dim">web-UI · {{ now }}</span></h1>
+<h1><a href="{{ root }}/">acestor</a> <span class="dim">web-UI · {{ now }}</span></h1>
 
 {% if schedule %}
 <h2>Scheduled DAGs</h2>
 <table>
-  <tr><th>state</th><th>cron (UTC)</th><th>next fire</th><th>tasks</th></tr>
+  <tr><th>scope</th><th>cron (UTC)</th><th>next fire</th><th>tasks</th></tr>
   {% for s in schedule %}
   <tr>
     <td><strong>{{ s.state }}</strong></td>
@@ -56,14 +56,16 @@
 {% if running %}
 <h2>Currently running <span class="dim">({{ running|length }} compute EC2(s))</span></h2>
 <table>
-  <tr><th>instance</th><th>type</th><th>lifecycle</th><th>launched</th><th>age</th></tr>
+  <tr><th>instance</th><th>run_id</th><th>type</th><th>lifecycle</th><th>launched</th><th>age</th><th>log</th></tr>
   {% for r in running %}
   <tr>
     <td class="mono">{{ r.id }}</td>
+    <td>{% if r.run_id %}<a href="{{ root }}/run/{{ r.run_id }}" class="mono">{{ r.run_id }}</a>{% else %}<span class="dim">-</span>{% endif %}</td>
     <td>{{ r.type }}</td>
     <td>{{ r.lifecycle or "-" }}</td>
     <td class="mono dim">{{ r.launched }}</td>
     <td>{{ r.age_min }}m</td>
+    <td>{% if r.log_relpath %}<a href="{{ root }}/log-view?path={{ r.log_relpath }}">📜 tail</a>{% else %}<span class="dim">-</span>{% endif %}</td>
   </tr>
   {% endfor %}
 </table>
@@ -76,7 +78,7 @@
   {% for r in runs %}
   <tr>
     <td class="mono dim">{{ r.sort_key[:19] }}</td>
-    <td><a href="/run/{{ r.run_id }}" class="mono">{{ r.run_id }}</a></td>
+    <td><a href="{{ root }}/run/{{ r.run_id }}" class="mono">{{ r.run_id }}</a></td>
     <td><span class="tag-{{ r.source }}">{{ r.source }}</span></td>
     <td class="mono dim">{{ r.config or ("[" ~ r.group ~ "]") }}</td>
     <td>{% if r.instance_type %}{{ r.instance_type }} <span class="dim">{{ r.lifecycle }}</span>{% else %}<span class="dim">-</span>{% endif %}</td>
@@ -86,14 +88,14 @@
   {% endfor %}
 </table>
 {% else %}
-<p class="empty">No runs yet. Trigger one below or check <a href="/settings">Settings</a> to point at the right artifacts / ledger paths.</p>
+<p class="empty">No runs yet. Trigger one below or check <a href="{{ root }}/settings">Settings</a> to point at the right artifacts / ledger paths.</p>
 {% endif %}
 
 <h2>Trigger a run</h2>
 {% if not configs %}
-<p class="empty">No configs found under <code class="mono">{{ cfg.resolved('configs_root') }}</code>. Fix in <a href="/settings">Settings</a>.</p>
+<p class="empty">No configs found under <code class="mono">{{ cfg.resolved('configs_root') }}</code>. Fix in <a href="{{ root }}/settings">Settings</a>.</p>
 {% else %}
-<form method="post" action="/trigger">
+<form method="post" action="{{ root }}/trigger">
   <label>Mode:</label>
   <select name="mode">
     <option value="local">local (acestor.run)</option>

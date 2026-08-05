@@ -24,10 +24,10 @@
 <body>
 
 <nav>
-  <a href="/">Dashboard</a>
-  <a href="/settings">Settings</a>
+  <a href="{{ root }}/">Dashboard</a>
+  <a href="{{ root }}/settings">Settings</a>
 </nav>
-<h1><a href="/">acestor</a> <span class="dim">web-UI · Settings</span></h1>
+<h1><a href="{{ root }}/">acestor</a> <span class="dim">web-UI · Settings</span></h1>
 
 <p class="intro">
   Every path below is optional. Leave blank to fall back to the built-in default
@@ -36,7 +36,7 @@
   no service restart needed.
 </p>
 
-<form method="post" action="/settings">
+<form method="post" action="{{ root }}/settings">
 
   <fieldset>
     <legend>Data source paths</legend>

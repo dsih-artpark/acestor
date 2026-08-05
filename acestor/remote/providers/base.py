@@ -52,6 +52,7 @@ class CloudProvider(ABC):
         instance_type: str,
         lifecycle: Lifecycle,
         region: str,
+        run_id: str = "",
     ) -> RemoteHost:
         """Allocate an instance and return once it's SSH-ready.
 
