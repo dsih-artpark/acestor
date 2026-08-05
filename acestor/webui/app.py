@@ -50,7 +50,8 @@ TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 # `root` is the path prefix (e.g. "/acestor/web-ui" in deploy, "" in local).
 # Templates prefix every absolute link with `{{ root }}` so nginx sub-path
 # reverse-proxy works without a subdomain.
-TEMPLATES.env.globals["root"] = os.environ.get("WEB_UI_ROOT_PATH", "").rstrip("/")
+_ROOT = os.environ.get("WEB_UI_ROOT_PATH", "").rstrip("/")
+TEMPLATES.env.globals["root"] = _ROOT
 
 
 # ── Optional HTTP Basic auth ─────────────────────────────────────────────────
@@ -598,7 +599,7 @@ def trigger_run(
         <p><strong>run_id:</strong> {run_id}</p>
         <p><strong>pid:</strong> {proc.pid}</p>
         <p><strong>log:</strong> <code>{log_path}</code></p>
-        <p><a href="/">← back</a></p>
+        <p><a href="{_ROOT}/">← back</a></p>
         </body></html>"""
     )
 
@@ -643,4 +644,4 @@ def settings_save(
             default_lifecycle=default_lifecycle.strip() or "spot",
         )
     )
-    return RedirectResponse("/settings", status_code=303)
+    return RedirectResponse(f"{_ROOT}/settings", status_code=303)
