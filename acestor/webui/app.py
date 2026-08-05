@@ -332,6 +332,7 @@ def dashboard(request: Request, cfg: Settings = Depends(get_cfg)):
     )
 
     return TEMPLATES.TemplateResponse(
+        request,
         "index.html",
         {
             "request": request,
@@ -414,6 +415,7 @@ def run_detail(request: Request, run_id: str, cfg: Settings = Depends(get_cfg)):
             scheduler_log_relpath = str(candidate.relative_to(logs_root))
 
     return TEMPLATES.TemplateResponse(
+        request,
         "run_detail.html",
         {
             "request": request,
@@ -447,6 +449,7 @@ def log_view(request: Request, path: str, cfg: Settings = Depends(get_cfg)):
     logs_root = cfg.resolved("logs_root")
     full = _resolve_log_path(path, logs_root)
     return TEMPLATES.TemplateResponse(
+        request,
         "tail_log.html",
         {"request": request, "path": path, "filename": full.name},
     )
@@ -595,6 +598,7 @@ def trigger_run(
 @app.get("/settings", response_class=HTMLResponse)
 def settings_page(request: Request, cfg: Settings = Depends(get_cfg)):
     return TEMPLATES.TemplateResponse(
+        request,
         "settings.html",
         {
             "request": request,
