@@ -8,6 +8,8 @@ run:
   source_run_id: "latest"
 
 data:
+  geojson:
+    base_path: "gba_datasets/geojsons/geojsons_GBA"
   prepared_data:
     base_dir: "gba_datasets/prepared_data"
 
