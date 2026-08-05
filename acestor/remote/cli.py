@@ -168,6 +168,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip the config-walked local dataset rsync. Use when every "
         "data source is dashboard/API-based and there's nothing local to push.",
     )
+    p.add_argument(
+        "--extra-input-path",
+        action="append",
+        default=None,
+        metavar="DIR",
+        help="Additional local directory to include in the input rsync-up "
+        "(repeatable). Path is resolved relative to the project root, must "
+        "exist locally, and must live inside the project root (safety). "
+        "Used to push per-run artifact subtrees (e.g. artifacts/<state>/"
+        "<forecast_run_id>/) that a downscale/rollup needs as input, "
+        "without pushing the entire artifacts/ tree.",
+    )
 
     # ---- AWS-provider knobs (only read when --remote-provider aws) -----
     aws = p.add_argument_group("AWS provider (--remote-provider aws)")
@@ -256,6 +268,7 @@ def main(argv: list[str] | None = None) -> int:
             else RemoteRunOptions.__dataclass_fields__["forward_env"].default
         ),
         skip_input_sync=bool(args.skip_input_sync),
+        extra_input_paths=tuple(args.extra_input_path or ()),
     )
 
     outcome = run_remote(opts)
