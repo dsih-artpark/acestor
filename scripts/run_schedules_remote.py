@@ -289,13 +289,50 @@ def _build_remote_cmd(state: str, task: Task, run_id: str, run_stamp: str) -> li
     # Compute the source's run_id and pass both:
     #   1. --set run.source_run_id=<...>  → config override so the pipeline
     #      reads a specific run instead of scanning for "latest"
-    #   2. --extra-input-path artifacts/<state>/<source_run_id>  → push
-    #      only that one run's artifact subtree to the compute box
+    #   2. --extra-input-path <source_artifacts_root>/<source_run_id> → push
+    #      only that one run's artifact subtree to the compute box. The root
+    #      is resolved from the SOURCE task's own config
+    #      (storages.artifacts.filesystem.base_path) so states that use a
+    #      per-level artifact dir like `artifacts/gba_zone/` work — the naive
+    #      `artifacts/<state>/` assumption was wrong for those.
     if task.source_of:
         source_run_id = f"{state}-{task.source_of}_{run_stamp}"
         cmd.extend(["--set", f"run.source_run_id={source_run_id}"])
-        cmd.extend(["--extra-input-path", f"artifacts/{state}/{source_run_id}"])
+        source_artifacts_root = _resolve_source_artifacts_root(state, task.source_of)
+        cmd.extend(["--extra-input-path", f"{source_artifacts_root}/{source_run_id}"])
     return cmd
+
+
+def _resolve_source_artifacts_root(state: str, source_task_name: str) -> str:
+    """Return the artifacts root path where the source task writes its outputs.
+
+    Reads ``storages.artifacts.filesystem.base_path`` from the source task's
+    config. Falls back to the legacy ``artifacts/<state>`` convention if the
+    key isn't set or the config can't be parsed — matches historical
+    behaviour for OD/KA which happen to follow that layout.
+    """
+    import yaml
+
+    fallback = f"artifacts/{state}"
+    source_task = next(
+        (t for t in STATES[state]["dag"] if t.name == source_task_name), None
+    )
+    if source_task is None:
+        return fallback
+    cfg_path = Path(source_task.config)
+    if not cfg_path.exists():
+        return fallback
+    try:
+        cfg = yaml.safe_load(cfg_path.read_text()) or {}
+    except yaml.YAMLError:
+        return fallback
+    base = (
+        (cfg.get("storages") or {})
+        .get("artifacts", {})
+        .get("filesystem", {})
+        .get("base_path")
+    )
+    return base or fallback
 
 
 def _record_attempt(
