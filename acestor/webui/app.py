@@ -965,6 +965,22 @@ def _pid_alive(pid: int) -> bool:
         return False
 
 
+def _pid_looks_like_ours(pid: int, run_id: str) -> bool:
+    """Verify the PID actually belongs to the acestor.remote subprocess we
+    launched — guards against PID recycling on a long-lived caller box.
+
+    We stamped run_id into the command line via ``--run-id``, so an intact
+    child still shows both markers in ``/proc/<pid>/cmdline``.
+    """
+    try:
+        cmdline = (
+            Path(f"/proc/{pid}/cmdline").read_bytes().decode("utf-8", errors="replace")
+        )
+    except OSError:
+        return False
+    return "acestor" in cmdline and run_id in cmdline
+
+
 def _kill_pid(pid: int) -> str:
     """SIGTERM the process group, wait 3s, SIGKILL if still alive."""
     import signal
@@ -1044,10 +1060,15 @@ def cancel_run(run_id: str = Form(...)):
     pid = _find_pid_for_run(run_id)
     pid_msg = "no recorded pid"
     if pid is not None:
-        if _pid_alive(pid):
-            pid_msg = f"pid {pid}: {_kill_pid(pid)}"
-        else:
+        if not _pid_alive(pid):
             pid_msg = f"pid {pid} already dead"
+        elif not _pid_looks_like_ours(pid, run_id):
+            # PID has been recycled by an unrelated process — SIGTERM'ing
+            # it would kill something we don't own. EC2 termination below
+            # will still cancel the run.
+            pid_msg = f"pid {pid} recycled (not our process) — skipping kill"
+        else:
+            pid_msg = f"pid {pid}: {_kill_pid(pid)}"
     ec2_msg = _terminate_ec2_for_run(run_id, region)
     return HTMLResponse(
         f"""<html><body style="font-family:system-ui;padding:2em">
