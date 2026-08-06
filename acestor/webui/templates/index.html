@@ -58,7 +58,7 @@
 {% if running %}
 <h2>Currently running <span class="dim">({{ running|length }} compute EC2(s))</span></h2>
 <table>
-  <tr><th>instance</th><th>run_id</th><th>type</th><th>lifecycle</th><th>launched</th><th>age</th><th>log</th></tr>
+  <tr><th>instance</th><th>run_id</th><th>type</th><th>lifecycle</th><th>launched</th><th>age</th><th>log</th><th></th></tr>
   {% for r in running %}
   <tr>
     <td class="mono">{{ r.id }}</td>
@@ -68,6 +68,15 @@
     <td class="mono dim">{{ r.launched }}</td>
     <td>{{ r.age_min }}m</td>
     <td>{% if r.log_relpath %}<a href="{{ root }}/log-view?path={{ r.log_relpath }}">📜 tail</a>{% else %}<span class="dim">-</span>{% endif %}</td>
+    <td>
+      {% if r.run_id %}
+      <form method="post" action="{{ root }}/cancel-run" style="display:inline"
+            onsubmit="return confirm('Cancel {{ r.run_id }}?\n\nThis will terminate the EC2 and kill the caller subprocess.\nNo undo.');">
+        <input type="hidden" name="run_id" value="{{ r.run_id }}">
+        <button type="submit" style="background:none;border:none;color:#b73030;cursor:pointer;font-size:0.9em;padding:0" title="cancel run">❌</button>
+      </form>
+      {% endif %}
+    </td>
   </tr>
   {% endfor %}
 </table>
