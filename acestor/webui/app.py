@@ -899,18 +899,185 @@ def trigger_run(
             cmd.extend(["--aws-ami", ami])
 
     logf = open(log_path, "w")
-    subprocess.Popen(
+    proc = subprocess.Popen(
         cmd,
         stdout=logf,
         stderr=subprocess.STDOUT,
         cwd=os.getcwd(),
         start_new_session=True,
     )
+    # Persist run_id → pid so /cancel-run can kill the caller-side
+    # subprocess in addition to terminating the compute EC2.
+    _record_running(
+        run_id=run_id,
+        pid=proc.pid,
+        mode=mode,
+        config=str(cfg_path),
+        pipeline=pipeline,
+    )
 
     # Jump straight to the live log viewer for this run. The tail page polls
     # every 2s, so the user watches output stream in as the pipeline runs.
     log_relpath = str(log_path.relative_to(logs_root))
     return RedirectResponse(f"{_ROOT}/log-view?path={log_relpath}", status_code=303)
+
+
+# ── Run cancellation ─────────────────────────────────────────────────────────
+# Per-trigger PID log so /cancel-run can kill the caller-side subprocess
+# that spawned the compute EC2. EC2 termination alone is not enough: the
+# caller-side acestor.remote will keep retrying rsync against the dead
+# host for a minute or two before giving up.
+_RUNNING_PATH = Path.home() / ".acestor" / "webui_running.jsonl"
+
+
+def _record_running(
+    *, run_id: str, pid: int, mode: str, config: str, pipeline: str
+) -> None:
+    _RUNNING_PATH.parent.mkdir(parents=True, exist_ok=True)
+    row = {
+        "run_id": run_id,
+        "pid": pid,
+        "mode": mode,
+        "config": config,
+        "pipeline": pipeline,
+        "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    with open(_RUNNING_PATH, "a") as f:
+        f.write(json.dumps(row) + "\n")
+
+
+def _find_pid_for_run(run_id: str) -> int | None:
+    """Return the most recent PID we recorded for run_id (or None)."""
+    if not _RUNNING_PATH.exists():
+        return None
+    hit = None
+    for row in _read_jsonl(_RUNNING_PATH):
+        if row.get("run_id") == run_id:
+            hit = row.get("pid")
+    return int(hit) if hit else None
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except (ProcessLookupError, PermissionError):
+        return False
+
+
+def _pid_looks_like_ours(pid: int, run_id: str) -> bool:
+    """Verify the PID actually belongs to the acestor.remote subprocess we
+    launched — guards against PID recycling on a long-lived caller box.
+
+    We stamped run_id into the command line via ``--run-id``, so an intact
+    child still shows both markers in ``/proc/<pid>/cmdline``.
+    """
+    try:
+        cmdline = (
+            Path(f"/proc/{pid}/cmdline").read_bytes().decode("utf-8", errors="replace")
+        )
+    except OSError:
+        return False
+    return "acestor" in cmdline and run_id in cmdline
+
+
+def _kill_pid(pid: int) -> str:
+    """SIGTERM the process group, wait 3s, SIGKILL if still alive."""
+    import signal
+    import time
+
+    try:
+        os.killpg(os.getpgid(pid), signal.SIGTERM)
+    except (ProcessLookupError, PermissionError) as exc:
+        return f"no such process ({exc.__class__.__name__})"
+    for _ in range(15):  # 3s
+        if not _pid_alive(pid):
+            return "SIGTERM ok"
+        time.sleep(0.2)
+    try:
+        os.killpg(os.getpgid(pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+    return "SIGKILL forced"
+
+
+def _terminate_ec2_for_run(run_id: str, region: str) -> str:
+    """Terminate any running compute EC2 tagged with acestor:run-id=<run_id>."""
+    if not region:
+        return "no region"
+    try:
+        out = subprocess.check_output(
+            [
+                "aws",
+                "ec2",
+                "describe-instances",
+                "--region",
+                region,
+                "--filters",
+                f"Name=tag:acestor:run-id,Values={run_id}",
+                "Name=instance-state-name,Values=running,pending",
+                "--query",
+                "Reservations[].Instances[].InstanceId",
+                "--output",
+                "json",
+            ],
+            timeout=10,
+            stderr=subprocess.DEVNULL,
+        )
+        ids = json.loads(out.decode())
+    except Exception as exc:
+        return f"describe-instances failed: {exc}"
+    if not ids:
+        return "no matching EC2"
+    try:
+        subprocess.check_call(
+            [
+                "aws",
+                "ec2",
+                "terminate-instances",
+                "--region",
+                region,
+                "--instance-ids",
+                *ids,
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=15,
+        )
+    except Exception as exc:
+        return f"terminate-instances failed: {exc}"
+    return f"terminated {', '.join(ids)}"
+
+
+@app.post("/cancel-run")
+def cancel_run(run_id: str = Form(...)):
+    """Cancel a triggered run: kill caller subprocess + terminate compute EC2.
+
+    Both actions run best-effort and report their outcome. If either
+    succeeded, the pipeline is effectively cancelled.
+    """
+    region = os.environ.get("AWS_REGION", "ap-south-1")
+    pid = _find_pid_for_run(run_id)
+    pid_msg = "no recorded pid"
+    if pid is not None:
+        if not _pid_alive(pid):
+            pid_msg = f"pid {pid} already dead"
+        elif not _pid_looks_like_ours(pid, run_id):
+            # PID has been recycled by an unrelated process — SIGTERM'ing
+            # it would kill something we don't own. EC2 termination below
+            # will still cancel the run.
+            pid_msg = f"pid {pid} recycled (not our process) — skipping kill"
+        else:
+            pid_msg = f"pid {pid}: {_kill_pid(pid)}"
+    ec2_msg = _terminate_ec2_for_run(run_id, region)
+    return HTMLResponse(
+        f"""<html><body style="font-family:system-ui;padding:2em">
+        <h2>Cancel · {run_id}</h2>
+        <p><strong>caller subprocess:</strong> {pid_msg}</p>
+        <p><strong>compute EC2:</strong> {ec2_msg}</p>
+        <p><a href="{_ROOT}/">← back to dashboard</a></p>
+        </body></html>"""
+    )
 
 
 # ── Settings routes ──────────────────────────────────────────────────────────
