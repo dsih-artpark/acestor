@@ -49,6 +49,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+import yaml
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from dotenv import load_dotenv
@@ -116,9 +117,12 @@ class Task:
       1. Passes ``--set run.source_run_id=<sibling_run_id>`` so this
          task reads a specific run (not the "latest" sentinel that
          relies on artifact-directory scanning).
-      2. Passes ``--extra-input-path artifacts/<state>/<sibling_run_id>``
+      2. Passes ``--extra-input-path <source_artifacts_root>/<sibling_run_id>``
          so ONLY that run's artifact subtree is rsync'd to the compute
-         box — not the entire artifacts/ tree.
+         box — not the entire artifacts/ tree. ``source_artifacts_root``
+         is read from the source task's own
+         ``storages.artifacts.filesystem.base_path`` (falls back to
+         ``artifacts/<state>`` when absent).
     """
 
     name: str
@@ -311,8 +315,6 @@ def _resolve_source_artifacts_root(state: str, source_task_name: str) -> str:
     key isn't set or the config can't be parsed — matches historical
     behaviour for OD/KA which happen to follow that layout.
     """
-    import yaml
-
     fallback = f"artifacts/{state}"
     source_task = next(
         (t for t in STATES[state]["dag"] if t.name == source_task_name), None
