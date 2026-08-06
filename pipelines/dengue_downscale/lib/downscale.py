@@ -57,7 +57,11 @@ def build_parent_child_mapping(geojson_dir: Path) -> dict[str, str]:
             continue
         props = features[0].get("properties", {})
         child_id = props.get("region_id")
-        parent_id = props.get("parent")
+        # Prefer `parent_id` (snake) — the dashboard's geojson export writes
+        # the immediate DB parent there, while `parent` is the ULB/corporation
+        # (a level above what we want for downscale). Local geojsons only set
+        # `parent`, so fall back to it.
+        parent_id = props.get("parent_id") or props.get("parent")
         if not child_id or not parent_id:
             log.warning(
                 "build_parent_child_mapping: missing region_id or parent in %s, skipping",

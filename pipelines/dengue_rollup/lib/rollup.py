@@ -59,7 +59,11 @@ def build_child_parent_mapping(geojson_dir: Path) -> dict[str, str]:
             continue
         props = features[0].get("properties", {})
         child_id = props.get("region_id")
-        parent_id = props.get("parent")
+        # Prefer `parent_id` (snake) — same rationale as dengue_prep and
+        # dengue_downscale: dashboard geojsons put the ULB/corporation in
+        # `parent` and the immediate DB parent in `parent_id`. Local
+        # geojsons only set `parent`, so fall back to it.
+        parent_id = props.get("parent_id") or props.get("parent")
         if not child_id or not parent_id:
             log.warning(
                 "build_child_parent_mapping: missing region_id or parent in %s, "
