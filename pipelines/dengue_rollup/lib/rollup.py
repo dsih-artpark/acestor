@@ -58,7 +58,11 @@ def build_child_parent_mapping(geojson_dir: Path) -> dict[str, str]:
             )
             continue
         props = features[0].get("properties", {})
-        child_id = props.get("region_id")
+        # Fall back to `id` — some geojson exports (OD districts/blocks/states)
+        # populate only `id` and skip `region_id`. Prep-side validation
+        # (dengue_prep/steps/download_geojsons.py) also enforces at least
+        # one is present.
+        child_id = props.get("region_id") or props.get("id")
         # Prefer `parent_id` (snake) — same rationale as dengue_prep and
         # dengue_downscale: dashboard geojsons put the ULB/corporation in
         # `parent` and the immediate DB parent in `parent_id`. Local
