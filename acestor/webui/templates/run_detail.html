@@ -54,6 +54,18 @@
 {% endfor %}
 </h1>
 
+{# ── Inline report.html preview — pipeline-generated brief for forecast/downscale ── #}
+{% set report_file = namespace(f=None) %}
+{% for f in artifact_files %}
+  {% if f.path.endswith('report.html') and report_file.f is none %}
+    {% set report_file.f = f %}
+  {% endif %}
+{% endfor %}
+{% if report_file.f %}
+<h2>Report <span class="dim">— {{ report_file.f.path }} ({{ report_file.f.size_pretty }}) · <a href="{{ root }}/artifacts/{{ report_file.f.path }}" target="_blank">open in new tab</a></span></h2>
+<iframe src="{{ root }}/artifacts/{{ report_file.f.path }}" style="width:100%;height:80vh;border:1px solid #ddd;border-radius:4px;background:white" loading="lazy"></iframe>
+{% endif %}
+
 {% if row %}
 <h2>Ledger row</h2>
 <table>
