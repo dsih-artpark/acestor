@@ -144,19 +144,19 @@ STATES: dict[str, dict] = {
     "ka": {
         "cron": "0 2 * * *",  # 02:00 UTC daily
         "dag": [
-            Task("prep", _PREP, "configs/ka_district_prep.yaml", "t3.large"),
+            Task("district-prep", _PREP, "configs/ka_district_prep.yaml", "t3.micro"),
             Task(
                 "subdistrict-prep",
                 _PREP,
                 "configs/ka_subdistrict_prep.yaml",
-                "t3.large",
+                "t3.micro",
             ),
             Task(
                 "forecast",
                 _FORECAST,
                 "configs/ka_district.yaml",
                 "c7i.4xlarge",
-                needs=["prep"],
+                needs=["district-prep"],
             ),
             Task(
                 "subdistrict-downscale",
@@ -175,9 +175,9 @@ STATES: dict[str, dict] = {
         # * forecast at zone
         # * rollup zone→corp AND downscale zone→ward in parallel
         "dag": [
-            Task("zone-prep", _PREP, "configs/gba_zone_prep.yaml", "t3.large"),
-            Task("corp-prep", _PREP, "configs/gba_corp_prep.yaml", "t3.medium"),
-            Task("ward-prep", _PREP, "configs/gba_ward_prep.yaml", "t3.medium"),
+            Task("zone-prep", _PREP, "configs/gba_zone_prep.yaml", "t3.micro"),
+            Task("corp-prep", _PREP, "configs/gba_corp_prep.yaml", "t3.micro"),
+            Task("ward-prep", _PREP, "configs/gba_ward_prep.yaml", "t3.micro"),
             Task(
                 "zone-forecast",
                 _FORECAST,
@@ -208,14 +208,14 @@ STATES: dict[str, dict] = {
         # District is source-of-truth; block + ulb are parallel downscales,
         # ulb_ward hangs off ulb.
         "dag": [
-            Task("district-prep", _PREP, "configs/od_district_prep.yaml", "t3.large"),
-            Task("block-prep", _PREP, "configs/od_block_prep.yaml", "t3.medium"),
-            Task("ulb-prep", _PREP, "configs/od_ulb_prep.yaml", "t3.medium"),
+            Task("district-prep", _PREP, "configs/od_district_prep.yaml", "t3.micro"),
+            Task("block-prep", _PREP, "configs/od_block_prep.yaml", "t3.micro"),
+            Task("ulb-prep", _PREP, "configs/od_ulb_prep.yaml", "t3.micro"),
             Task(
                 "ulb-ward-prep",
                 _PREP,
                 "configs/od_ulb_ward_prep.yaml",
-                "t3.medium",
+                "t3.micro",
             ),
             Task(
                 "district-forecast",
