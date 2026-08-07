@@ -189,7 +189,7 @@ STATES: dict[str, dict] = {
                 "corp-rollup",
                 _ROLLUP,
                 "configs/gba_zone_to_corp.yaml",
-                "t3.micro",
+                "t3.nano",
                 needs=["zone-forecast", "corp-prep"],
                 source_of="zone-forecast",
             ),
