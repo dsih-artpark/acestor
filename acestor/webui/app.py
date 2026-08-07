@@ -492,7 +492,12 @@ def log_raw(path: str, tail_kb: int = 128, cfg: Settings = Depends(get_cfg)):
 
 
 @app.get("/artifacts/{path:path}")
-def serve_artifact(path: str, download: int = 0, cfg: Settings = Depends(get_cfg)):
+def serve_artifact(
+    request: Request,
+    path: str,
+    download: int = 0,
+    cfg: Settings = Depends(get_cfg),
+):
     root = cfg.resolved("artifacts_root")
     full = (root / path).resolve()
     if not str(full).startswith(str(root)):
@@ -501,7 +506,17 @@ def serve_artifact(path: str, download: int = 0, cfg: Settings = Depends(get_cfg
         raise HTTPException(404, "not found")
     if download:
         return FileResponse(full, filename=full.name)
-    if full.suffix.lower() in {".csv", ".yaml", ".yml", ".md", ".json", ".log", ".txt"}:
+    suffix = full.suffix.lower()
+    if suffix == ".csv":
+        # Render CSV as a scrollable HTML table (first 1000 rows).
+        return _render_csv_page(request, full, path)
+    if suffix == ".html":
+        # Report / brief HTML — serve as HTML so the browser renders it.
+        try:
+            return HTMLResponse(full.read_text(errors="replace"))
+        except Exception:
+            pass
+    if suffix in {".yaml", ".yml", ".md", ".json", ".log", ".txt"}:
         try:
             return PlainTextResponse(full.read_text(errors="replace"))
         except Exception:
