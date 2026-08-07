@@ -90,11 +90,13 @@ assess:
   total_district_regions: 10
 
 maps:
+  enable: false
   output_dir: "outputs/maps"
   figure_title: "Greater Bengaluru Authority Dengue Risk Map"
 
 report:
   output_dir: "outputs/report"
+  static_charts: false
 
 report_distribution:
   system_name: "Dengue Early Warning System"

@@ -168,7 +168,11 @@ def build_brief_context(
     return {
         "document_title": document_title,
         "is_downscale": is_downscale,
-        "hero_chart_relpath": f"{charts_relpath}/hero_forecast.png",
+        # Empty string signals "no static hero chart" — the partial skips
+        # the <img>. Callers pass charts_relpath="" to opt out.
+        "hero_chart_relpath": (
+            f"{charts_relpath}/hero_forecast.png" if charts_relpath else ""
+        ),
         "weekly_blocks": _weekly_blocks(
             predictions, charts_relpath, region_names, child_to_parent=child_to_parent
         ),
@@ -252,7 +256,9 @@ def _weekly_blocks(
                 "week_idx": i,
                 "week_label": str(wk),
                 "week_label_pretty": _pretty_week_label(wk),
-                "map_relpath": f"{charts_relpath}/risk_map_w{i}.png",
+                "map_relpath": (
+                    f"{charts_relpath}/risk_map_w{i}.png" if charts_relpath else ""
+                ),
                 "zone_groups": zone_groups,
             }
         )

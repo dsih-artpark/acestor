@@ -18,7 +18,7 @@
       <div class="map-frame">
       {% if interactive_map_data %}
         <svg class="risk-map" data-week-idx="{{ blk.week_idx }}" preserveAspectRatio="xMidYMid meet"></svg>
-      {% else %}
+      {% elif blk.map_relpath %}
         <img src="{{ blk.map_relpath }}" alt="risk map" />
       {% endif %}
       </div>

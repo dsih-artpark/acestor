@@ -737,6 +737,10 @@ class ReportConfig:
         str  # which prediction CSV feeds maps + report; "ensemble" or any model key
     )
     threshold_method_for_report: str = "historical"
+    # When False, skip the static hero_forecast.png and per-week risk map
+    # PNGs — the brief renders with interactive D3 map only, and the hero
+    # section is omitted. Saves matplotlib work per run.
+    static_charts: bool = True
 
     @classmethod
     def from_raw(
@@ -763,6 +767,7 @@ class ReportConfig:
             document_title=doc,
             primary=primary,
             threshold_method_for_report=tmr,
+            static_charts=bool(raw.get("static_charts", True)),
         )
 
 

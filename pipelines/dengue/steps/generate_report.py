@@ -68,9 +68,12 @@ class GenerateReportStep(BaseStep[GenerateReportInputs, ReportResult]):
                 thresh_method,
             )
 
-        # Ensure outputs/charts/ exists.
+        # Ensure outputs/charts/ exists (only when static PNGs are on — the
+        # dir is otherwise unused since the brief renders interactive D3 for
+        # maps and omits the hero image section).
         charts_dir_fs = Path(context.artifact_fs_path("outputs/charts"))
-        charts_dir_fs.mkdir(parents=True, exist_ok=True)
+        if cfg.static_charts:
+            charts_dir_fs.mkdir(parents=True, exist_ok=True)
 
         # Load observed cases CSV for hero chart enrichment.
         observed_df: pd.DataFrame | None = None
@@ -108,8 +111,9 @@ class GenerateReportStep(BaseStep[GenerateReportInputs, ReportResult]):
         run_date_ts = pd.Timestamp(inputs.identify_cutoff_dates.run_date)
 
         # Hero forecast chart (uses the full df, not just primary — line per model).
-        hero_path = charts_dir_fs / "hero_forecast.png"
-        if not df.empty:
+        # Skipped when static_charts is off — the brief's hero section is omitted.
+        if cfg.static_charts and not df.empty:
+            hero_path = charts_dir_fs / "hero_forecast.png"
             maps_lib.render_hero_forecast(
                 df,
                 observed_df=observed_df,
@@ -118,36 +122,40 @@ class GenerateReportStep(BaseStep[GenerateReportInputs, ReportResult]):
             )
 
         # Copy one per-week map from outputs/maps/ → outputs/charts/risk_map_wN.png.
-        plots_rel = _section(context.config, "maps").get("output_dir", "plots")
-        plots_fs = Path(context.artifact_fs_path(plots_rel))
-        weeks = (
-            sorted(report_df["startDatePredictedWeek"].unique())
-            if not report_df.empty
-            else []
-        )
-        end_str = (
-            pd.Timestamp(inputs.identify_cutoff_dates.run_date)
-            .date()
-            .strftime("%Y%m%d")
-        )
-        region_token = maps_lib.REGION_LABEL.get(
-            inputs.train_and_predict.region_type, inputs.train_and_predict.region_type
-        )
-        model_token = maps_lib.MODEL_LABEL.get(primary_model, primary_model)
-        thresh_token = maps_lib.THRESHOLD_LABEL.get(thresh_method, thresh_method)
-        for i, wk in enumerate(weeks, start=1):
-            thisdate = pd.Timestamp(wk).date().isoformat()
-            src = (
-                plots_fs
-                / f"{region_token}s_{thisdate}_{model_token}_{thresh_token}_{end_str}.png"
+        # Skipped when static_charts is off — the brief renders interactive D3
+        # maps and the `<img>` fallback is never hit.
+        if cfg.static_charts:
+            plots_rel = _section(context.config, "maps").get("output_dir", "plots")
+            plots_fs = Path(context.artifact_fs_path(plots_rel))
+            weeks = (
+                sorted(report_df["startDatePredictedWeek"].unique())
+                if not report_df.empty
+                else []
             )
-            dst = charts_dir_fs / f"risk_map_w{i}.png"
-            if src.exists():
-                shutil.copy2(src, dst)
-            else:
-                context.log.warning(
-                    "generate_report: weekly map missing for w%d: %s", i, src.name
+            end_str = (
+                pd.Timestamp(inputs.identify_cutoff_dates.run_date)
+                .date()
+                .strftime("%Y%m%d")
+            )
+            region_token = maps_lib.REGION_LABEL.get(
+                inputs.train_and_predict.region_type,
+                inputs.train_and_predict.region_type,
+            )
+            model_token = maps_lib.MODEL_LABEL.get(primary_model, primary_model)
+            thresh_token = maps_lib.THRESHOLD_LABEL.get(thresh_method, thresh_method)
+            for i, wk in enumerate(weeks, start=1):
+                thisdate = pd.Timestamp(wk).date().isoformat()
+                src = (
+                    plots_fs
+                    / f"{region_token}s_{thisdate}_{model_token}_{thresh_token}_{end_str}.png"
                 )
+                dst = charts_dir_fs / f"risk_map_w{i}.png"
+                if src.exists():
+                    shutil.copy2(src, dst)
+                else:
+                    context.log.warning(
+                        "generate_report: weekly map missing for w%d: %s", i, src.name
+                    )
 
         # Build interactive map data (D3) — same shape as the downscale brief.
         interactive_map_data = None
@@ -188,7 +196,9 @@ class GenerateReportStep(BaseStep[GenerateReportInputs, ReportResult]):
         ctx = build_brief_context(
             predictions=report_df,
             run_date=str(inputs.identify_cutoff_dates.run_date),
-            charts_relpath="charts",
+            # Empty charts_relpath → build_brief_context emits empty
+            # hero_chart_relpath / map_relpath; the templates skip <img>.
+            charts_relpath="charts" if cfg.static_charts else "",
             is_downscale=False,
             document_title=cfg.document_title,
             region_type=inputs.train_and_predict.region_type,
