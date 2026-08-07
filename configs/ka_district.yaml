@@ -98,6 +98,7 @@ maps:
 
 report:
   output_dir: "outputs/report"
+  static_charts: false
 
 report_distribution:
   system_name: "Dengue Early Warning System"
