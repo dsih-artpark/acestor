@@ -288,10 +288,15 @@ def _scan_geojson_hierarchy(geojson_base: str) -> dict[str, dict[str, str]]:
                 gdf = gpd.read_file(f)
             except Exception:
                 continue
-            if "region_id" not in gdf.columns:
+            # Some geojson exports carry only `id` (e.g. OD districts/blocks)
+            # and skip `region_id`. Coalesce so the hierarchy walk works
+            # regardless of which convention the source uses.
+            if "region_id" not in gdf.columns and "id" not in gdf.columns:
                 continue
             for _, row in gdf.iterrows():
-                rid = row.get("region_id")
+                rid = row.get("region_id") if "region_id" in gdf.columns else None
+                if pd.isna(rid) and "id" in gdf.columns:
+                    rid = row.get("id")
                 if pd.isna(rid):
                     continue
                 parent = row.get("parent")
