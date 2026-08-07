@@ -56,7 +56,10 @@ def build_parent_child_mapping(geojson_dir: Path) -> dict[str, str]:
             )
             continue
         props = features[0].get("properties", {})
-        child_id = props.get("region_id")
+        # Fall back to `id` — some geojson exports (OD districts/blocks/states)
+        # populate only `id` and skip `region_id`. Prep-side validation
+        # (steps/download_geojsons.py) also enforces at least one is present.
+        child_id = props.get("region_id") or props.get("id")
         # Prefer `parent_id` (snake) — the dashboard's geojson export writes
         # the immediate DB parent there, while `parent` is the ULB/corporation
         # (a level above what we want for downscale). Local geojsons only set
