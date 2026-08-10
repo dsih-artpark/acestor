@@ -1116,6 +1116,56 @@ def cancel_run(run_id: str = Form(...)):
     )
 
 
+# ── Trigger a scheduler DAG on-demand ────────────────────────────────────────
+# Fires _run_dag(state, ...) from scripts/run_schedules_remote.py in a
+# background python subprocess so the HTTP response returns immediately.
+# The DAG runner logs to logs/manual-dag-<state>-<stamp>.log; the caller's
+# systemd scheduler is untouched (parallel runs are safe — each task uses
+# its own run_id timestamp).
+_STATE_RE = re.compile(r"^[a-z0-9_]+$")
+
+
+@app.post("/trigger-dag")
+def trigger_dag(state: str = Form(...)):
+    if not _STATE_RE.match(state):
+        raise HTTPException(400, f"invalid state: {state!r}")
+    states = _scheduler_states()
+    if state not in states:
+        raise HTTPException(
+            404,
+            f"unknown state {state!r} — known: {sorted(states)}",
+        )
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%S")
+    log_path = Path.cwd() / "logs" / "manual-dag" / f"{state}_{stamp}.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    scripts_dir = str(Path.cwd() / "scripts")
+    proc = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; sys.path.insert(0, " + repr(scripts_dir) + "); "
+                "from run_schedules_remote import STATES, _run_dag; "
+                "_run_dag(" + repr(state) + ", STATES[" + repr(state) + "]['dag'])"
+            ),
+        ],
+        stdout=open(log_path, "w"),
+        stderr=subprocess.STDOUT,
+        cwd=os.getcwd(),
+        start_new_session=True,
+    )
+    e = html.escape
+    log_relpath = str(log_path.relative_to(Path.cwd() / "logs"))
+    return HTMLResponse(
+        f"""<html><body style="font-family:system-ui;padding:2em">
+        <h2>DAG triggered · {e(state)}</h2>
+        <p><strong>pid:</strong> {proc.pid} · <strong>stamp:</strong> {e(stamp)}</p>
+        <p><strong>log:</strong> <a href="{_ROOT}/log-view?path={urllib.parse.quote(log_relpath)}">📜 tail</a></p>
+        <p><a href="{_ROOT}/">← back to dashboard</a></p>
+        </body></html>"""
+    )
+
+
 # ── Push predictions to dashboard ────────────────────────────────────────────
 # Uploads a run's outputs/predictions.csv to the prod dashboard's
 # /api/admin/predictions/upload endpoint. Reuses DASHBOARD_URL /
