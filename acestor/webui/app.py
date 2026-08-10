@@ -407,6 +407,7 @@ def run_detail(request: Request, run_id: str, cfg: Settings = Depends(get_cfg)):
     # Pre-fill values for the Push-to-Dashboard button (only meaningful when
     # the run produced a predictions.csv — the template checks for that).
     push_hints = {"scope_id": "", "reference_date": "", "has_predictions": False}
+    predictions_csv_path: Path | None = None
     for f in artifact_files:
         if f["path"].endswith("outputs/predictions.csv"):
             push_hints["has_predictions"] = True
@@ -417,7 +418,12 @@ def run_detail(request: Request, run_id: str, cfg: Settings = Depends(get_cfg)):
             m = re.search(r"(\d{4}-\d{2}-\d{2})_\d{6}$", run_id)
             if m:
                 push_hints["reference_date"] = _monday_of(m.group(1))
+            predictions_csv_path = (artifacts_root / f["path"]).resolve()
             break
+
+    # 4-week aggregate cards (like the dashboard's hero) — sum predictions
+    # across all regions per (target_week) for the ensemble/historical rows.
+    prediction_cards = _prediction_week_cards(predictions_csv_path)
 
     return TEMPLATES.TemplateResponse(
         request,
@@ -434,8 +440,76 @@ def run_detail(request: Request, run_id: str, cfg: Settings = Depends(get_cfg)):
             "cfg": cfg,
             "scheduler_log_relpath": scheduler_log_relpath,
             "push_hints": push_hints,
+            "prediction_cards": prediction_cards,
         },
     )
+
+
+def _prediction_week_cards(csv_path: Path | None) -> list[dict]:
+    """Aggregate ensemble/historical predictions per target_week for cards.
+
+    Returns [{week, week_label, total, total_min, total_max, n_regions}, ...]
+    ordered by week ascending. Empty list if no CSV or no matching rows.
+    Reads only the columns we need — no pandas dep for a page render.
+    """
+    if csv_path is None or not csv_path.is_file():
+        return []
+    import csv as _csv
+    from collections import defaultdict
+
+    per_week: dict[str, dict] = defaultdict(
+        lambda: {"total": 0.0, "min": 0.0, "max": 0.0, "n": 0}
+    )
+    try:
+        with csv_path.open("r", newline="") as f:
+            reader = _csv.DictReader(f)
+            for row in reader:
+                # downscale / rollup CSVs share the same column names as
+                # forecast, so this works uniformly.
+                if row.get("model") not in ("ensembleModel", "", None):
+                    continue
+                if row.get("thresholdMethod") not in ("historical", "", None):
+                    continue
+                wk = row.get("startDatePredictedWeek") or row.get("target_week")
+                if not wk:
+                    continue
+
+                def _f(v: str) -> float:
+                    try:
+                        return float(v)
+                    except (TypeError, ValueError):
+                        return 0.0
+
+                pred = _f(row.get("predictionRaw") or row.get("prediction") or "0")
+                lo = _f(row.get("predictionMin") or row.get("prediction_min") or pred)
+                hi = _f(row.get("predictionMax") or row.get("prediction_max") or pred)
+                per_week[wk]["total"] += pred
+                per_week[wk]["min"] += lo
+                per_week[wk]["max"] += hi
+                per_week[wk]["n"] += 1
+    except OSError:
+        return []
+
+    def _label(wk: str) -> str:
+        try:
+            start = datetime.fromisoformat(wk).date()
+        except (ValueError, TypeError):
+            return wk
+        end = start.fromordinal(start.toordinal() + 6)
+        # "10 Aug – 16 Aug 2026"
+        return f"{start.strftime('%d %b')} – {end.strftime('%d %b %Y')}"
+
+    return [
+        {
+            "week": wk,
+            "week_label": _label(wk),
+            "total": round(v["total"]),
+            "total_min": round(v["min"]),
+            "total_max": round(v["max"]),
+            "n_regions": v["n"],
+        }
+        for wk, v in sorted(per_week.items())
+    ]
 
 
 # ── Live log tailing ─────────────────────────────────────────────────────────
