@@ -22,11 +22,16 @@ Entrypoint: ``python -m acestor.webui``.
 
 from __future__ import annotations
 
+import html
 import json
 import os
 import re
 import subprocess
 import sys
+import tempfile
+import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -399,6 +404,21 @@ def run_detail(request: Request, run_id: str, cfg: Settings = Depends(get_cfg)):
     logs_root = cfg.resolved("logs_root")
     scheduler_log_relpath = _find_log_relpath(run_id, logs_root)
 
+    # Pre-fill values for the Push-to-Dashboard button (only meaningful when
+    # the run produced a predictions.csv — the template checks for that).
+    push_hints = {"scope_id": "", "reference_date": "", "has_predictions": False}
+    for f in artifact_files:
+        if f["path"].endswith("outputs/predictions.csv"):
+            push_hints["has_predictions"] = True
+            group = f["path"].split("/", 1)[0]
+            push_hints["scope_id"] = _detect_scope_id(group)
+            # reference_date: derive from run_id's trailing YYYY-MM-DD_HHMMSS,
+            # snapped to Monday of that week.
+            m = re.search(r"(\d{4}-\d{2}-\d{2})_\d{6}$", run_id)
+            if m:
+                push_hints["reference_date"] = _monday_of(m.group(1))
+            break
+
     return TEMPLATES.TemplateResponse(
         request,
         "run_detail.html",
@@ -413,6 +433,7 @@ def run_detail(request: Request, run_id: str, cfg: Settings = Depends(get_cfg)):
             "attempts": attempts,
             "cfg": cfg,
             "scheduler_log_relpath": scheduler_log_relpath,
+            "push_hints": push_hints,
         },
     )
 
@@ -1091,6 +1112,171 @@ def cancel_run(run_id: str = Form(...)):
         <p><strong>caller subprocess:</strong> {pid_msg}</p>
         <p><strong>compute EC2:</strong> {ec2_msg}</p>
         <p><a href="{_ROOT}/">← back to dashboard</a></p>
+        </body></html>"""
+    )
+
+
+# ── Push predictions to dashboard ────────────────────────────────────────────
+# Uploads a run's outputs/predictions.csv to the prod dashboard's
+# /api/admin/predictions/upload endpoint. Reuses DASHBOARD_URL /
+# DASHBOARD_CLIENT_ID / DASHBOARD_CLIENT_SECRET from the caller's env
+# (loaded via EnvironmentFile=/home/ubuntu/.env in the systemd unit).
+#
+# CSV column rename: the acestor pipeline writes camelCase (predictionMin /
+# predictionMax); the dashboard's ingest expects snake_case. Rename at the
+# boundary rather than in the pipeline so downstream steps (report, downscale,
+# rollup) don't need to change their assumptions.
+def _detect_scope_id(artifact_group: str) -> str:
+    """Guess scope_id from the artifact top-level folder name."""
+    g = (artifact_group or "").lower()
+    if g == "ka" or g.startswith("ka_"):
+        return "karnataka"
+    if g.startswith("gba"):
+        return "gulb_gba"
+    if g == "od" or g.startswith("od_"):
+        return "odisha"
+    if g.startswith("ap"):
+        return "andhra_pradesh"
+    return ""
+
+
+def _monday_of(date_str: str) -> str:
+    """Given a YYYY-MM-DD string, return the Monday of that ISO week."""
+    from datetime import datetime as _dt, timedelta
+
+    try:
+        d = _dt.fromisoformat(date_str).date()
+    except (ValueError, TypeError):
+        return ""
+    return (d - timedelta(days=d.weekday())).isoformat()
+
+
+_RUN_ID_RE = re.compile(r"^[a-zA-Z0-9_\-.]+$")
+
+
+def _find_predictions_csv(run_id: str, artifacts_root: Path) -> Path | None:
+    """Return the outputs/predictions.csv path for a run_id, or None.
+
+    Rejects run_ids containing path separators, ``..``, or anything else
+    outside the safe charset — path composition alone doesn't prevent a
+    traversal attempt like ``../../etc/passwd``. Also confirms the resolved
+    file actually lives under ``artifacts_root``.
+    """
+    if not _RUN_ID_RE.match(run_id) or ".." in run_id:
+        return None
+    for group_dir in artifacts_root.iterdir():
+        if not group_dir.is_dir():
+            continue
+        candidate = (group_dir / run_id / "outputs" / "predictions.csv").resolve()
+        # Guard against symlink escapes too.
+        try:
+            candidate.relative_to(artifacts_root.resolve())
+        except ValueError:
+            continue
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+@app.post("/push-predictions")
+def push_predictions(
+    run_id: str = Form(...),
+    scope_id: str = Form(...),
+    reference_date: str = Form(...),
+    disease: str = Form("Dengue"),
+    cfg: Settings = Depends(get_cfg),
+):
+    """Push a run's predictions.csv to the prod dashboard's ingest endpoint."""
+    dash_url = os.environ.get("DASHBOARD_URL", "").rstrip("/")
+    client_id = os.environ.get("DASHBOARD_CLIENT_ID", "")
+    client_secret = os.environ.get("DASHBOARD_CLIENT_SECRET", "")
+    if not (dash_url and client_id and client_secret):
+        raise HTTPException(
+            500,
+            "dashboard credentials missing on the caller — check ~/.env "
+            "(DASHBOARD_URL, DASHBOARD_CLIENT_ID, DASHBOARD_CLIENT_SECRET)",
+        )
+
+    artifacts_root = cfg.resolved("artifacts_root")
+    src = _find_predictions_csv(run_id, artifacts_root)
+    if src is None:
+        raise HTTPException(
+            404,
+            f"no predictions.csv found under {artifacts_root} for run_id={run_id}",
+        )
+
+    # Rename camelCase → snake_case for min/max at the boundary.
+    with (
+        open(src) as fin,
+        tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as fout,
+    ):
+        header = fin.readline()
+        header = header.replace("predictionMin", "prediction_min").replace(
+            "predictionMax", "prediction_max"
+        )
+        fout.write(header)
+        for line in fin:
+            fout.write(line)
+        renamed_path = fout.name
+
+    # Auth
+    try:
+        auth_req = urllib.request.Request(
+            f"{dash_url}/api/auth/login",
+            data=json.dumps({"email": client_id, "password": client_secret}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(auth_req, timeout=15) as resp:
+            token = json.loads(resp.read()).get("access_token", "")
+    except (urllib.error.URLError, json.JSONDecodeError) as exc:
+        raise HTTPException(502, f"dashboard auth failed: {exc}") from None
+    if not token:
+        raise HTTPException(502, "dashboard returned empty access_token")
+
+    # Upload — use curl subprocess since stdlib multipart is painful
+    try:
+        out = subprocess.check_output(
+            [
+                "curl",
+                "-sS",
+                "-w",
+                "\nHTTP %{http_code}",
+                "-X",
+                "POST",
+                f"{dash_url}/api/admin/predictions/upload",
+                "-H",
+                f"Authorization: Bearer {token}",
+                "-F",
+                f"file=@{renamed_path}",
+                "-F",
+                f"scope_id={scope_id}",
+                "-F",
+                f"reference_date={reference_date}",
+                "-F",
+                f"disease={disease}",
+            ],
+            timeout=60,
+            stderr=subprocess.STDOUT,
+        ).decode()
+    finally:
+        try:
+            Path(renamed_path).unlink()
+        except OSError:
+            pass
+
+    ok = "HTTP 200" in out
+    body, _, status = out.rpartition("\n")
+    # Escape every interpolated value — run_id/scope/etc are user-controlled
+    # and `body` is dashboard-controlled, both untrusted for HTML rendering.
+    e = html.escape
+    return HTMLResponse(
+        f"""<html><body style="font-family:system-ui;padding:2em">
+        <h2>Push to Dashboard · {e(run_id)}</h2>
+        <p><strong>scope_id:</strong> {e(scope_id)} · <strong>reference_date:</strong> {e(reference_date)} · <strong>disease:</strong> {e(disease)}</p>
+        <p><strong>endpoint:</strong> <code>{e(dash_url)}/api/admin/predictions/upload</code></p>
+        <p><strong>{e(status.strip())}</strong> {"✅" if ok else "❌"}</p>
+        <pre style="background:#f6f8fa;padding:12px;border-radius:4px;overflow-x:auto">{e(body.strip())}</pre>
+        <p><a href="{_ROOT}/run/{urllib.parse.quote(run_id)}">← back to run</a></p>
         </body></html>"""
     )
 

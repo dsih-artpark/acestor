@@ -54,6 +54,27 @@
 {% endfor %}
 </h1>
 
+{# ── Push predictions to dashboard ─────────────────────────────────────── #}
+{% if push_hints.has_predictions %}
+<section style="margin:15px 0;padding:12px;background:#f0f7ff;border:1px solid #b0d0f0;border-radius:6px">
+  <form method="post" action="{{ root }}/push-predictions" onsubmit="return confirmPush(this)" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+    <strong>Push to Dashboard →</strong>
+    <label>scope: <input name="scope_id" value="{{ push_hints.scope_id }}" size="14" required style="padding:4px 6px"></label>
+    <label>reference_date: <input name="reference_date" type="date" value="{{ push_hints.reference_date }}" required style="padding:4px 6px"></label>
+    <label>disease: <input name="disease" value="Dengue" size="10" style="padding:4px 6px"></label>
+    <input type="hidden" name="run_id" value="{{ run_id }}">
+    <button type="submit" style="padding:6px 14px;background:#2a5f9e;color:white;border:none;border-radius:4px;cursor:pointer">▶ Push</button>
+    <span class="dim" style="font-size:0.8em">POSTs <code class="mono">outputs/predictions.csv</code> to <code class="mono">/api/admin/predictions/upload</code> (auto camel→snake_case for min/max)</span>
+  </form>
+</section>
+<script>
+function confirmPush(form) {
+  const s = form.scope_id.value, r = form.reference_date.value, d = form.disease.value;
+  return confirm(`Push predictions to production dashboard?\n\n  scope_id       = ${s}\n  reference_date = ${r}\n  disease        = ${d}\n  run_id         = {{ run_id }}\n\nNo undo. Existing rows in the same (scope, reference_date) may be overwritten.`);
+}
+</script>
+{% endif %}
+
 {# ── Inline report.html preview — pipeline-generated brief for forecast/downscale ── #}
 {% set report_file = namespace(f=None) %}
 {% for f in artifact_files %}
