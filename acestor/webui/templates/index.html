@@ -43,13 +43,20 @@
 {% if schedule %}
 <h2>Scheduled DAGs</h2>
 <table>
-  <tr><th>scope</th><th>cron (UTC)</th><th>next fire</th><th>tasks</th></tr>
+  <tr><th>scope</th><th>cron (UTC)</th><th>next fire</th><th>tasks</th><th></th></tr>
   {% for s in schedule %}
   <tr>
     <td><strong>{{ s.state }}</strong></td>
     <td class="mono">{{ s.cron }}</td>
     <td class="mono">{{ s.next_fire }}</td>
     <td class="dim">{{ s.tasks|join(', ') }}</td>
+    <td>
+      <form method="post" action="{{ root }}/trigger-dag" style="display:inline"
+            onsubmit="return confirm('Trigger the {{ s.state }} DAG NOW?\n\nRuns the full state chain (prep → forecast → downscale/rollup).\nParallel with the cron schedule — nothing blocks the scheduled tick.');">
+        <input type="hidden" name="state" value="{{ s.state }}">
+        <button type="submit" style="padding:4px 10px;font-size:0.85em;background:#2a5f9e;color:white;border:none;border-radius:4px;cursor:pointer">▶ trigger now</button>
+      </form>
+    </td>
   </tr>
   {% endfor %}
 </table>
