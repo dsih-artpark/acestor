@@ -105,6 +105,40 @@ function confirmPush(form) {
 </div>
 {% endif %}
 
+{# ── Model disagreements: top rows where ensemble members differ most ── #}
+{% if model_disagreements %}
+{% set all_models = [] %}
+{% for r in model_disagreements %}
+  {% for m in r.models.keys() %}
+    {% if m not in all_models %}{% set _ = all_models.append(m) %}{% endif %}
+  {% endfor %}
+{% endfor %}
+<h2>Model disagreements <span class="dim">— top {{ model_disagreements|length }} (region · week) by how much the ensemble members diverged</span></h2>
+<p class="dim" style="font-size:0.85em">Big ratios = ensemble is confused. Investigate before trusting the ensemble mean for these. <code class="mono">predictionRaw</code>, historical thresholds only.</p>
+<table>
+  <tr>
+    <th>region</th>
+    <th>week</th>
+    {% for m in all_models %}<th>{{ m }}</th>{% endfor %}
+    <th>ensemble</th>
+    <th>spread</th>
+    <th>max ÷ min</th>
+  </tr>
+  {% for r in model_disagreements %}
+  <tr>
+    <td class="mono">{{ r.region }}</td>
+    <td class="mono dim">{{ r.week }}</td>
+    {% for m in all_models %}
+      <td class="mono">{% if m in r.models %}{{ "%.1f"|format(r.models[m]) }}{% else %}<span class="dim">—</span>{% endif %}</td>
+    {% endfor %}
+    <td class="mono"><strong>{{ "%.1f"|format(r.ensemble) if r.ensemble is not none else "—" }}</strong></td>
+    <td class="mono">{{ r.spread }}</td>
+    <td class="mono" style="color:{% if r.ratio >= 10 %}#b73030{% elif r.ratio >= 3 %}#e07000{% else %}#666{% endif %};font-weight:{% if r.ratio >= 10 %}600{% else %}400{% endif %}">{{ r.ratio }}×</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+
 {% if row %}
 <h2>Ledger row</h2>
 <table>
