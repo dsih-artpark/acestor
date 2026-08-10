@@ -22,11 +22,16 @@ Entrypoint: ``python -m acestor.webui``.
 
 from __future__ import annotations
 
+import html
 import json
 import os
 import re
 import subprocess
 import sys
+import tempfile
+import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -1146,12 +1151,28 @@ def _monday_of(date_str: str) -> str:
     return (d - timedelta(days=d.weekday())).isoformat()
 
 
+_RUN_ID_RE = re.compile(r"^[a-zA-Z0-9_\-.]+$")
+
+
 def _find_predictions_csv(run_id: str, artifacts_root: Path) -> Path | None:
-    """Return the outputs/predictions.csv path for a run_id, or None."""
+    """Return the outputs/predictions.csv path for a run_id, or None.
+
+    Rejects run_ids containing path separators, ``..``, or anything else
+    outside the safe charset — path composition alone doesn't prevent a
+    traversal attempt like ``../../etc/passwd``. Also confirms the resolved
+    file actually lives under ``artifacts_root``.
+    """
+    if not _RUN_ID_RE.match(run_id) or ".." in run_id:
+        return None
     for group_dir in artifacts_root.iterdir():
         if not group_dir.is_dir():
             continue
-        candidate = group_dir / run_id / "outputs" / "predictions.csv"
+        candidate = (group_dir / run_id / "outputs" / "predictions.csv").resolve()
+        # Guard against symlink escapes too.
+        try:
+            candidate.relative_to(artifacts_root.resolve())
+        except ValueError:
+            continue
         if candidate.is_file():
             return candidate
     return None
@@ -1166,8 +1187,6 @@ def push_predictions(
     cfg: Settings = Depends(get_cfg),
 ):
     """Push a run's predictions.csv to the prod dashboard's ingest endpoint."""
-    import tempfile
-
     dash_url = os.environ.get("DASHBOARD_URL", "").rstrip("/")
     client_id = os.environ.get("DASHBOARD_CLIENT_ID", "")
     client_secret = os.environ.get("DASHBOARD_CLIENT_SECRET", "")
@@ -1201,9 +1220,6 @@ def push_predictions(
         renamed_path = fout.name
 
     # Auth
-    import urllib.request
-    import urllib.error
-
     try:
         auth_req = urllib.request.Request(
             f"{dash_url}/api/auth/login",
@@ -1250,14 +1266,17 @@ def push_predictions(
 
     ok = "HTTP 200" in out
     body, _, status = out.rpartition("\n")
+    # Escape every interpolated value — run_id/scope/etc are user-controlled
+    # and `body` is dashboard-controlled, both untrusted for HTML rendering.
+    e = html.escape
     return HTMLResponse(
         f"""<html><body style="font-family:system-ui;padding:2em">
-        <h2>Push to Dashboard · {run_id}</h2>
-        <p><strong>scope_id:</strong> {scope_id} · <strong>reference_date:</strong> {reference_date} · <strong>disease:</strong> {disease}</p>
-        <p><strong>endpoint:</strong> <code>{dash_url}/api/admin/predictions/upload</code></p>
-        <p><strong>{status.strip()}</strong> {"✅" if ok else "❌"}</p>
-        <pre style="background:#f6f8fa;padding:12px;border-radius:4px;overflow-x:auto">{body.strip()}</pre>
-        <p><a href="{_ROOT}/run/{run_id}">← back to run</a></p>
+        <h2>Push to Dashboard · {e(run_id)}</h2>
+        <p><strong>scope_id:</strong> {e(scope_id)} · <strong>reference_date:</strong> {e(reference_date)} · <strong>disease:</strong> {e(disease)}</p>
+        <p><strong>endpoint:</strong> <code>{e(dash_url)}/api/admin/predictions/upload</code></p>
+        <p><strong>{e(status.strip())}</strong> {"✅" if ok else "❌"}</p>
+        <pre style="background:#f6f8fa;padding:12px;border-radius:4px;overflow-x:auto">{e(body.strip())}</pre>
+        <p><a href="{_ROOT}/run/{urllib.parse.quote(run_id)}">← back to run</a></p>
         </body></html>"""
     )
 
