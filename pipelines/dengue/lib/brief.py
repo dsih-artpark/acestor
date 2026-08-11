@@ -75,8 +75,16 @@ def load_child_geojson_combined(
             d = json.loads(p.read_text())
             f = d.get("features", [{}])[0]
             props = f.get("properties", {})
+            # Some geojson exports (OD districts/blocks/states) populate
+            # only `id`/`parent_id` (snake) and skip `region_id`/`parent`.
+            # Fall back so downstream D3 map colouring (which keys on
+            # `region_id`) still works. Same pattern as the fallbacks in
+            # dengue_prep/lib/ihip.py, dengue_downscale, dengue_rollup.
             keep = {
-                k: props.get(k) for k in ("region_id", "name", "parent", "parent_name")
+                "region_id": props.get("region_id") or props.get("id"),
+                "name": props.get("name"),
+                "parent": props.get("parent") or props.get("parent_id"),
+                "parent_name": props.get("parent_name"),
             }
             geom = shape(f["geometry"])
             if simplify_tolerance > 0:
