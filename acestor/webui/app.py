@@ -424,6 +424,9 @@ def run_detail(request: Request, run_id: str, cfg: Settings = Depends(get_cfg)):
     # 4-week aggregate cards (like the dashboard's hero) — sum predictions
     # across all regions per (target_week) for the ensemble/historical rows.
     prediction_cards = _prediction_week_cards(predictions_csv_path)
+    # Per-model comparison: which region/week had the largest disagreement
+    # across ensemble members? Reads sibling per_model/*.csv files.
+    model_disagreements = _model_disagreements(predictions_csv_path)
 
     return TEMPLATES.TemplateResponse(
         request,
@@ -441,6 +444,7 @@ def run_detail(request: Request, run_id: str, cfg: Settings = Depends(get_cfg)):
             "scheduler_log_relpath": scheduler_log_relpath,
             "push_hints": push_hints,
             "prediction_cards": prediction_cards,
+            "model_disagreements": model_disagreements,
         },
     )
 
@@ -510,6 +514,97 @@ def _prediction_week_cards(csv_path: Path | None) -> list[dict]:
         }
         for wk, v in sorted(per_week.items())
     ]
+
+
+def _model_disagreements(
+    predictions_csv_path: Path | None, top_n: int = 20
+) -> list[dict]:
+    """Return top rows where the ensemble members disagreed most.
+
+    Reads sibling ``per_model/predictions_<m>.csv`` files (RF, TimesFM, XGB…)
+    and joins them on ``(regionID, startDatePredictedWeek)`` for the
+    historical thresholdMethod. Each returned row has:
+
+        {region, week, models: {rf: X, timesfm: Y, ...}, ensemble: E,
+         spread: max-min, ratio: max/max(min,1) — how many times}
+
+    Sorted by ``ratio`` descending (biggest disagreements first). Empty
+    list if there's no ``per_model/`` sibling.
+    """
+    if predictions_csv_path is None or not predictions_csv_path.is_file():
+        return []
+    pm_dir = predictions_csv_path.parent / "per_model"
+    if not pm_dir.is_dir():
+        return []
+    import csv as _csv
+
+    # Load per-model raw predictions (only historical/latest weeks).
+    # per_model/predictions_<model>.csv has same columns as main predictions.csv.
+    per_model: dict[tuple[str, str], dict[str, float]] = {}
+    for path in sorted(pm_dir.glob("predictions_*.csv")):
+        model = path.stem.replace("predictions_", "")
+        try:
+            with path.open("r", newline="") as f:
+                for row in _csv.DictReader(f):
+                    if row.get("thresholdMethod") not in ("historical", "", None):
+                        continue
+                    key = (
+                        row.get("regionID") or "",
+                        row.get("startDatePredictedWeek") or "",
+                    )
+                    if not all(key):
+                        continue
+                    try:
+                        val = float(
+                            row.get("predictionRaw") or row.get("prediction") or "0"
+                        )
+                    except ValueError:
+                        continue
+                    per_model.setdefault(key, {})[model] = val
+        except OSError:
+            continue
+    # Also load the ensemble from the main predictions.csv for the same keys.
+    ensembles: dict[tuple[str, str], float] = {}
+    try:
+        with predictions_csv_path.open("r", newline="") as f:
+            for row in _csv.DictReader(f):
+                if row.get("model") != "ensembleModel":
+                    continue
+                if row.get("thresholdMethod") not in ("historical", "", None):
+                    continue
+                key = (
+                    row.get("regionID") or "",
+                    row.get("startDatePredictedWeek") or "",
+                )
+                try:
+                    ensembles[key] = float(
+                        row.get("predictionRaw") or row.get("prediction") or "0"
+                    )
+                except ValueError:
+                    pass
+    except OSError:
+        pass
+
+    rows: list[dict] = []
+    for (region, week), models in per_model.items():
+        if len(models) < 2:
+            continue
+        vals = list(models.values())
+        lo, hi = min(vals), max(vals)
+        spread = hi - lo
+        ratio = hi / max(lo, 0.5)  # avoid div-by-zero on near-zero mins
+        rows.append(
+            {
+                "region": region,
+                "week": week,
+                "models": models,
+                "ensemble": ensembles.get((region, week)),
+                "spread": round(spread, 2),
+                "ratio": round(ratio, 1),
+            }
+        )
+    rows.sort(key=lambda r: r["ratio"], reverse=True)
+    return rows[:top_n]
 
 
 # ── Live log tailing ─────────────────────────────────────────────────────────
