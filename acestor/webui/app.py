@@ -266,7 +266,11 @@ def _build_artifact_tree(files: list[dict]) -> dict:
 
 # ── Routes ───────────────────────────────────────────────────────────────────
 @app.get("/", response_class=HTMLResponse)
-def dashboard(request: Request, cfg: Settings = Depends(get_cfg)):
+def dashboard(
+    request: Request,
+    page: int = 1,
+    cfg: Settings = Depends(get_cfg),
+):
     ledger_path = cfg.resolved("ledger_path")
     artifacts_root = cfg.resolved("artifacts_root")
     configs_root = cfg.resolved("configs_root")
@@ -295,8 +299,11 @@ def dashboard(request: Request, cfg: Settings = Depends(get_cfg)):
             r["age_min"] = "?"
         r["log_relpath"] = _find_log_relpath(r.get("run_id") or "", logs_root)
 
-    # Unified runs: ledger rows (rich metadata) + local dirs (bare bones)
-    ledger = _read_jsonl(ledger_path, limit=cfg.recent_runs_limit)
+    # Unified runs: ledger rows (rich metadata) + local dirs (bare bones).
+    # Read WITHOUT the limit — we paginate in memory below so the user can
+    # navigate to older runs. The ledger is a few thousand rows max in
+    # practice, so full-read per page-render is fine.
+    ledger = _read_jsonl(ledger_path)
     ledger_run_ids = {r.get("run_id") for r in ledger}
     for row in ledger:
         row["wall_pretty"] = _humanise_seconds(row.get("wall_seconds", 0))
@@ -322,7 +329,24 @@ def dashboard(request: Request, cfg: Settings = Depends(get_cfg)):
     for row in local_rows:
         combined.append({**row, "sort_key": row["mtime"]})
     combined.sort(key=lambda r: r["sort_key"], reverse=True)
-    combined = combined[: cfg.recent_runs_limit]
+
+    # Paginate
+    per_page = max(1, cfg.recent_runs_limit)
+    total = len(combined)
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    page = max(1, min(page, total_pages))
+    start = (page - 1) * per_page
+    page_rows = combined[start : start + per_page]
+    pagination = {
+        "page": page,
+        "total_pages": total_pages,
+        "total": total,
+        "per_page": per_page,
+        "start": start + 1 if page_rows else 0,
+        "end": start + len(page_rows),
+        "has_prev": page > 1,
+        "has_next": page < total_pages,
+    }
 
     configs = (
         sorted(p.name for p in configs_root.glob("*.yaml"))
@@ -337,7 +361,8 @@ def dashboard(request: Request, cfg: Settings = Depends(get_cfg)):
             "request": request,
             "schedule": schedule,
             "running": running,
-            "runs": combined,
+            "runs": page_rows,
+            "pagination": pagination,
             "configs": configs,
             "cfg": cfg,
             "defaults": _settings.defaults_display(),

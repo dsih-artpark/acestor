@@ -89,7 +89,21 @@
 </table>
 {% endif %}
 
-<h2>Recent runs <span class="dim">— {{ runs|length }} · newest first · local & remote</span></h2>
+<h2>Recent runs <span class="dim">— showing {{ pagination.start }}–{{ pagination.end }} of {{ pagination.total }} · newest first · local & remote</span></h2>
+{% if pagination.total_pages > 1 %}
+<div style="margin:8px 0;font-size:0.9em">
+  {% if pagination.has_prev %}<a href="{{ root }}/?page={{ pagination.page - 1 }}">← prev</a>{% else %}<span class="dim">← prev</span>{% endif %}
+  <span class="dim mono" style="margin:0 12px">page {{ pagination.page }} / {{ pagination.total_pages }}</span>
+  {% if pagination.has_next %}<a href="{{ root }}/?page={{ pagination.page + 1 }}">next →</a>{% else %}<span class="dim">next →</span>{% endif %}
+  <span class="dim" style="margin-left:20px">jump:
+    {% for p in [1, pagination.total_pages] %}
+      {% if p == pagination.page %}<strong>{{ p }}</strong>
+      {% else %}<a href="{{ root }}/?page={{ p }}" style="margin:0 4px">{{ p }}</a>
+      {% endif %}
+    {% endfor %}
+  </span>
+</div>
+{% endif %}
 {% if runs %}
 <table>
   <tr><th>when</th><th>run_id</th><th>mode</th><th>config</th><th>type</th><th>wall</th><th>status</th><th>log</th></tr>
@@ -106,6 +120,13 @@
   </tr>
   {% endfor %}
 </table>
+{% if pagination.total_pages > 1 %}
+<div style="margin:8px 0;font-size:0.9em">
+  {% if pagination.has_prev %}<a href="{{ root }}/?page={{ pagination.page - 1 }}">← prev</a>{% else %}<span class="dim">← prev</span>{% endif %}
+  <span class="dim mono" style="margin:0 12px">page {{ pagination.page }} / {{ pagination.total_pages }}</span>
+  {% if pagination.has_next %}<a href="{{ root }}/?page={{ pagination.page + 1 }}">next →</a>{% else %}<span class="dim">next →</span>{% endif %}
+</div>
+{% endif %}
 {% else %}
 <p class="empty">No runs yet. Trigger one below or check <a href="{{ root }}/settings">Settings</a> to point at the right artifacts / ledger paths.</p>
 {% endif %}
