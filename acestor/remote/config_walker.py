@@ -109,6 +109,46 @@ def find_output_paths(
     )
 
 
+def find_output_paths_scoped_to_region(
+    config: Mapping[str, Any], project_root: Path | str
+) -> list[InputPath]:
+    """Same as :func:`find_output_paths`, but scopes ``data.prepared_data.base_dir``
+    to the specific ``data.region_type`` subdir if one is set.
+
+    Rationale: for prep runs with N parallel tasks (each writing a different
+    ``region_type`` subdir), the default full-tree pull-back is racy — the
+    last task's rsync overwrites its siblings' fresh writes with the T=0
+    snapshot it inherited at provisioning. Restricting the pull-back to
+    ``<base_dir>/<region_type>`` eliminates the race by making each task
+    only touch its own subdir on the caller. See issue #152.
+
+    No-op for configs without ``data.region_type`` (i.e. forecast /
+    downscale / rollup runs — they don't write ``prepared_data`` at all).
+    """
+    region_type = str(
+        ((config.get("data") or {}) if isinstance(config, Mapping) else {}).get(
+            "region_type", ""
+        )
+        or ""
+    ).strip()
+    paths = find_output_paths(config, project_root)
+    if not region_type:
+        return paths
+    prepared_key = ".".join(("data", "prepared_data", "base_dir"))
+    scoped: list[InputPath] = []
+    for p in paths:
+        if p.key_path == prepared_key:
+            scoped.append(
+                InputPath(
+                    key_path=f"{p.key_path}[/{region_type}]",
+                    local_path=(p.local_path / region_type).resolve(),
+                )
+            )
+        else:
+            scoped.append(p)
+    return scoped
+
+
 def _resolve_key_paths(
     config: Mapping[str, Any],
     project_root: Path | str,

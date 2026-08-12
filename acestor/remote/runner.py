@@ -23,7 +23,11 @@ from acestor.remote.bootstrap import (
     system_bootstrap_script,
     uv_sync_command,
 )
-from acestor.remote.config_walker import find_input_paths, find_output_paths
+from acestor.remote.config_walker import (
+    find_input_paths,
+    find_output_paths,
+    find_output_paths_scoped_to_region,
+)
 from acestor.remote.env_forward import DEFAULT_FORWARD_ENV, compose_env_prefix
 from acestor.remote.ledger import (
     DEFAULT_LEDGER_PATH,
@@ -261,7 +265,11 @@ def run_remote(opts: RemoteRunOptions) -> RemoteRunOutcome:
                     log.exception("remote runner: artifact sync-back failed — %s", exc)
                 if not opts.skip_input_sync:
                     try:
-                        outputs = _load_output_paths(opts.config, repo_root)
+                        # Pull-back scoped to <region_type> subdir for prep
+                        # runs — prevents parallel prep tasks from clobbering
+                        # each other's fresh writes via last-writer-wins on
+                        # the full prepared_data/ tree. See issue #152.
+                        outputs = _load_scoped_output_paths(opts.config, repo_root)
                         if outputs:
                             artifact_bytes += sync_output_datasets_back(
                                 host, outputs, repo_root
@@ -363,6 +371,15 @@ def _load_output_paths(config_path: str, repo_root: Path):
     """Same as :func:`_load_input_paths` but for output-tagged keys."""
     raw = _load_config(config_path, repo_root)
     return find_output_paths(raw, repo_root)
+
+
+def _load_scoped_output_paths(config_path: str, repo_root: Path):
+    """Same as :func:`_load_output_paths` but scopes ``prepared_data.base_dir``
+    to the ``data.region_type`` subdir if one is set. Used only for the
+    pull-back — the push-up path still uses :func:`_load_output_paths` so
+    prep still sees the full baseline. See issue #152."""
+    raw = _load_config(config_path, repo_root)
+    return find_output_paths_scoped_to_region(raw, repo_root)
 
 
 def _load_config(config_path: str, repo_root: Path) -> dict:
