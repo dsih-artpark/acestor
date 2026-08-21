@@ -812,17 +812,28 @@ def parse_ihip_files(
                 break
 
         if chosen_col is None or parsed_series is None:
-            # No candidate yielded any parseable rows — that's a hard failure,
-            # not a silent drop. Surface which candidates were tried and how
-            # many rows parsed for each so the operator can fix the source.
+            # No candidate yielded any parseable rows. Skip the file with a
+            # loud warning rather than crashing the whole pipeline: dashboard
+            # exports occasionally leave behind small residual xlsx files
+            # (single-day trim remnants) whose date cells round-trip as
+            # unparseable, and a 3-row file shouldn't nuke a daily run.
+            # Downstream aggregates operate on the sum of all files, so a
+            # skipped file surfaces as missing rows in the final table (and
+            # as a WARNING here) rather than a hard exit.
             detail = "; ".join(
                 f"{c!r}:{why}({n} parseable)" for c, why, n in candidate_summary
             )
-            raise ValueError(
-                f"ihip parser: file {path.name!r} has no usable date column. "
-                f"Tried candidates in order — {detail}. "
-                f"Available columns in file: {sorted(df.columns.tolist())}."
+            log.warning(
+                "ihip parser: file %r has no usable date column — skipping. "
+                "Tried candidates in order — %s. Available columns: %s.",
+                path.name,
+                detail,
+                sorted(df.columns.tolist()),
             )
+            if fstats is not None and stats is not None:
+                stats.drop_reasons["No parseable date column (file skipped)"] += len(df)
+                stats.files.append(fstats)
+            continue
 
         if chosen_col != date_column_candidates[0]:
             log.info(
