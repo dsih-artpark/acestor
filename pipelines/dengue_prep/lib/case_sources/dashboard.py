@@ -779,6 +779,120 @@ class Source(CaseSource):
                     )
         return removed
 
+    def _consolidate_staged(self) -> None:
+        """Collapse every ``dashboard_*.xlsx`` in the staging dir into a single
+        canonical file, deduping rows by patient-id.
+
+        The historical design tried to keep the staging dir tidy via a
+        trim/delete/rename dance in :meth:`_delete_fully_contained_staged`. In
+        practice that dance had two failure modes that let files pile up:
+        rename collisions (two different sources trimmed to the same target
+        filename silently overwrite each other on POSIX), and coverage-tracking
+        drift (once filenames stop reflecting their real content, subsequent
+        fetch-range computations request oversized windows and write yet
+        another cumulative snapshot). On production caller nodes this manifested
+        as 200+ heavily-overlapping snapshots per state, each containing the
+        same real cases, which inflated aggregated case counts by 20-100×.
+
+        Consolidation kills that class of bug at the source: after every run
+        the staging dir contains exactly ONE ``dashboard_<min>_to_<max>.xlsx``
+        with unique rows. The parse step has no way to double-count because
+        the duplicates are physically gone.
+
+        Robustness notes:
+
+        - If any file cannot be read as xlsx (partial download, mock fixture,
+          corrupted archive) it is LEFT ALONE — consolidation is skipped rather
+          than silently dropping data. Operator-provided external xlsx that
+          don't match the ``dashboard_*.xlsx`` pattern are also left alone.
+        - Dedup key preference: ``Patient Specimen Id`` (in production this is
+          100% populated and unique per case), then ``Patient Transaction Id``.
+          If neither is present on ≥50% of rows we skip dedup and keep the
+          concat as-is (better to over-count than to silently collapse rows
+          on a stable key we can't verify).
+        - Atomic write: build the consolidated file at ``.tmp``, then replace,
+          then delete the originals. A crash mid-consolidation leaves the
+          original files intact — the next run just re-attempts.
+        """
+        import pandas as pd  # noqa: PLC0415
+
+        files = sorted(p for _s, _e, p in _scan_staged_files(self.staging_dir))
+        if len(files) <= 1:
+            return
+
+        frames: list[pd.DataFrame] = []
+        for path in files:
+            try:
+                frames.append(pd.read_excel(path))
+            except Exception as exc:  # noqa: BLE001
+                log.warning(
+                    "case_sources.dashboard: consolidate skipped — could not "
+                    "read %s (%s); leaving staging dir untouched",
+                    path.name,
+                    exc,
+                )
+                return
+
+        combined = pd.concat(frames, ignore_index=True)
+        if combined.empty:
+            return
+
+        before_rows = len(combined)
+        dedup_key: str | None = None
+        for candidate in ("Patient Specimen Id", "Patient Transaction Id"):
+            if candidate in combined.columns:
+                non_null = combined[candidate].notna().sum()
+                if non_null >= before_rows * 0.5:
+                    dedup_key = candidate
+                    break
+        if dedup_key is not None:
+            combined = combined.drop_duplicates(subset=[dedup_key], keep="last")
+
+        # New filename = span of the deduped rows' dates. Fall back to the union
+        # of the source filenames' spans if we can't parse a date column.
+        min_d = max_d = None
+        for col in self.date_cols:
+            if col in combined.columns:
+                parsed = pd.to_datetime(combined[col], errors="coerce")
+                if parsed.notna().any():
+                    min_d = parsed.min().date()
+                    max_d = parsed.max().date()
+                    break
+        if min_d is None or max_d is None:
+            spans = [(s, e) for s, e, _p in _scan_staged_files(self.staging_dir)]
+            min_d = min(s for s, _e in spans)
+            max_d = max(e for _s, e in spans)
+
+        new_name = f"dashboard_{min_d.isoformat()}_to_{max_d.isoformat()}.xlsx"
+        tmp = self.staging_dir / (new_name + ".tmp")
+        combined.to_excel(tmp, index=False)
+        (self.staging_dir / new_name).unlink(missing_ok=True)
+        tmp.rename(self.staging_dir / new_name)
+
+        removed = 0
+        for path in files:
+            if path.name == new_name:
+                continue
+            try:
+                path.unlink()
+                removed += 1
+            except OSError as exc:
+                log.warning(
+                    "case_sources.dashboard: consolidate could not delete "
+                    "superseded file %s: %s",
+                    path,
+                    exc,
+                )
+        log.info(
+            "case_sources.dashboard: consolidated %d staged file(s) → %s "
+            "(%d rows in, %d rows out, dedup_key=%s)",
+            len(files),
+            new_name,
+            before_rows,
+            len(combined),
+            dedup_key or "<none>",
+        )
+
     def _ensure_staged(self) -> list[str]:
         """Fetch every missing sub-range in [date_start, date_end], stage each.
 
@@ -786,7 +900,10 @@ class Source(CaseSource):
            tail backfill window) via :meth:`_compute_fetch_ranges`.
         2. For each range, delete any fully-superseded prior file, trim
            external xlsx rows that overlap, then chunked-download.
-        3. Return the merged list of all xlsx now on disk.
+        3. Consolidate every ``dashboard_*.xlsx`` into a single deduped file
+           via :meth:`_consolidate_staged` so subsequent runs never see
+           accumulated overlapping snapshots.
+        4. Return the merged list of all xlsx now on disk.
         """
         if self._staged_paths is not None:
             return self._staged_paths
@@ -845,6 +962,10 @@ class Source(CaseSource):
                         from_date,
                     )
             self._download_chunked(from_date, to_date)
+        # Collapse every dashboard_*.xlsx into one deduped snapshot so the
+        # parse step can never double-count across overlapping fetches. See
+        # _consolidate_staged for the failure modes this prevents.
+        self._consolidate_staged()
         # Return every xlsx now on disk — both dashboard_*.xlsx (our own writes)
         # and any operator-provided external xlsx that survived trimming.
         # parse_case_data reads them all; older files stay untouched.

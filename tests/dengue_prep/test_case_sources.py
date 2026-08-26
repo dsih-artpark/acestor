@@ -375,3 +375,149 @@ def test_dashboard_invalid_backfill_days_raises(tmp_path: Path) -> None:
                 "backfill_days": "not-an-int",
             },
         )
+
+
+# ---------------------------------------------------------------------------
+# Consolidation — regression tests for the 200+ overlapping-snapshots bug.
+#
+# Trigger: on production caller nodes ka_datasets/raw_case/ accumulated 280+
+# heavily overlapping dashboard_*.xlsx snapshots. The parse step's row-count
+# groupby then inflated case counts 20-100× (a single real case appeared in
+# ~80 files → counted 80 times). The fix: at end of every _ensure_staged run,
+# collapse the staging dir into ONE deduped snapshot.
+# ---------------------------------------------------------------------------
+
+
+def _write_ihip_xlsx(path: Path, rows: list[dict[str, Any]]) -> None:
+    """Materialise a real (parseable) minimal IHIP-shaped xlsx for tests."""
+    import pandas as pd  # noqa: PLC0415
+
+    pd.DataFrame(rows).to_excel(path, index=False)
+
+
+@patch.dict("os.environ", _DASHBOARD_ENV, clear=False)
+def test_dashboard_consolidates_overlapping_snapshots_into_one_file(
+    tmp_path: Path,
+) -> None:
+    """After a run, staging dir contains exactly ONE dashboard_*.xlsx —
+    regardless of how many overlapping snapshots were on disk before.
+
+    Simulates the production failure mode: two "cumulative" snapshots plus
+    one fresh fetch, all containing the same case (same Patient Specimen Id).
+    Post-run the folder must have one file and the case must appear exactly
+    once inside it (not thrice).
+    """
+    import pandas as pd  # noqa: PLC0415
+
+    # Case duplicated across two older overlapping snapshots.
+    shared = {
+        "Region Id": "district_524",
+        "Sample Collected Date": "2026-05-10",
+        "Patient Specimen Id": "SPEC-A-001",
+        "Test Suspected For": "Dengue",
+    }
+    older_unique = {
+        "Region Id": "district_524",
+        "Sample Collected Date": "2026-04-15",
+        "Patient Specimen Id": "SPEC-A-002",
+        "Test Suspected For": "Dengue",
+    }
+    _write_ihip_xlsx(
+        tmp_path / "dashboard_2026-01-01_to_2026-05-15.xlsx",
+        [older_unique, shared],
+    )
+    _write_ihip_xlsx(
+        tmp_path / "dashboard_2026-01-01_to_2026-05-20.xlsx",
+        [older_unique, shared],
+    )
+    # The new fetch (mocked below) delivers the same shared case again plus
+    # a fresh row post-2026-05-20.
+    fresh_stream = [
+        # NDJSON re-emits the already-known shared case + one new case.
+        (
+            '{"Region Id":"district_524","Sample Collected Date":"2026-05-10",'
+            '"Patient Specimen Id":"SPEC-A-001","Test Suspected For":"Dengue"}'
+        ),
+        (
+            '{"Region Id":"district_525","Sample Collected Date":"2026-05-25",'
+            '"Patient Specimen Id":"SPEC-A-003","Test Suspected For":"Dengue"}'
+        ),
+    ]
+
+    with patch("requests.post") as mock_post, patch("requests.get") as mock_get:
+        mock_post.return_value = _mock_json_response({"access_token": "T0K3N"})
+        mock_get.return_value = _mock_stream_response(fresh_stream)
+        source = load_source(
+            "dashboard",
+            {
+                "source_path": str(tmp_path),
+                "date_start": "2026-01-01",
+                "date_end": "2026-05-31",
+                "backfill_days": 30,
+            },
+        )
+        listed = source.list_objects()
+
+    # Exactly one dashboard_*.xlsx on disk post-run.
+    dashboard_files = list(tmp_path.glob("dashboard_*.xlsx"))
+    assert (
+        len(dashboard_files) == 1
+    ), f"expected 1 consolidated file, got {[p.name for p in dashboard_files]}"
+    assert listed == [dashboard_files[0].name]
+
+    # And the consolidated file has each unique case exactly once.
+    df = pd.read_excel(dashboard_files[0])
+    assert len(df) == 3, f"expected 3 unique cases post-dedup, got {len(df)}"
+    specimen_ids = sorted(df["Patient Specimen Id"].dropna().tolist())
+    assert specimen_ids == ["SPEC-A-001", "SPEC-A-002", "SPEC-A-003"]
+    # Consolidated filename spans the deduped rows' date range.
+    assert dashboard_files[0].name == "dashboard_2026-04-15_to_2026-05-25.xlsx"
+
+
+@patch.dict("os.environ", _DASHBOARD_ENV, clear=False)
+def test_dashboard_consolidate_left_alone_when_files_unreadable(
+    tmp_path: Path,
+) -> None:
+    """If any staged file can't be read as xlsx (partial download, corrupt
+    archive), consolidation MUST skip rather than silently drop data.
+
+    Guards the invariant: consolidation is a no-op-on-failure, never a
+    destructive operation on files it doesn't fully understand.
+    """
+    # One readable real xlsx + one garbage file. Consolidation must abort.
+    _write_ihip_xlsx(
+        tmp_path / "dashboard_2026-01-01_to_2026-05-15.xlsx",
+        [
+            {
+                "Region Id": "district_524",
+                "Sample Collected Date": "2026-05-10",
+                "Patient Specimen Id": "SPEC-B-001",
+                "Test Suspected For": "Dengue",
+            }
+        ],
+    )
+    (tmp_path / "dashboard_2026-05-01_to_2026-05-31.xlsx").write_bytes(_FAKE_XLSX)
+
+    with patch("requests.post") as mock_post, patch("requests.get") as mock_get:
+        mock_post.return_value = _mock_json_response({"access_token": "T0K3N"})
+        mock_get.return_value = _mock_stream_response([])
+        source = load_source(
+            "dashboard",
+            {
+                "source_path": str(tmp_path),
+                "date_start": "2026-01-01",
+                "date_end": "2026-05-31",
+                "backfill_days": 30,
+            },
+        )
+        source.list_objects()
+
+    # Consolidation was skipped (file unreadable) so we still have >1 file.
+    # The pre-existing trim step may have renamed the real file, but at no
+    # point did we collapse the readable + unreadable pair into a single file
+    # — that would risk silently dropping the unreadable file's rows.
+    files_after = sorted(p.name for p in tmp_path.glob("dashboard_*.xlsx"))
+    assert (
+        len(files_after) >= 2
+    ), f"consolidation should have bailed, but folder ended with: {files_after}"
+    assert "dashboard_2026-05-01_to_2026-05-31.xlsx" in files_after
