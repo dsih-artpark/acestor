@@ -149,11 +149,11 @@ def test_dashboard_source_logs_in_and_stages_xlsx(tmp_path: Path) -> None:
         )
         listed = source.list_objects()
 
-    assert listed == ["dashboard_2026-01-01_to_2026-06-30.xlsx"]
+    assert listed == ["dashboard_2026-01-01_to_2026-06-30.csv"]
     staged = tmp_path / "staging" / listed[0]
-    # File was materialised as a real xlsx from the NDJSON stream; parseable
+    # File was materialised as a real csv from the NDJSON stream; parseable
     # and contains one row per NDJSON line.
-    df = pd.read_excel(staged)
+    df = pd.read_csv(staged)
     assert len(df) == len(_FAKE_STREAM_LINES)
     assert set(df.columns) >= {"Region Id", "Date Of Onset", "Test Suspected For"}
 
@@ -214,8 +214,8 @@ def test_dashboard_empty_stream_stages_empty_xlsx(tmp_path: Path) -> None:
     assert len(listed) == 1
     staged = tmp_path / listed[0]
     assert staged.exists()
-    # Empty NDJSON → empty DataFrame → header-only xlsx (readable, zero rows).
-    df = pd.read_excel(staged)
+    # Empty NDJSON → empty DataFrame → header-only csv (readable, zero rows).
+    df = pd.read_csv(staged)
     assert len(df) == 0
 
 
@@ -288,9 +288,11 @@ def test_dashboard_incremental_fetch_uses_backfill_window(tmp_path: Path) -> Non
     # fetch_from=May 3). Per the safer contained-only delete policy, it is
     # kept — data loss on the Jan–May portion would otherwise be permanent
     # if the new fetch fails.
+    # Pre-existing xlsx snapshot stays as-is (transitional — trim preserves
+    # format). New fetch writes csv (bounded-memory serialisation).
     assert set(listed) == {
         "dashboard_2026-01-01_to_2026-06-01.xlsx",
-        "dashboard_2026-05-03_to_2026-06-30.xlsx",
+        "dashboard_2026-05-03_to_2026-06-30.csv",
     }
     assert (tmp_path / "dashboard_2026-01-01_to_2026-06-01.xlsx").exists()
 
@@ -330,12 +332,13 @@ def test_dashboard_non_overlapping_older_files_preserved(tmp_path: Path) -> None
     # New gap-fill behavior: the coverage has a hole between 2024-12-31 and
     # 2026-05-01 (~16 months). The chunked download splits it into
     # ~365-day chunks: 2025-01-01→2025-12-31 and 2026-01-01→2026-04-30.
+    # Historical xlsx snapshots left untouched. New fetches write csv.
     assert set(listed) == {
         "dashboard_2024-01-01_to_2024-12-31.xlsx",
-        "dashboard_2025-01-01_to_2025-12-31.xlsx",
-        "dashboard_2026-01-01_to_2026-04-30.xlsx",
+        "dashboard_2025-01-01_to_2025-12-31.csv",
+        "dashboard_2026-01-01_to_2026-04-30.csv",
         "dashboard_2026-05-01_to_2026-06-15.xlsx",
-        "dashboard_2026-05-17_to_2026-06-30.xlsx",
+        "dashboard_2026-05-17_to_2026-06-30.csv",
     }
 
 
@@ -458,20 +461,24 @@ def test_dashboard_consolidates_overlapping_snapshots_into_one_file(
         )
         listed = source.list_objects()
 
-    # Exactly one dashboard_*.xlsx on disk post-run.
-    dashboard_files = list(tmp_path.glob("dashboard_*.xlsx"))
+    # Exactly one dashboard_*.{csv,xlsx} on disk post-run.
+    dashboard_files = list(tmp_path.glob("dashboard_*.csv")) + list(
+        tmp_path.glob("dashboard_*.xlsx")
+    )
     assert (
         len(dashboard_files) == 1
     ), f"expected 1 consolidated file, got {[p.name for p in dashboard_files]}"
     assert listed == [dashboard_files[0].name]
 
     # And the consolidated file has each unique case exactly once.
-    df = pd.read_excel(dashboard_files[0])
+    # Consolidation writes csv (bounded-memory serialisation) regardless of
+    # what format the input files were.
+    df = pd.read_csv(dashboard_files[0])
     assert len(df) == 3, f"expected 3 unique cases post-dedup, got {len(df)}"
     specimen_ids = sorted(df["Patient Specimen Id"].dropna().tolist())
     assert specimen_ids == ["SPEC-A-001", "SPEC-A-002", "SPEC-A-003"]
     # Consolidated filename spans the deduped rows' date range.
-    assert dashboard_files[0].name == "dashboard_2026-04-15_to_2026-05-25.xlsx"
+    assert dashboard_files[0].name == "dashboard_2026-04-15_to_2026-05-25.csv"
 
 
 @patch.dict("os.environ", _DASHBOARD_ENV, clear=False)
