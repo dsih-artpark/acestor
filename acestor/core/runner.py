@@ -12,6 +12,27 @@ from concurrent.futures import ThreadPoolExecutor, Future, wait, FIRST_COMPLETED
 from acestor.core.context import PipelineContext
 from acestor.core.dag import PipelineDAG
 from acestor.core.step import build_typed_inputs
+from acestor.infra.metrics import MetricsWriter
+
+
+def _resolve_run_dir(context: PipelineContext) -> Any:
+    """Best-effort resolve the on-disk run directory alongside run.log.
+
+    Mirrors the logic in ``PipelineContext.from_config`` for the artifacts
+    filesystem storage. Returns None if artifacts isn't a local filesystem
+    storage (e.g. S3) — the metrics writer then no-ops rather than trying
+    to write to a bucket path.
+    """
+    from pathlib import Path
+
+    storages_cfg = (context.config or {}).get("storages", {}) or {}
+    artifacts_scfg = storages_cfg.get("artifacts") or {}
+    if (artifacts_scfg.get("kind") or "filesystem").lower() != "filesystem":
+        return None
+    fs_base = (artifacts_scfg.get("filesystem") or {}).get("base_path")
+    if not fs_base:
+        return None
+    return Path(fs_base) / context.run_id
 
 
 @dataclass
@@ -50,6 +71,16 @@ class PipelineRunner:
         failed_step = ""
 
         step_start_times: Dict[str, float] = {}
+
+        # Per-run system-resource sampler. Starts before any step runs so the
+        # sparklines in the webui capture the full compute-box footprint —
+        # including the download step, which is where OOM-near-misses tend to
+        # bite (concat of accumulated raw fetches). Stops in the finally block
+        # so a step crash still flushes the last samples.
+        run_dir = _resolve_run_dir(self.context)
+        metrics = MetricsWriter(run_dir) if run_dir is not None else None
+        if metrics is not None:
+            metrics.start()
 
         try:
             name_to_step = {s.name: s for s in self.dag.steps}
@@ -113,6 +144,9 @@ class PipelineRunner:
             failure_detail = f"{type(exc).__name__}: {exc}"
             # The step-level handler above already logged the traceback via
             # logger.exception; intentionally avoid a duplicate error line here.
+        finally:
+            if metrics is not None:
+                metrics.stop()
 
         end_ts = datetime.now(timezone.utc).isoformat()
         if logger is not None:

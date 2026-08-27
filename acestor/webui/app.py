@@ -674,15 +674,71 @@ def _resolve_log_path(path: str, logs_root: Path) -> Path:
 
 
 @app.get("/log-view", response_class=HTMLResponse)
-def log_view(request: Request, path: str, cfg: Settings = Depends(get_cfg)):
-    """HTML page that live-tails the given log file (polling every 2s)."""
+def log_view(
+    request: Request,
+    path: str,
+    run_id: str = "",
+    cfg: Settings = Depends(get_cfg),
+):
+    """HTML page that live-tails the given log file (polling every 2s).
+
+    If ``run_id`` is provided AND ``metrics.jsonl`` exists in the run's
+    artifact directory, the page renders a compact system-metrics strip
+    (CPU / memory / disk) above the log tail. Absence of metrics is silently
+    tolerated — the strip is hidden.
+    """
     logs_root = cfg.resolved("logs_root")
     full = _resolve_log_path(path, logs_root)
+    show_metrics = False
+    if run_id:
+        artifacts_root = cfg.resolved("artifacts_root")
+        run_dir = _find_run_artifacts_dir(run_id, artifacts_root)
+        show_metrics = bool(run_dir and (run_dir / "metrics.jsonl").is_file())
     return TEMPLATES.TemplateResponse(
         request,
         "tail_log.html",
-        {"request": request, "path": path, "filename": full.name},
+        {
+            "request": request,
+            "path": path,
+            "filename": full.name,
+            "run_id": run_id,
+            "show_metrics": show_metrics,
+        },
     )
+
+
+@app.get("/metrics-raw")
+def metrics_raw(
+    run_id: str,
+    tail_n: int = 720,
+    cfg: Settings = Depends(get_cfg),
+):
+    """Return the last ``tail_n`` samples from a run's ``metrics.jsonl``.
+
+    Default 720 samples ≈ 60 min at the 5s writer cadence — enough for a
+    full forecast run without exploding the browser side. Capped at 5000.
+    """
+    artifacts_root = cfg.resolved("artifacts_root")
+    run_dir = _find_run_artifacts_dir(run_id, artifacts_root)
+    if run_dir is None:
+        raise HTTPException(404, f"no artifacts dir for run_id: {run_id}")
+    metrics_file = run_dir / "metrics.jsonl"
+    if not metrics_file.is_file():
+        return {"samples": []}
+    keep = max(1, min(tail_n, 5000))
+    # Read the last N lines cheaply — metrics.jsonl is append-only + small
+    # (5s samples × 60 min ≈ 40 KB). Full read is fine at these sizes.
+    lines = metrics_file.read_text(errors="replace").splitlines()[-keep:]
+    samples: list[dict] = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            samples.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return {"samples": samples}
 
 
 @app.get("/log-raw", response_class=PlainTextResponse)
@@ -1148,8 +1204,12 @@ def trigger_run(
 
     # Jump straight to the live log viewer for this run. The tail page polls
     # every 2s, so the user watches output stream in as the pipeline runs.
+    # Pass run_id so the tail page can hydrate the metrics strip too.
     log_relpath = str(log_path.relative_to(logs_root))
-    return RedirectResponse(f"{_ROOT}/log-view?path={log_relpath}", status_code=303)
+    return RedirectResponse(
+        f"{_ROOT}/log-view?path={log_relpath}&run_id={urllib.parse.quote(run_id)}",
+        status_code=303,
+    )
 
 
 # ── Run cancellation ─────────────────────────────────────────────────────────
