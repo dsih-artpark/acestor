@@ -89,8 +89,16 @@ _LOGIN_PATH = "/api/auth/login"
 _EXPORT_PATH = "/api/cases/export/stream"
 
 _STAGED_FILENAME_RE = re.compile(
-    r"^dashboard_(\d{4}-\d{2}-\d{2})_to_(\d{4}-\d{2}-\d{2})\.xlsx$"
+    r"^dashboard_(\d{4}-\d{2}-\d{2})_to_(\d{4}-\d{2}-\d{2})\.(?:csv|xlsx)$"
 )
+# New writes are ``.csv``. openpyxl's cost of materialising a big xlsx in RAM
+# (~1 KB/cell, so a 200k-row × 30-col linelist peaks at 6-8 GB) OOM'd t3.micro
+# and even bigger caller instances during the 2026-08-27 backfill of a
+# 217k-record chunk. csv streams row-by-row so peak memory is O(1 row)
+# regardless of file size. The ihip parser already reads both formats
+# (pipelines/dengue_prep/lib/ihip.py::_read_file), so this is purely a
+# staging-format change.
+_STAGED_FILE_SUFFIX = ".csv"
 
 # Default candidate date columns for reading max-date out of pre-existing
 # xlsx files. Ordered so the most-populated column in dashboard exports comes
@@ -99,6 +107,45 @@ _DEFAULT_DATE_CANDIDATE_COLS: tuple[str, ...] = (
     "Test Performed Date",
     "Date Of Onset",
     "Sample Collected Date",
+)
+
+# Canonical IHIP header set — used only for empty-window fetches to write a
+# parseable header-only csv (empty DataFrame → pd.to_csv writes zero bytes,
+# and pd.read_csv on that raises EmptyDataError which the parser can't
+# distinguish from a real failure). Not authoritative for schema — the actual
+# fetch always yields whatever columns the dashboard's export emits.
+_IHIP_HEADERS: tuple[str, ...] = (
+    "Patient Name",
+    "Contact Number",
+    "Gender",
+    "Age",
+    "Village Or Ward",
+    "Sub District",
+    "Ulb",
+    "District",
+    "State",
+    "Patient Address",
+    "Patient Health Id",
+    "Patient Transaction Id",
+    "Opd Ipd",
+    "Provisional Diagnosis",
+    "Date Of Onset",
+    "Sample Type",
+    "Patient Specimen Id",
+    "Provisional Diagnosis Name",
+    "Test Suspected For",
+    "Test Performed",
+    "Sample Collected Date",
+    "Test Result",
+    "Confirmed Diagnosis",
+    "Pathogen Name",
+    "Pathogen Subtype",
+    "Test Performed Date",
+    "Facility Name Pform",
+    "Facility Name Lform",
+    "Address Geocoded Longitude",
+    "Address Geocoded Latitude",
+    "Region Id",
 )
 
 
@@ -161,14 +208,50 @@ def _scan_staged_files(staging_dir: Path) -> list[tuple[date, date, Path]]:
     return out
 
 
-def _read_max_date_from_xlsx(
+def _read_staged_file(path: Path):
+    """Read a staged case file into a DataFrame. Format-agnostic — picks
+    ``pd.read_csv`` or ``pd.read_excel`` based on file suffix so the trim /
+    consolidate paths work uniformly across the transition from xlsx to
+    csv staging.
+
+    Uses ``path.suffixes`` (not ``.suffix``) so atomic staging paths like
+    ``<name>.csv.tmp`` are treated as csv rather than falling through to
+    the xlsx reader on the ``.tmp`` suffix.
+    """
+    import pandas as pd  # noqa: PLC0415
+
+    suffixes = [s.lower() for s in path.suffixes]
+    if ".csv" in suffixes:
+        return pd.read_csv(path)
+    return pd.read_excel(path)
+
+
+def _write_staged_file(df, path: Path) -> None:
+    """Write a DataFrame to a staged case file. csv writes stream row-by-row
+    (bounded memory) — always preferred. xlsx is retained only so callers
+    that explicitly ask for ``.xlsx`` (existing on-disk files being trimmed
+    in place before their eventual conversion) still work.
+
+    Format is picked from the first meaningful suffix in ``path.suffixes``
+    so writes to atomic staging paths like ``<name>.csv.tmp`` still land as
+    csv rather than falling through to xlsx.
+    """
+    suffixes = [s.lower() for s in path.suffixes]
+    if ".csv" in suffixes:
+        df.to_csv(path, index=False)
+    else:
+        df.to_excel(path, index=False)
+
+
+def _read_max_date_from_file(
     path: Path, date_cols: tuple[str, ...] = _DEFAULT_DATE_CANDIDATE_COLS
 ) -> date | None:
-    """Return the max date across candidate date columns in an xlsx, or None."""
+    """Return the max date across candidate date columns, or None. Works for
+    both csv- and xlsx-staged files (see ``_read_staged_file``)."""
     import pandas as pd  # noqa: PLC0415
 
     try:
-        df = pd.read_excel(path)
+        df = _read_staged_file(path)
     except Exception as exc:
         log.debug(
             "case_sources.dashboard: could not read %s to detect max date: %s",
@@ -190,7 +273,11 @@ def _read_max_date_from_xlsx(
     return best
 
 
-def _trim_xlsx_in_place(
+# Preserve the old name for callers that haven't migrated yet.
+_read_max_date_from_xlsx = _read_max_date_from_file
+
+
+def _trim_file_in_place(
     path: Path, cutoff: date, date_cols: tuple[str, ...] = _DEFAULT_DATE_CANDIDATE_COLS
 ) -> tuple[int, int]:
     """Drop rows whose max(row date) >= cutoff, save via atomic replace.
@@ -200,13 +287,17 @@ def _trim_xlsx_in_place(
     the incremental refetch of the [cutoff, today] window can't produce a
     duplicate. If none of the candidate columns are present, the file is
     left alone.
+
+    Format-agnostic: reads and rewrites in whatever format the file already
+    uses (csv or xlsx). Trimming an xlsx-format file preserves xlsx; a
+    csv-format file stays csv.
     """
     import pandas as pd  # noqa: PLC0415
 
     try:
-        df = pd.read_excel(path)
+        df = _read_staged_file(path)
     except Exception as exc:
-        # Not a readable xlsx (corrupt, wrong format, test fixture, ...).
+        # Not a readable staged file (corrupt, wrong format, test fixture...).
         # Leave the file alone rather than crashing the whole prep run.
         log.warning(
             "case_sources.dashboard: could not read %s for trimming (%s) — "
@@ -227,10 +318,10 @@ def _trim_xlsx_in_place(
     if len(kept) == len(df):
         return len(df), len(df)
     tmp = path.with_suffix(path.suffix + ".trimming")
-    kept.to_excel(tmp, index=False)
+    _write_staged_file(kept, tmp)
     # Sanity-check the write before swapping.
     try:
-        pd.read_excel(tmp, nrows=1)
+        _read_staged_file(tmp)
     except Exception as exc:
         tmp.unlink(missing_ok=True)
         raise RuntimeError(
@@ -238,6 +329,10 @@ def _trim_xlsx_in_place(
         ) from exc
     os.replace(tmp, path)
     return len(df), len(kept)
+
+
+# Legacy alias — callers migrated to _trim_file_in_place.
+_trim_xlsx_in_place = _trim_file_in_place
 
 
 def _scan_external_xlsx_max_dates(
@@ -497,11 +592,22 @@ class Source(CaseSource):
         )
 
         # Empty windows are valid (nothing reported in the range). Return a
-        # header-only xlsx so downstream can distinguish "no data" from
+        # header-only csv so downstream can distinguish "no data" from
         # "fetch failed"; the ihip parser already skips empty files cleanly.
+        # csv (not xlsx) because openpyxl serialisation is O(cells) memory —
+        # a 217k-record chunk peaks at ~6-8 GB and OOM'd production callers
+        # on 2026-08-27. csv streams row-by-row, peak RAM is O(1 row).
+        #
+        # For empty windows we still need SOMETHING serialisable: a totally
+        # empty csv has no columns, and pd.read_csv on it raises
+        # EmptyDataError which the parser doesn't distinguish from real
+        # failure. Emit a canonical placeholder header row for empty windows
+        # so the file is always parseable-as-header-only.
         df = pd.DataFrame(records)
+        if df.empty:
+            df = pd.DataFrame(columns=list(_IHIP_HEADERS))
         buf = io.BytesIO()
-        df.to_excel(buf, index=False, engine="openpyxl")
+        df.to_csv(buf, index=False)
         return buf.getvalue()
 
     _CHUNK_FLOOR_DAYS = 30  # don't halve below this — deeper indicates a real problem
@@ -568,7 +674,7 @@ class Source(CaseSource):
                         chunk_days,
                     )
                     continue
-                filename = f"dashboard_{c_from}_to_{c_to}.xlsx"
+                filename = f"dashboard_{c_from}_to_{c_to}{_STAGED_FILE_SUFFIX}"
                 out_path = self.staging_dir / filename
                 out_path.write_bytes(content)
                 log.info(
@@ -749,9 +855,12 @@ class Source(CaseSource):
                 # Rename the file to reflect its new (shortened) date range so
                 # future _scan_staged_files reflects reality and future
                 # overlap checks work off correct filename ranges.
+                # Preserve the source file's suffix — trimming an xlsx file
+                # writes back xlsx, trimming a csv writes back csv. Format
+                # never changes underneath the caller.
                 new_name = (
                     f"dashboard_{existing_start.isoformat()}_to_"
-                    f"{new_end.isoformat()}.xlsx"
+                    f"{new_end.isoformat()}{path.suffix}"
                 )
                 new_path = path.with_name(new_name)
                 try:
@@ -823,7 +932,7 @@ class Source(CaseSource):
         frames: list[pd.DataFrame] = []
         for path in files:
             try:
-                frames.append(pd.read_excel(path))
+                frames.append(_read_staged_file(path))
             except Exception as exc:  # noqa: BLE001
                 log.warning(
                     "case_sources.dashboard: consolidate skipped — could not "
@@ -863,9 +972,12 @@ class Source(CaseSource):
             min_d = min(s for s, _e in spans)
             max_d = max(e for _s, e in spans)
 
-        new_name = f"dashboard_{min_d.isoformat()}_to_{max_d.isoformat()}.xlsx"
+        new_name = (
+            f"dashboard_{min_d.isoformat()}_to_"
+            f"{max_d.isoformat()}{_STAGED_FILE_SUFFIX}"
+        )
         tmp = self.staging_dir / (new_name + ".tmp")
-        combined.to_excel(tmp, index=False)
+        _write_staged_file(combined, tmp)
         (self.staging_dir / new_name).unlink(missing_ok=True)
         tmp.rename(self.staging_dir / new_name)
 
