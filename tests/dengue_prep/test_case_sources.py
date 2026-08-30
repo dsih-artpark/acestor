@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Mapping
 from unittest.mock import MagicMock, patch
 
+import pandas as pd
 import pytest
 
 from pipelines.dengue_prep.lib.case_sources import CaseSource, load_source
@@ -123,12 +124,26 @@ def _mock_stream_response(ndjson_lines: list[str], status: int = 200) -> MagicMo
 
 
 # Two minimal IHIP-shaped records for streaming tests. Field names match what
-# the parser expects; values don't have to be realistic since we only assert
-# on the wrapper (stage-and-count), not the content itself.
+# the parser expects. Sample Collected Date is the same column the source
+# uses to shard fresh rows by year, so the values here matter for the year
+# each row lands in.
 _FAKE_STREAM_LINES = [
-    '{"Region Id": "district_524", "Date Of Onset": "2026-01-15", "Test Suspected For": "Dengue"}',
-    '{"Region Id": "district_525", "Date Of Onset": "2026-02-10", "Test Suspected For": "Dengue"}',
+    (
+        '{"Region Id": "district_524", "Date Of Onset": "2026-01-15", '
+        '"Sample Collected Date": "2026-01-15", "Test Suspected For": "Dengue"}'
+    ),
+    (
+        '{"Region Id": "district_525", "Date Of Onset": "2026-02-10", '
+        '"Sample Collected Date": "2026-02-10", "Test Suspected For": "Dengue"}'
+    ),
 ]
+
+
+def _write_year_shard(path: Path, rows: list[dict[str, Any]]) -> None:
+    """Helper for tests that need to pre-seed a real year-shard file."""
+    import pandas as pd  # noqa: PLC0415
+
+    pd.DataFrame(rows).to_csv(path, index=False)
 
 
 @patch.dict("os.environ", _DASHBOARD_ENV, clear=False)
@@ -149,10 +164,10 @@ def test_dashboard_source_logs_in_and_stages_xlsx(tmp_path: Path) -> None:
         )
         listed = source.list_objects()
 
-    assert listed == ["dashboard_2026-01-01_to_2026-06-30.csv"]
+    # Year-sharded staging: both stream records fall in 2026 (Sample
+    # Collected Date), so they land in a single dashboard_2026.csv shard.
+    assert listed == ["dashboard_2026.csv"]
     staged = tmp_path / "staging" / listed[0]
-    # File was materialised as a real csv from the NDJSON stream; parseable
-    # and contains one row per NDJSON line.
     df = pd.read_csv(staged)
     assert len(df) == len(_FAKE_STREAM_LINES)
     assert set(df.columns) >= {"Region Id", "Date Of Onset", "Test Suspected For"}
@@ -194,14 +209,11 @@ def test_dashboard_missing_date_start_raises(tmp_path: Path) -> None:
 
 
 @patch.dict("os.environ", _DASHBOARD_ENV, clear=False)
-def test_dashboard_empty_stream_stages_empty_xlsx(tmp_path: Path) -> None:
-    """Empty NDJSON stream = valid 'no cases in window' — stage an empty xlsx.
-
-    The ihip parser recognises header-only files and skips them cleanly, so
-    the caller shouldn't treat an empty window as an error.
+def test_dashboard_empty_stream_writes_no_shard(tmp_path: Path) -> None:
+    """Empty NDJSON stream = no rows to shard by year → no shard file
+    written. list_objects() returns []; the parser sees nothing and skips
+    the source cleanly (existing empty-file semantics).
     """
-    import pandas as pd
-
     with patch("requests.post") as mock_post, patch("requests.get") as mock_get:
         mock_post.return_value = _mock_json_response({"access_token": "T0K3N"})
         mock_get.return_value = _mock_stream_response([])
@@ -211,12 +223,9 @@ def test_dashboard_empty_stream_stages_empty_xlsx(tmp_path: Path) -> None:
         )
         listed = source.list_objects()
 
-    assert len(listed) == 1
-    staged = tmp_path / listed[0]
-    assert staged.exists()
-    # Empty NDJSON → empty DataFrame → header-only csv (readable, zero rows).
-    df = pd.read_csv(staged)
-    assert len(df) == 0
+    assert listed == []
+    # No shard files on disk either.
+    assert list(tmp_path.glob("dashboard_*.csv")) == []
 
 
 @patch.dict("os.environ", _DASHBOARD_ENV, clear=False)
@@ -261,12 +270,28 @@ def test_dashboard_first_run_fetches_full_range(tmp_path: Path) -> None:
 
 @patch.dict("os.environ", _DASHBOARD_ENV, clear=False)
 def test_dashboard_incremental_fetch_uses_backfill_window(tmp_path: Path) -> None:
-    # Pre-seed a "previous run" staged file covering Jan 1 → Jun 1.
-    (tmp_path / "dashboard_2026-01-01_to_2026-06-01.xlsx").write_bytes(_FAKE_XLSX)
+    """Second-run behaviour: with a year shard already on disk, the daily
+    refresh should fetch only ``[date_end - backfill_days + 1, date_end]``
+    — not the full history."""
+    # Pre-seed a year shard so the source treats this as an incremental run.
+    _write_year_shard(
+        tmp_path / "dashboard_2026.csv",
+        [{"Region Id": "district_524", "Sample Collected Date": "2026-01-15"}],
+    )
 
     with patch("requests.post") as mock_post, patch("requests.get") as mock_get:
         mock_post.return_value = _mock_json_response({"access_token": "T0K3N"})
-        mock_get.return_value = _mock_bytes_response(_FAKE_XLSX)
+        # Stream that keeps the shard non-empty post-fetch (so downstream
+        # asserts have something to look at).
+        mock_get.return_value = _mock_stream_response(
+            [
+                (
+                    '{"Region Id": "district_525", '
+                    '"Sample Collected Date": "2026-06-15", '
+                    '"Test Suspected For": "Dengue"}'
+                )
+            ]
+        )
         source = load_source(
             "dashboard",
             {
@@ -278,35 +303,54 @@ def test_dashboard_incremental_fetch_uses_backfill_window(tmp_path: Path) -> Non
         )
         listed = source.list_objects()
 
-    # New fetch should cover latest_end (Jun 1) - 29 days = May 3 → Jun 30.
+    # Fetch window = date_end (Jun 30) - 29 days = Jun 1 → Jun 30.
     get_params = mock_get.call_args.kwargs["params"]
-    assert get_params["from"] == "2026-05-03"
+    assert get_params["from"] == "2026-06-01"
     assert get_params["to"] == "2026-06-30"
 
-    # The old Jan 1 → Jun 1 file PARTIALLY overlaps the new May 3 → Jun 30
-    # fetch but is NOT fully contained in it (existing_start=Jan 1 <
-    # fetch_from=May 3). Per the safer contained-only delete policy, it is
-    # kept — data loss on the Jan–May portion would otherwise be permanent
-    # if the new fetch fails.
-    # Pre-existing xlsx snapshot stays as-is (transitional — trim preserves
-    # format). New fetch writes csv (bounded-memory serialisation).
-    assert set(listed) == {
-        "dashboard_2026-01-01_to_2026-06-01.xlsx",
-        "dashboard_2026-05-03_to_2026-06-30.csv",
-    }
-    assert (tmp_path / "dashboard_2026-01-01_to_2026-06-01.xlsx").exists()
+    # Still exactly one shard on disk (2026), with pre-cutoff row kept and
+    # the fresh Jun 15 row appended.
+    assert listed == ["dashboard_2026.csv"]
+    df = pd.read_csv(tmp_path / "dashboard_2026.csv")
+    assert set(df["Sample Collected Date"]) == {"2026-01-15", "2026-06-15"}
 
 
 @patch.dict("os.environ", _DASHBOARD_ENV, clear=False)
-def test_dashboard_non_overlapping_older_files_preserved(tmp_path: Path) -> None:
-    # An older file that does NOT overlap the backfill window.
-    (tmp_path / "dashboard_2024-01-01_to_2024-12-31.xlsx").write_bytes(_FAKE_XLSX)
-    # A recent file that DOES overlap.
-    (tmp_path / "dashboard_2026-05-01_to_2026-06-15.xlsx").write_bytes(_FAKE_XLSX)
+def test_dashboard_historical_year_shards_are_not_re_read(tmp_path: Path) -> None:
+    """Year-sharded design invariant: a daily backfill run only touches the
+    year(s) intersected by the ``[cutoff, date_end]`` window. Older year
+    shards (e.g. 2024) are cold storage and MUST NOT be rewritten. Their
+    mtime should be unchanged after the run, proving the source didn't
+    even read them (let alone write)."""
+    import os
+    import time
+
+    # Pre-seed a historical shard (2024) and a current-year shard (2026).
+    old_shard = tmp_path / "dashboard_2024.csv"
+    cur_shard = tmp_path / "dashboard_2026.csv"
+    _write_year_shard(
+        old_shard, [{"Sample Collected Date": "2024-07-15", "Region Id": "district_1"}]
+    )
+    _write_year_shard(
+        cur_shard, [{"Sample Collected Date": "2026-01-10", "Region Id": "district_2"}]
+    )
+    # Back-date the mtimes so we can detect a rewrite as an mtime change.
+    long_ago = time.time() - 3600
+    os.utime(old_shard, (long_ago, long_ago))
+    os.utime(cur_shard, (long_ago, long_ago))
+    old_mtime = old_shard.stat().st_mtime
 
     with patch("requests.post") as mock_post, patch("requests.get") as mock_get:
         mock_post.return_value = _mock_json_response({"access_token": "T0K3N"})
-        mock_get.return_value = _mock_bytes_response(_FAKE_XLSX)
+        mock_get.return_value = _mock_stream_response(
+            [
+                (
+                    '{"Region Id": "district_3", '
+                    '"Sample Collected Date": "2026-06-15", '
+                    '"Test Suspected For": "Dengue"}'
+                )
+            ]
+        )
         source = load_source(
             "dashboard",
             {
@@ -318,38 +362,43 @@ def test_dashboard_non_overlapping_older_files_preserved(tmp_path: Path) -> None
         )
         listed = source.list_objects()
 
-    # Fetch window: latest_end (Jun 15) - 29 days = May 17 → Jun 30.
+    # Fetch window scoped to backfill: 30 days ending Jun 30.
     get_params = mock_get.call_args.kwargs["params"]
-    assert get_params["from"] == "2026-05-17"
+    assert get_params["from"] == "2026-06-01"
+    assert get_params["to"] == "2026-06-30"
 
-    # Old 2024 file is preserved (no overlap at all). The May 1 → Jun 15 file
-    # partially overlaps the new May 17 → Jun 30 fetch but its start extends
-    # BEFORE the fetch window — so under the safer contained-only delete
-    # policy it is kept (its May 1–16 rows would otherwise be permanently
-    # lost if the new fetch failed).
-    assert (tmp_path / "dashboard_2024-01-01_to_2024-12-31.xlsx").exists()
-    assert (tmp_path / "dashboard_2026-05-01_to_2026-06-15.xlsx").exists()
-    # New gap-fill behavior: the coverage has a hole between 2024-12-31 and
-    # 2026-05-01 (~16 months). The chunked download splits it into
-    # ~365-day chunks: 2025-01-01→2025-12-31 and 2026-01-01→2026-04-30.
-    # Historical xlsx snapshots left untouched. New fetches write csv.
-    assert set(listed) == {
-        "dashboard_2024-01-01_to_2024-12-31.xlsx",
-        "dashboard_2025-01-01_to_2025-12-31.csv",
-        "dashboard_2026-01-01_to_2026-04-30.csv",
-        "dashboard_2026-05-01_to_2026-06-15.xlsx",
-        "dashboard_2026-05-17_to_2026-06-30.csv",
-    }
+    # Both shards still listed.
+    assert set(listed) == {"dashboard_2024.csv", "dashboard_2026.csv"}
+
+    # 2024 shard MUST be byte-identical / mtime-unchanged (cold storage
+    # invariant — this is the whole point of year-sharding).
+    assert (
+        old_shard.stat().st_mtime == old_mtime
+    ), "historical 2024 shard was rewritten — year-sharding invariant broken"
+    # 2026 shard SHOULD have been rewritten (the daily refresh touched it).
+    assert cur_shard.stat().st_mtime > long_ago
+    df = pd.read_csv(cur_shard)
+    assert set(df["Sample Collected Date"]) == {"2026-01-10", "2026-06-15"}
 
 
 @patch.dict("os.environ", _DASHBOARD_ENV, clear=False)
-def test_dashboard_backfill_zero_only_fetches_new(tmp_path: Path) -> None:
-    """backfill_days=0 = fetch only the day after latest_end → date_end."""
-    (tmp_path / "dashboard_2026-01-01_to_2026-06-01.xlsx").write_bytes(_FAKE_XLSX)
+def test_dashboard_backfill_zero_only_fetches_next_year(tmp_path: Path) -> None:
+    """backfill_days=0 means 'never re-fetch a covered year'. With a 2026
+    shard on disk the next fetch is 2027-01-01 → date_end. If date_end is
+    still within 2026 there's nothing new to fetch (network stays quiet).
+
+    This is a deliberate semantic change from the old behaviour (which
+    computed gaps from individual file end dates): year-sharding decides
+    coverage at year granularity, which is coarser but drops the whole
+    coverage-tracking-drift class of bugs."""
+    _write_year_shard(
+        tmp_path / "dashboard_2026.csv",
+        [{"Sample Collected Date": "2026-06-01", "Region Id": "district_1"}],
+    )
 
     with patch("requests.post") as mock_post, patch("requests.get") as mock_get:
         mock_post.return_value = _mock_json_response({"access_token": "T0K3N"})
-        mock_get.return_value = _mock_bytes_response(_FAKE_XLSX)
+        mock_get.return_value = _mock_stream_response([])
         source = load_source(
             "dashboard",
             {
@@ -361,10 +410,8 @@ def test_dashboard_backfill_zero_only_fetches_new(tmp_path: Path) -> None:
         )
         source.list_objects()
 
-    # backfill_days=0 means "no tail re-fetch". The gap after latest_end
-    # (Jun 1) is [Jun 2, Jun 30]. So fetch_from = 2026-06-02.
-    get_params = mock_get.call_args.kwargs["params"]
-    assert get_params["from"] == "2026-06-02"
+    # backfill_days=0 and 2026 already covered → no fetch called.
+    assert mock_get.call_count == 0
 
 
 @patch.dict("os.environ", _DASHBOARD_ENV, clear=False)
@@ -381,13 +428,14 @@ def test_dashboard_invalid_backfill_days_raises(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Consolidation — regression tests for the 200+ overlapping-snapshots bug.
+# Year-sharded staging — regression tests for the Aug 2026 refactor.
 #
-# Trigger: on production caller nodes ka_datasets/raw_case/ accumulated 280+
-# heavily overlapping dashboard_*.xlsx snapshots. The parse step's row-count
-# groupby then inflated case counts 20-100× (a single real case appeared in
-# ~80 files → counted 80 times). The fix: at end of every _ensure_staged run,
-# collapse the staging dir into ONE deduped snapshot.
+# Previous designs stored one xlsx per fetch chunk (which accumulated 280+
+# overlapping snapshots and inflated case counts 20-100×) or one consolidated
+# xlsx (which OOM'd t3.micro at ~80 MB when pandas read the whole history).
+# Year-sharded caps peak RAM at one year's worth of rows, keeps historical
+# data in cold storage, and uses drop-and-refetch by date window for daily
+# refresh — no dedup logic, no rename dance, no trim state.
 # ---------------------------------------------------------------------------
 
 
@@ -399,51 +447,42 @@ def _write_ihip_xlsx(path: Path, rows: list[dict[str, Any]]) -> None:
 
 
 @patch.dict("os.environ", _DASHBOARD_ENV, clear=False)
-def test_dashboard_consolidates_overlapping_snapshots_into_one_file(
+def test_dashboard_daily_run_drops_and_refetches_backfill_window(
     tmp_path: Path,
 ) -> None:
-    """After a run, staging dir contains exactly ONE dashboard_*.xlsx —
-    regardless of how many overlapping snapshots were on disk before.
+    """Core year-sharded invariant: a daily run
+      1. drops rows dated >= (date_end - backfill_days + 1) from the year shard
+      2. concats fresh fetch rows for that year
+      3. atomic-writes the shard back
 
-    Simulates the production failure mode: two "cumulative" snapshots plus
-    one fresh fetch, all containing the same case (same Patient Specimen Id).
-    Post-run the folder must have one file and the case must appear exactly
-    once inside it (not thrice).
-    """
-    import pandas as pd  # noqa: PLC0415
+    So rows OUTSIDE the backfill window survive untouched, and rows INSIDE
+    the window are replaced wholesale by the fresh fetch — no dedup logic,
+    no accumulation."""
+    # Pre-seed a 2026 shard with rows both inside AND outside the coming
+    # 30-day backfill window (which will be Jun 1 → Jun 30 for date_end=Jun 30).
+    _write_year_shard(
+        tmp_path / "dashboard_2026.csv",
+        [
+            # Outside the backfill window — MUST survive.
+            {"Sample Collected Date": "2026-03-15", "Region Id": "district_1"},
+            {"Sample Collected Date": "2026-05-30", "Region Id": "district_2"},
+            # Inside the backfill window — MUST be dropped and replaced.
+            {"Sample Collected Date": "2026-06-05", "Region Id": "district_stale"},
+            {"Sample Collected Date": "2026-06-20", "Region Id": "district_stale"},
+        ],
+    )
 
-    # Case duplicated across two older overlapping snapshots.
-    shared = {
-        "Region Id": "district_524",
-        "Sample Collected Date": "2026-05-10",
-        "Patient Specimen Id": "SPEC-A-001",
-        "Test Suspected For": "Dengue",
-    }
-    older_unique = {
-        "Region Id": "district_524",
-        "Sample Collected Date": "2026-04-15",
-        "Patient Specimen Id": "SPEC-A-002",
-        "Test Suspected For": "Dengue",
-    }
-    _write_ihip_xlsx(
-        tmp_path / "dashboard_2026-01-01_to_2026-05-15.xlsx",
-        [older_unique, shared],
-    )
-    _write_ihip_xlsx(
-        tmp_path / "dashboard_2026-01-01_to_2026-05-20.xlsx",
-        [older_unique, shared],
-    )
-    # The new fetch (mocked below) delivers the same shared case again plus
-    # a fresh row post-2026-05-20.
+    # Fresh fetch delivers different rows for the backfill window.
     fresh_stream = [
-        # NDJSON re-emits the already-known shared case + one new case.
         (
-            '{"Region Id":"district_524","Sample Collected Date":"2026-05-10",'
-            '"Patient Specimen Id":"SPEC-A-001","Test Suspected For":"Dengue"}'
+            '{"Region Id": "district_fresh_1", '
+            '"Sample Collected Date": "2026-06-10", '
+            '"Test Suspected For": "Dengue"}'
         ),
         (
-            '{"Region Id":"district_525","Sample Collected Date":"2026-05-25",'
-            '"Patient Specimen Id":"SPEC-A-003","Test Suspected For":"Dengue"}'
+            '{"Region Id": "district_fresh_2", '
+            '"Sample Collected Date": "2026-06-25", '
+            '"Test Suspected For": "Dengue"}'
         ),
     ]
 
@@ -455,55 +494,86 @@ def test_dashboard_consolidates_overlapping_snapshots_into_one_file(
             {
                 "source_path": str(tmp_path),
                 "date_start": "2026-01-01",
-                "date_end": "2026-05-31",
+                "date_end": "2026-06-30",
                 "backfill_days": 30,
             },
         )
         listed = source.list_objects()
 
-    # Exactly one dashboard_*.{csv,xlsx} on disk post-run.
-    dashboard_files = list(tmp_path.glob("dashboard_*.csv")) + list(
-        tmp_path.glob("dashboard_*.xlsx")
-    )
-    assert (
-        len(dashboard_files) == 1
-    ), f"expected 1 consolidated file, got {[p.name for p in dashboard_files]}"
-    assert listed == [dashboard_files[0].name]
+    assert listed == ["dashboard_2026.csv"]
+    df = pd.read_csv(tmp_path / "dashboard_2026.csv")
 
-    # And the consolidated file has each unique case exactly once.
-    # Consolidation writes csv (bounded-memory serialisation) regardless of
-    # what format the input files were.
-    df = pd.read_csv(dashboard_files[0])
-    assert len(df) == 3, f"expected 3 unique cases post-dedup, got {len(df)}"
-    specimen_ids = sorted(df["Patient Specimen Id"].dropna().tolist())
-    assert specimen_ids == ["SPEC-A-001", "SPEC-A-002", "SPEC-A-003"]
-    # Consolidated filename spans the deduped rows' date range.
-    assert dashboard_files[0].name == "dashboard_2026-04-15_to_2026-05-25.csv"
+    # Pre-cutoff rows preserved.
+    outside_dates = {"2026-03-15", "2026-05-30"}
+    # Stale-in-window rows dropped.
+    stale_dates = {"2026-06-05", "2026-06-20"}
+    # Fresh-in-window rows appended.
+    fresh_dates = {"2026-06-10", "2026-06-25"}
+
+    got = set(df["Sample Collected Date"].dropna().tolist())
+    assert outside_dates.issubset(got), "pre-cutoff rows were lost"
+    assert got.isdisjoint(
+        stale_dates
+    ), "stale in-window rows survived — drop-and-refetch failed"
+    assert fresh_dates.issubset(got), "fresh fetch rows didn't land in the shard"
 
 
 @patch.dict("os.environ", _DASHBOARD_ENV, clear=False)
-def test_dashboard_consolidate_left_alone_when_files_unreadable(
-    tmp_path: Path,
-) -> None:
-    """If any staged file can't be read as xlsx (partial download, corrupt
-    archive), consolidation MUST skip rather than silently drop data.
-
-    Guards the invariant: consolidation is a no-op-on-failure, never a
-    destructive operation on files it doesn't fully understand.
-    """
-    # One readable real xlsx + one garbage file. Consolidation must abort.
+def test_dashboard_legacy_files_migrate_to_year_shards(tmp_path: Path) -> None:
+    """First-run migration: legacy dashboard_<from>_to_<to>.{csv,xlsx} files
+    left over from earlier designs should be read once, sharded by year, and
+    the originals deleted. Preserves all rows; keeps rows in their own year."""
     _write_ihip_xlsx(
-        tmp_path / "dashboard_2026-01-01_to_2026-05-15.xlsx",
+        tmp_path / "dashboard_2024-01-01_to_2024-12-31.xlsx",
         [
-            {
-                "Region Id": "district_524",
-                "Sample Collected Date": "2026-05-10",
-                "Patient Specimen Id": "SPEC-B-001",
-                "Test Suspected For": "Dengue",
-            }
+            {"Sample Collected Date": "2024-07-15", "Region Id": "district_A"},
+            {"Sample Collected Date": "2024-11-20", "Region Id": "district_B"},
         ],
     )
-    (tmp_path / "dashboard_2026-05-01_to_2026-05-31.xlsx").write_bytes(_FAKE_XLSX)
+    _write_ihip_xlsx(
+        tmp_path / "dashboard_2025-01-01_to_2025-12-31.xlsx",
+        [
+            {"Sample Collected Date": "2025-06-10", "Region Id": "district_C"},
+        ],
+    )
+
+    with patch("requests.post") as mock_post, patch("requests.get") as mock_get:
+        mock_post.return_value = _mock_json_response({"access_token": "T0K3N"})
+        # Empty stream — we're testing migration only, not fresh fetch merge.
+        mock_get.return_value = _mock_stream_response([])
+        source = load_source(
+            "dashboard",
+            {
+                "source_path": str(tmp_path),
+                "date_start": "2024-01-01",
+                "date_end": "2025-12-31",
+                "backfill_days": 30,
+            },
+        )
+        listed = source.list_objects()
+
+    # Legacy files replaced with year shards.
+    assert "dashboard_2024.csv" in listed
+    assert "dashboard_2025.csv" in listed
+    assert not (tmp_path / "dashboard_2024-01-01_to_2024-12-31.xlsx").exists()
+    assert not (tmp_path / "dashboard_2025-01-01_to_2025-12-31.xlsx").exists()
+
+    df24 = pd.read_csv(tmp_path / "dashboard_2024.csv")
+    df25 = pd.read_csv(tmp_path / "dashboard_2025.csv")
+    assert set(df24["Sample Collected Date"]) == {"2024-07-15", "2024-11-20"}
+    assert set(df25["Sample Collected Date"]) == {"2025-06-10"}
+
+
+@patch.dict("os.environ", _DASHBOARD_ENV, clear=False)
+def test_dashboard_legacy_migration_left_alone_when_unreadable(
+    tmp_path: Path,
+) -> None:
+    """If a legacy file can't be read (fake bytes, corrupt archive), migration
+    MUST leave it in place rather than silently drop data. On the next run
+    it'll be retried; if still unreadable, an operator can inspect it manually.
+    """
+    # A garbage 'xlsx' — pandas.read_excel will raise on this.
+    (tmp_path / "dashboard_2024-01-01_to_2024-12-31.xlsx").write_bytes(_FAKE_XLSX)
 
     with patch("requests.post") as mock_post, patch("requests.get") as mock_get:
         mock_post.return_value = _mock_json_response({"access_token": "T0K3N"})
@@ -512,19 +582,14 @@ def test_dashboard_consolidate_left_alone_when_files_unreadable(
             "dashboard",
             {
                 "source_path": str(tmp_path),
-                "date_start": "2026-01-01",
-                "date_end": "2026-05-31",
+                "date_start": "2024-01-01",
+                "date_end": "2025-12-31",
                 "backfill_days": 30,
             },
         )
         source.list_objects()
 
-    # Consolidation was skipped (file unreadable) so we still have >1 file.
-    # The pre-existing trim step may have renamed the real file, but at no
-    # point did we collapse the readable + unreadable pair into a single file
-    # — that would risk silently dropping the unreadable file's rows.
-    files_after = sorted(p.name for p in tmp_path.glob("dashboard_*.xlsx"))
-    assert (
-        len(files_after) >= 2
-    ), f"consolidation should have bailed, but folder ended with: {files_after}"
-    assert "dashboard_2026-05-01_to_2026-05-31.xlsx" in files_after
+    # Legacy file NOT deleted.
+    assert (tmp_path / "dashboard_2024-01-01_to_2024-12-31.xlsx").exists()
+    # No spurious shard files got created either.
+    assert list(tmp_path.glob("dashboard_2024.csv")) == []

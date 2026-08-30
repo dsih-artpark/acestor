@@ -91,6 +91,11 @@ _EXPORT_PATH = "/api/cases/export/stream"
 _STAGED_FILENAME_RE = re.compile(
     r"^dashboard_(\d{4}-\d{2}-\d{2})_to_(\d{4}-\d{2}-\d{2})\.(?:csv|xlsx)$"
 )
+# Year-sharded staging (introduced Aug 2026 to replace single-consolidated-
+# file staging). Peak memory during daily refresh is capped at one year's
+# worth of rows regardless of how many years accumulate — the historical
+# year files are cold storage, never re-read after the year ends.
+_YEAR_SHARD_RE = re.compile(r"^dashboard_(\d{4})\.csv$")
 # New writes are ``.csv``. openpyxl's cost of materialising a big xlsx in RAM
 # (~1 KB/cell, so a 200k-row × 30-col linelist peaks at 6-8 GB) OOM'd t3.micro
 # and even bigger caller instances during the 2026-08-27 backfill of a
@@ -153,45 +158,6 @@ def _parse_date(s: str) -> date:
     return datetime.strptime(s, "%Y-%m-%d").date()
 
 
-def _subtract_coverage(
-    window_start: date,
-    window_end: date,
-    coverage: list[tuple[date, date]],
-) -> list[tuple[date, date]]:
-    """Return sub-ranges of [window_start, window_end] not covered by any span."""
-    if not coverage:
-        return [(window_start, window_end)]
-    # Clip + sort by start.
-    clipped = sorted(
-        (max(s, window_start), min(e, window_end))
-        for s, e in coverage
-        if e >= window_start and s <= window_end
-    )
-    gaps: list[tuple[date, date]] = []
-    cursor = window_start
-    for s, e in clipped:
-        if s > cursor:
-            gaps.append((cursor, s - timedelta(days=1)))
-        if e >= cursor:
-            cursor = e + timedelta(days=1)
-    if cursor <= window_end:
-        gaps.append((cursor, window_end))
-    return gaps
-
-
-def _merge_into(ranges: list[tuple[date, date]], new: tuple[date, date]) -> None:
-    """Insert ``new`` into a sorted list of (start, end), merging overlaps."""
-    ranges.append(new)
-    ranges.sort()
-    merged: list[tuple[date, date]] = []
-    for s, e in ranges:
-        if merged and s <= merged[-1][1] + timedelta(days=1):
-            merged[-1] = (merged[-1][0], max(merged[-1][1], e))
-        else:
-            merged.append((s, e))
-    ranges[:] = merged
-
-
 def _scan_staged_files(staging_dir: Path) -> list[tuple[date, date, Path]]:
     """Return (start_date, end_date, path) for every dashboard_*.xlsx already staged."""
     if not staging_dir.exists():
@@ -206,6 +172,23 @@ def _scan_staged_files(staging_dir: Path) -> list[tuple[date, date, Path]]:
         except ValueError:
             continue
     return out
+
+
+def _scan_year_shards(staging_dir: Path) -> list[tuple[int, Path]]:
+    """Return (year, path) for every ``dashboard_YYYY.csv`` in the staging dir,
+    sorted ascending by year."""
+    if not staging_dir.exists():
+        return []
+    out: list[tuple[int, Path]] = []
+    for p in sorted(staging_dir.iterdir()):
+        m = _YEAR_SHARD_RE.match(p.name)
+        if m is None:
+            continue
+        try:
+            out.append((int(m.group(1)), p))
+        except ValueError:
+            continue
+    return sorted(out)
 
 
 def _read_staged_file(path: Path):
@@ -275,64 +258,6 @@ def _read_max_date_from_file(
 
 # Preserve the old name for callers that haven't migrated yet.
 _read_max_date_from_xlsx = _read_max_date_from_file
-
-
-def _trim_file_in_place(
-    path: Path, cutoff: date, date_cols: tuple[str, ...] = _DEFAULT_DATE_CANDIDATE_COLS
-) -> tuple[int, int]:
-    """Drop rows whose max(row date) >= cutoff, save via atomic replace.
-
-    Returns (rows_before, rows_after). Rows are dropped when *any* configured
-    date column on that row falls at or after ``cutoff`` — conservative, so
-    the incremental refetch of the [cutoff, today] window can't produce a
-    duplicate. If none of the candidate columns are present, the file is
-    left alone.
-
-    Format-agnostic: reads and rewrites in whatever format the file already
-    uses (csv or xlsx). Trimming an xlsx-format file preserves xlsx; a
-    csv-format file stays csv.
-    """
-    import pandas as pd  # noqa: PLC0415
-
-    try:
-        df = _read_staged_file(path)
-    except Exception as exc:
-        # Not a readable staged file (corrupt, wrong format, test fixture...).
-        # Leave the file alone rather than crashing the whole prep run.
-        log.warning(
-            "case_sources.dashboard: could not read %s for trimming (%s) — "
-            "left in place, no trim applied",
-            path.name,
-            exc,
-        )
-        return 0, 0
-    present = [c for c in date_cols if c in df.columns]
-    if not present:
-        return len(df), len(df)
-    cutoff_ts = pd.Timestamp(cutoff)
-    at_or_after = pd.Series(False, index=df.index)
-    for c in present:
-        parsed = pd.to_datetime(df[c], errors="coerce")
-        at_or_after |= parsed >= cutoff_ts
-    kept = df[~at_or_after]
-    if len(kept) == len(df):
-        return len(df), len(df)
-    tmp = path.with_suffix(path.suffix + ".trimming")
-    _write_staged_file(kept, tmp)
-    # Sanity-check the write before swapping.
-    try:
-        _read_staged_file(tmp)
-    except Exception as exc:
-        tmp.unlink(missing_ok=True)
-        raise RuntimeError(
-            f"case_sources.dashboard: trimmed xlsx failed re-read at {tmp}: {exc}"
-        ) from exc
-    os.replace(tmp, path)
-    return len(df), len(kept)
-
-
-# Legacy alias — callers migrated to _trim_file_in_place.
-_trim_xlsx_in_place = _trim_file_in_place
 
 
 def _scan_external_xlsx_max_dates(
@@ -612,25 +537,53 @@ class Source(CaseSource):
 
     _CHUNK_FLOOR_DAYS = 30  # don't halve below this — deeper indicates a real problem
 
-    def _download_chunked(self, from_date: str, to_date: str) -> None:
-        """Walk [from_date, to_date] in chunks of ``self.chunk_days`` and stage each.
+    # ── Year-sharded staging ────────────────────────────────────────────
+    #
+    # Design (replaces the trim/consolidate/rename dance):
+    #
+    # * The staging dir contains one ``dashboard_YYYY.csv`` per year of data.
+    # * Each daily run:
+    #     1. Fetch [cutoff, today] where cutoff = today - backfill_days.
+    #     2. For each year the fetch touched (usually the current year; near
+    #        Jan 1 it may span two years):
+    #        - Read that year's file (if it exists).
+    #        - Drop rows whose date is >= cutoff (the window we just refetched).
+    #        - Concat the fetch's rows for that year.
+    #        - Atomic write back.
+    # * Historical year files are immutable after the year ends. Peak RAM
+    #   is bounded by the size of a single year, never by cumulative history.
+    #
+    # This replaces the previous single-consolidated-file design, whose
+    # daily read-into-pandas of the whole history OOM'd t3.micro once the
+    # file passed ~50 MB. Year-sharding caps the working set at one year
+    # (~25-30 MB on disk → ~150 MB DataFrame) regardless of how many years
+    # accumulate.
 
-        On timeout / 502 / 503 / 504, halve the current chunk and retry the same
-        start date with the shorter end. Below ``_CHUNK_FLOOR_DAYS`` the failure
-        is re-raised — that indicates a real backend problem, not a size issue.
+    def _download_fresh(
+        self, from_date: str, to_date: str
+    ) -> "pd.DataFrame":  # noqa: F821
+        """Fetch ``[from_date, to_date]`` in ``chunk_days``-sized chunks and
+        return the concatenation as a single DataFrame.
+
+        Chunking is retained purely to stay under the 60-second Cloudflare
+        ingress timeout on multi-year fetches during initial seeding; for
+        the typical 30-day backfill it's a single chunk.
         """
+        import io  # noqa: PLC0415
+
+        import pandas as pd  # noqa: PLC0415
+
         cur = _parse_date(from_date)
         end = _parse_date(to_date)
-        total_days = (end - cur).days + 1
+        frames: list[pd.DataFrame] = []
+        n_chunks = 0
         log.info(
-            "case_sources.dashboard: starting chunked download %s → %s "
-            "(%d days total, chunk_days=%d)",
+            "case_sources.dashboard: fetching %s → %s (%d days, chunk_days=%d)",
             from_date,
             to_date,
-            total_days,
+            (end - cur).days + 1,
             self.chunk_days,
         )
-        n_chunks = 0
         while cur <= end:
             chunk_days = self.chunk_days
             n_chunks += 1
@@ -639,7 +592,7 @@ class Source(CaseSource):
                 c_from = cur.isoformat()
                 c_to = chunk_end.isoformat()
                 log.info(
-                    "case_sources.dashboard: [chunk %d] fetching %s → %s " "(%d days)…",
+                    "case_sources.dashboard: [chunk %d] fetching %s → %s (%d days)…",
                     n_chunks,
                     c_from,
                     c_to,
@@ -648,21 +601,10 @@ class Source(CaseSource):
                 try:
                     content = self._download_xlsx(c_from, c_to)
                 except (requests.Timeout, requests.HTTPError) as exc:
-                    if isinstance(exc, requests.HTTPError):
-                        code = getattr(exc.response, "status_code", 0)
-                        transient = code in (502, 503, 504)
-                    else:
-                        transient = True
-                    if not transient:
-                        raise
-                    if chunk_days <= self._CHUNK_FLOOR_DAYS:
-                        log.error(
-                            "case_sources.dashboard: chunk %s → %s failed even at "
-                            "floor size %d days — giving up.",
-                            c_from,
-                            c_to,
-                            self._CHUNK_FLOOR_DAYS,
-                        )
+                    transient = isinstance(exc, requests.Timeout) or getattr(
+                        exc.response, "status_code", 0
+                    ) in (502, 503, 504)
+                    if not transient or chunk_days <= self._CHUNK_FLOOR_DAYS:
                         raise
                     chunk_days = max(self._CHUNK_FLOOR_DAYS, chunk_days // 2)
                     log.warning(
@@ -674,422 +616,278 @@ class Source(CaseSource):
                         chunk_days,
                     )
                     continue
-                filename = f"dashboard_{c_from}_to_{c_to}{_STAGED_FILE_SUFFIX}"
-                out_path = self.staging_dir / filename
-                out_path.write_bytes(content)
+                df = pd.read_csv(io.BytesIO(content))
                 log.info(
-                    "case_sources.dashboard: [chunk %d] wrote %d bytes → %s",
+                    "case_sources.dashboard: [chunk %d] %d rows",
                     n_chunks,
-                    len(content),
-                    out_path,
+                    len(df),
                 )
+                frames.append(df)
                 cur = chunk_end + timedelta(days=1)
                 break
+        if not frames:
+            return pd.DataFrame(columns=list(_IHIP_HEADERS))
+        return pd.concat(frames, ignore_index=True)
 
-    # ------------------------------------------------------------------
-    # CaseSource interface
-    # ------------------------------------------------------------------
+    def _pick_date_col(self, df: "pd.DataFrame") -> str | None:  # noqa: F821
+        """Pick the first ``self.date_cols`` candidate that's populated in
+        ``df``. Same walk order the parser uses so we shard on the column
+        the parser will resolve dates from downstream."""
+        for col in self.date_cols:
+            if col in df.columns and df[col].notna().any():
+                return col
+        return None
 
-    # ------------------------------------------------------------------
-    # Incremental logic
-    # ------------------------------------------------------------------
+    def _migrate_legacy_to_year_shards(self) -> None:
+        """One-shot: convert any legacy ``dashboard_<from>_to_<to>.{csv,xlsx}``
+        files present in the staging dir into ``dashboard_YYYY.csv`` shards.
 
-    def _compute_fetch_window(self) -> tuple[str, str]:
-        """Legacy single-window helper — kept for backward-compat with tests
-        that assert the tail-backfill behaviour. Production path uses
-        :meth:`_compute_fetch_ranges` which also detects gaps in coverage.
-        """
-        end_d = _parse_date(self.date_end)
-        start_d = _parse_date(self.date_start)
-        staged_ends = [rng[1] for rng in _scan_staged_files(self.staging_dir)]
-        external_ends = [
-            d
-            for d, _ in _scan_external_xlsx_max_dates(
-                self.staging_dir, date_cols=self.date_cols
-            )
-        ]
-        all_ends = staged_ends + external_ends
-        if not all_ends:
-            return self.date_start, self.date_end
-        latest_end = max(all_ends)
-        backfill_from = latest_end - timedelta(days=max(0, self.backfill_days - 1))
-        fetch_from = max(start_d, backfill_from)
-        if fetch_from > end_d:
-            fetch_from = end_d
-        return fetch_from.isoformat(), self.date_end
-
-    def _compute_fetch_ranges(self) -> list[tuple[str, str]]:
-        """Return every [from, to] sub-range we still need to fetch.
-
-        Combines two behaviours:
-        1. **Gap detection** — walk the config's ``[date_start, date_end]``
-           window and skip any sub-range already covered by a staged file
-           (both dashboard-pattern and external xlsx). Returns the missing
-           sub-ranges. Fixes the silent-hole bug where a mid-timeline file
-           (e.g. 2023) is deleted or never fetched and the incremental
-           logic never notices.
-        2. **Tail backfill** — the last ``backfill_days`` days of the
-           configured window are always included, so late-arriving cases
-           get re-pulled. Overlaps with existing coverage are OK; the
-           :meth:`_delete_fully_contained_staged` step handles them.
-        """
-        start_d = _parse_date(self.date_start)
-        end_d = _parse_date(self.date_end)
-        if start_d > end_d:
-            return []
-
-        # Coverage from BOTH sources (dashboard-pattern + external xlsx).
-        coverage: list[tuple[date, date]] = [
-            (s, e) for s, e, _ in _scan_staged_files(self.staging_dir)
-        ]
-        for max_d, path in _scan_external_xlsx_max_dates(
-            self.staging_dir, date_cols=self.date_cols
-        ):
-            # External file — assume it covers [date_start, max_d]. Not
-            # perfect (there could be internal gaps we can't see without
-            # reading every row), but a conservative upper bound.
-            coverage.append((start_d, max_d))
-
-        # Compute gaps in the config's window that are NOT covered.
-        gaps = _subtract_coverage(start_d, end_d, coverage)
-
-        # Tail backfill: re-fetch the last ``backfill_days`` ending at the
-        # latest staged end (or date_end if nothing is staged), to catch
-        # late-arriving cases. This may overlap existing coverage — that's
-        # the point; the fresh fetch replaces stale rows in that tail.
-        if self.backfill_days > 0 and coverage:
-            latest_end = max(e for _, e in coverage)
-            backfill_start = max(
-                start_d, latest_end - timedelta(days=self.backfill_days - 1)
-            )
-            if backfill_start <= end_d:
-                # Backfill runs from ``backfill_start`` through date_end so any
-                # new data past ``latest_end`` gets picked up in the same range.
-                _merge_into(gaps, (backfill_start, end_d))
-
-        return [(a.isoformat(), b.isoformat()) for a, b in gaps]
-
-    def _delete_fully_contained_staged(self, from_date: str, to_date: str) -> int:
-        """Reconcile every existing staged file with the new fetch window.
-
-        Three cases:
-
-        1. **Fully contained** (``fetch_from <= existing_start AND existing_end
-           <= fetch_to``) — new fetch strictly supersedes existing → delete.
-        2. **Partial overlap** — trim existing xlsx in place so its rows end
-           at ``fetch_from - 1`` and rename its filename to match. The new
-           fetch supplies everything from ``fetch_from`` onward, so parse
-           sees no duplicate rows.
-        3. **No overlap** — leave alone.
-
-        The trim path handles the common backfill case: an older long-range
-        file (e.g. 12 months of history) that partially overlaps a short
-        30-day refetch at its tail. Before this change we kept both files
-        and warned; now we trim the tail off the old file so parse_case_data
-        never sees the overlap window twice.
-        """
-        fetch_from_d = _parse_date(from_date)
-        fetch_to_d = _parse_date(to_date)
-        removed = 0
-        for existing_start, existing_end, path in _scan_staged_files(self.staging_dir):
-            fully_contained = (
-                fetch_from_d <= existing_start and existing_end <= fetch_to_d
-            )
-            if fully_contained:
-                try:
-                    path.unlink()
-                    removed += 1
-                    log.info(
-                        "case_sources.dashboard: removed superseded staged file %s "
-                        "(covers %s → %s, fully within new fetch)",
-                        path.name,
-                        existing_start.isoformat(),
-                        existing_end.isoformat(),
-                    )
-                except OSError as exc:
-                    log.warning(
-                        "case_sources.dashboard: could not delete %s: %s", path, exc
-                    )
-            elif existing_end >= fetch_from_d and existing_start <= fetch_to_d:
-                # Partially overlapping — trim the existing file so its rows
-                # stop just before the new fetch begins. The new fetch then
-                # supplies everything from fetch_from onwards, and no rows
-                # are double-counted at parse time.
-                new_end = fetch_from_d - timedelta(days=1)
-                if new_end < existing_start:
-                    # Entire existing range is superseded by the new fetch;
-                    # delete outright (same as fully-contained case).
-                    try:
-                        path.unlink()
-                        removed += 1
-                        log.info(
-                            "case_sources.dashboard: removed staged file %s "
-                            "(covers %s → %s, entirely superseded by new fetch %s → %s)",
-                            path.name,
-                            existing_start.isoformat(),
-                            existing_end.isoformat(),
-                            from_date,
-                            to_date,
-                        )
-                    except OSError as exc:
-                        log.warning(
-                            "case_sources.dashboard: could not delete %s: %s",
-                            path,
-                            exc,
-                        )
-                    continue
-                before, after = _trim_xlsx_in_place(
-                    path, cutoff=fetch_from_d, date_cols=self.date_cols
-                )
-                if before == 0 and after == 0:
-                    # trim couldn't run (unreadable / empty / no date columns).
-                    # Leave the file as-is with its original filename — a warning
-                    # was already logged from _trim_xlsx_in_place.
-                    log.warning(
-                        "case_sources.dashboard: partial overlap on %s but trim "
-                        "was a no-op — filename left as-is; parse may see "
-                        "duplicated rows in the overlap window",
-                        path.name,
-                    )
-                    continue
-                # Rename the file to reflect its new (shortened) date range so
-                # future _scan_staged_files reflects reality and future
-                # overlap checks work off correct filename ranges.
-                # Preserve the source file's suffix — trimming an xlsx file
-                # writes back xlsx, trimming a csv writes back csv. Format
-                # never changes underneath the caller.
-                new_name = (
-                    f"dashboard_{existing_start.isoformat()}_to_"
-                    f"{new_end.isoformat()}{path.suffix}"
-                )
-                new_path = path.with_name(new_name)
-                try:
-                    path.rename(new_path)
-                    log.info(
-                        "case_sources.dashboard: trimmed overlapping staged "
-                        "file %s → %s: %d → %d rows (dropped %d rows on/after "
-                        "%s so the new fetch %s → %s doesn't double-count)",
-                        path.name,
-                        new_name,
-                        before,
-                        after,
-                        before - after,
-                        from_date,
-                        from_date,
-                        to_date,
-                    )
-                except OSError as exc:
-                    log.warning(
-                        "case_sources.dashboard: trimmed %s in place but could not "
-                        "rename to %s: %s — filename date range is now stale",
-                        path.name,
-                        new_name,
-                        exc,
-                    )
-        return removed
-
-    def _consolidate_staged(self) -> None:
-        """Collapse every ``dashboard_*.xlsx`` in the staging dir into a single
-        canonical file, deduping rows by patient-id.
-
-        The historical design tried to keep the staging dir tidy via a
-        trim/delete/rename dance in :meth:`_delete_fully_contained_staged`. In
-        practice that dance had two failure modes that let files pile up:
-        rename collisions (two different sources trimmed to the same target
-        filename silently overwrite each other on POSIX), and coverage-tracking
-        drift (once filenames stop reflecting their real content, subsequent
-        fetch-range computations request oversized windows and write yet
-        another cumulative snapshot). On production caller nodes this manifested
-        as 200+ heavily-overlapping snapshots per state, each containing the
-        same real cases, which inflated aggregated case counts by 20-100×.
-
-        Consolidation kills that class of bug at the source: after every run
-        the staging dir contains exactly ONE ``dashboard_<min>_to_<max>.xlsx``
-        with unique rows. The parse step has no way to double-count because
-        the duplicates are physically gone.
-
-        Robustness notes:
-
-        - If any file cannot be read as xlsx (partial download, mock fixture,
-          corrupted archive) it is LEFT ALONE — consolidation is skipped rather
-          than silently dropping data. Operator-provided external xlsx that
-          don't match the ``dashboard_*.xlsx`` pattern are also left alone.
-        - Dedup key preference: ``Patient Specimen Id`` (in production this is
-          100% populated and unique per case), then ``Patient Transaction Id``.
-          If neither is present on ≥50% of rows we skip dedup and keep the
-          concat as-is (better to over-count than to silently collapse rows
-          on a stable key we can't verify).
-        - Atomic write: build the consolidated file at ``.tmp``, then replace,
-          then delete the originals. A crash mid-consolidation leaves the
-          original files intact — the next run just re-attempts.
+        Runs at the top of every ``_ensure_staged`` — is a no-op once
+        migration has happened. Deletes the legacy files after successful
+        write. Safe to interrupt: the shard write is atomic, and legacy
+        files are only deleted after all shards for the years they touched
+        are on disk.
         """
         import pandas as pd  # noqa: PLC0415
 
-        files = sorted(p for _s, _e, p in _scan_staged_files(self.staging_dir))
-        if len(files) <= 1:
+        legacy = [p for _s, _e, p in _scan_staged_files(self.staging_dir)]
+        if not legacy:
             return
 
-        frames: list[pd.DataFrame] = []
-        for path in files:
+        log.info(
+            "case_sources.dashboard: migrating %d legacy staged file(s) → "
+            "year shards",
+            len(legacy),
+        )
+        # Read everything into a per-year map, streaming file-by-file so
+        # peak RAM is one file + accumulated-per-year.
+        by_year: dict[int, list[pd.DataFrame]] = {}
+        for path in legacy:
             try:
-                frames.append(_read_staged_file(path))
+                df = _read_staged_file(path)
             except Exception as exc:  # noqa: BLE001
                 log.warning(
-                    "case_sources.dashboard: consolidate skipped — could not "
-                    "read %s (%s); leaving staging dir untouched",
+                    "case_sources.dashboard: migration skipped for %s (%s) — "
+                    "leaving in place; will retry on next run",
                     path.name,
                     exc,
                 )
                 return
+            date_col = self._pick_date_col(df)
+            if date_col is None:
+                # File has no usable date — can't shard. Leave it alone
+                # (parse step's skip-unreadable-dates path will handle it).
+                log.warning(
+                    "case_sources.dashboard: legacy file %s has no populated "
+                    "date column; leaving in place",
+                    path.name,
+                )
+                continue
+            years = pd.to_datetime(df[date_col], errors="coerce").dt.year
+            for year_value, group in df.groupby(years, dropna=True):
+                by_year.setdefault(int(year_value), []).append(group)
 
-        combined = pd.concat(frames, ignore_index=True)
-        if combined.empty:
+        if not by_year:
             return
 
-        before_rows = len(combined)
-        dedup_key: str | None = None
-        for candidate in ("Patient Specimen Id", "Patient Transaction Id"):
-            if candidate in combined.columns:
-                non_null = combined[candidate].notna().sum()
-                if non_null >= before_rows * 0.5:
-                    dedup_key = candidate
-                    break
-        if dedup_key is not None:
-            combined = combined.drop_duplicates(subset=[dedup_key], keep="last")
+        # Merge with any existing year shards (rare during migration, but
+        # covers the case where the first migration was interrupted after
+        # some shards were written).
+        for year, frames in by_year.items():
+            shard_path = self.staging_dir / f"dashboard_{year}.csv"
+            if shard_path.is_file():
+                try:
+                    frames.insert(0, pd.read_csv(shard_path))
+                except Exception:  # noqa: BLE001
+                    pass  # unreadable — overwrite with legacy data
+            merged = pd.concat(frames, ignore_index=True)
+            self._atomic_write_shard(shard_path, merged)
+            log.info(
+                "case_sources.dashboard: migrated → %s (%d rows)",
+                shard_path.name,
+                len(merged),
+            )
 
-        # New filename = span of the deduped rows' dates. Fall back to the union
-        # of the source filenames' spans if we can't parse a date column.
-        min_d = max_d = None
-        for col in self.date_cols:
-            if col in combined.columns:
-                parsed = pd.to_datetime(combined[col], errors="coerce")
-                if parsed.notna().any():
-                    min_d = parsed.min().date()
-                    max_d = parsed.max().date()
-                    break
-        if min_d is None or max_d is None:
-            spans = [(s, e) for s, e, _p in _scan_staged_files(self.staging_dir)]
-            min_d = min(s for s, _e in spans)
-            max_d = max(e for _s, e in spans)
-
-        new_name = (
-            f"dashboard_{min_d.isoformat()}_to_"
-            f"{max_d.isoformat()}{_STAGED_FILE_SUFFIX}"
-        )
-        tmp = self.staging_dir / (new_name + ".tmp")
-        _write_staged_file(combined, tmp)
-        (self.staging_dir / new_name).unlink(missing_ok=True)
-        tmp.rename(self.staging_dir / new_name)
-
-        removed = 0
-        for path in files:
-            if path.name == new_name:
-                continue
+        # All shards written successfully; safe to delete legacy files.
+        for path in legacy:
             try:
                 path.unlink()
-                removed += 1
             except OSError as exc:
                 log.warning(
-                    "case_sources.dashboard: consolidate could not delete "
-                    "superseded file %s: %s",
+                    "case_sources.dashboard: could not delete migrated legacy "
+                    "file %s: %s",
                     path,
                     exc,
                 )
+
+    def _atomic_write_shard(self, path: Path, df: "pd.DataFrame") -> None:  # noqa: F821
+        """Write ``df`` to ``path`` via ``.tmp`` + ``os.replace``. A crash
+        mid-write leaves the previous shard intact."""
+        tmp = path.with_suffix(".csv.tmp")
+        df.to_csv(tmp, index=False)
+        os.replace(tmp, path)
+
+    def _merge_fresh_into_shards(
+        self, fresh: "pd.DataFrame", cutoff: date  # noqa: F821
+    ) -> None:
+        """Merge freshly-fetched rows into per-year shards.
+
+        For every year the fetch touched:
+          * Read the existing shard (if any) → drop rows dated ``>= cutoff``.
+          * Concat the fresh rows for that year.
+          * Atomic write.
+
+        No dedup logic beyond the delete-and-replace by date range: because
+        the fetch is the source of truth for ``[cutoff, today]``, and we've
+        dropped everything in that window from the existing shard, no row
+        can appear twice.
+        """
+        import pandas as pd  # noqa: PLC0415
+
+        if fresh.empty:
+            log.info("case_sources.dashboard: fresh fetch was empty — nothing to merge")
+            return
+
+        date_col = self._pick_date_col(fresh)
+        if date_col is None:
+            log.warning(
+                "case_sources.dashboard: fresh fetch has no populated date "
+                "column; cannot shard by year — writing as a single dated "
+                "file to avoid data loss"
+            )
+            fallback = (
+                self.staging_dir / f"dashboard_{cutoff.isoformat()}_to_"
+                f"{_parse_date(self.date_end).isoformat()}.csv"
+            )
+            self._atomic_write_shard(fallback, fresh)
+            return
+
+        fresh_dates = pd.to_datetime(fresh[date_col], errors="coerce")
+        years = fresh_dates.dt.year
+        cutoff_ts = pd.Timestamp(cutoff)
+
+        # Distinct years the fetch touches. A daily 30-day fetch usually
+        # produces one year; a fetch spanning Dec/Jan produces two.
+        touched_years = sorted({int(y) for y in years.dropna().unique().tolist()})
         log.info(
-            "case_sources.dashboard: consolidated %d staged file(s) → %s "
-            "(%d rows in, %d rows out, dedup_key=%s)",
-            len(files),
-            new_name,
-            before_rows,
-            len(combined),
-            dedup_key or "<none>",
+            "case_sources.dashboard: merging fresh fetch into shards for "
+            "year(s) %s (cutoff %s)",
+            touched_years,
+            cutoff.isoformat(),
         )
+        for year in touched_years:
+            shard_path = self.staging_dir / f"dashboard_{year}.csv"
+            fresh_slice = fresh[years == year]
+
+            if shard_path.is_file():
+                try:
+                    existing = pd.read_csv(shard_path)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning(
+                        "case_sources.dashboard: existing shard %s unreadable "
+                        "(%s) — replacing with fresh data (may lose "
+                        "pre-cutoff rows if the file was actually valid)",
+                        shard_path.name,
+                        exc,
+                    )
+                    existing = pd.DataFrame(columns=fresh_slice.columns)
+                if date_col in existing.columns:
+                    existing_ts = pd.to_datetime(existing[date_col], errors="coerce")
+                    keep_mask = existing_ts.isna() | (existing_ts < cutoff_ts)
+                    keep = existing[keep_mask]
+                else:
+                    # Existing shard was written from a fetch whose date
+                    # column differed. Keep it all and let dedup fall out
+                    # of the concat (best effort).
+                    keep = existing
+            else:
+                keep = pd.DataFrame(columns=fresh_slice.columns)
+
+            merged = pd.concat([keep, fresh_slice], ignore_index=True)
+            self._atomic_write_shard(shard_path, merged)
+            log.info(
+                "case_sources.dashboard: %s → %d rows (%d kept pre-cutoff + "
+                "%d fresh)",
+                shard_path.name,
+                len(merged),
+                len(keep),
+                len(fresh_slice),
+            )
 
     def _ensure_staged(self) -> list[str]:
-        """Fetch every missing sub-range in [date_start, date_end], stage each.
+        """Year-sharded refresh.
 
-        1. Compute the list of sub-ranges we still need (gaps in coverage +
-           tail backfill window) via :meth:`_compute_fetch_ranges`.
-        2. For each range, delete any fully-superseded prior file, trim
-           external xlsx rows that overlap, then chunked-download.
-        3. Consolidate every ``dashboard_*.xlsx`` into a single deduped file
-           via :meth:`_consolidate_staged` so subsequent runs never see
-           accumulated overlapping snapshots.
-        4. Return the merged list of all xlsx now on disk.
+        1. Migrate any legacy ``dashboard_<from>_to_<to>.{csv,xlsx}`` files
+           to per-year shards (no-op after the first successful run).
+        2. Compute fetch window ``[cutoff, today]``:
+              - If no shards exist yet: full-history seed from ``date_start``.
+              - Otherwise: ``today - backfill_days``.
+        3. Fetch fresh rows into a DataFrame.
+        4. For each year the fetch touched: drop existing rows dated
+           ``>= cutoff`` from that year's shard, concat the fresh rows for
+           that year, atomic write.
+        5. Return the list of shards + any external xlsx files.
+
+        No trim, no rename, no consolidate. Peak memory is bounded by one
+        year's rows.
         """
         if self._staged_paths is not None:
             return self._staged_paths
         self.staging_dir.mkdir(parents=True, exist_ok=True)
 
-        ranges = self._compute_fetch_ranges()
-        if not ranges:
-            log.info(
-                "case_sources.dashboard: no fetch ranges — full window "
-                "%s → %s already covered on disk.",
-                self.date_start,
-                self.date_end,
-            )
-        else:
-            log.info(
-                "case_sources.dashboard: %d fetch range(s) to cover — %s",
-                len(ranges),
-                ", ".join(f"{a}→{b}" for a, b in ranges),
-            )
+        self._migrate_legacy_to_year_shards()
 
-        for from_date, to_date in ranges:
-            log.info(
-                "case_sources.dashboard: processing range %s → %s "
-                "(backfill_days=%d, chunk_days=%d)",
-                from_date,
-                to_date,
-                self.backfill_days,
-                self.chunk_days,
-            )
-            removed = self._delete_fully_contained_staged(from_date, to_date)
-            if removed:
+        end_d = _parse_date(self.date_end)
+        start_d = _parse_date(self.date_start)
+        existing_shards = _scan_year_shards(self.staging_dir)
+
+        if existing_shards and self.backfill_days > 0:
+            # Daily refresh: refetch the tail window.
+            cutoff = end_d - timedelta(days=max(0, self.backfill_days - 1))
+            cutoff = max(cutoff, start_d)
+        elif existing_shards and self.backfill_days == 0:
+            # Explicit no-backfill: fetch only whatever hasn't been seen.
+            # Use max shard year to estimate "seen through end of that year";
+            # anything from the next year onwards is fetched.
+            max_year = existing_shards[-1][0]
+            cutoff = max(start_d, date(max_year + 1, 1, 1))
+            if cutoff > end_d:
                 log.info(
-                    "case_sources.dashboard: removed %d fully-superseded "
-                    "staged file(s) before writing the new fetch",
-                    removed,
+                    "case_sources.dashboard: backfill_days=0 and all shards "
+                    "up-to-date — nothing to fetch"
                 )
-            # External files (non-dashboard-pattern xlsx dropped in by the
-            # operator): trim their rows on/after fetch_from so the refetch
-            # can't double-count.
-            fetch_from_d = _parse_date(from_date)
-            for _max_d, ext_path in _scan_external_xlsx_max_dates(
-                self.staging_dir, date_cols=self.date_cols
-            ):
-                before, after = _trim_xlsx_in_place(
-                    ext_path, cutoff=fetch_from_d, date_cols=self.date_cols
-                )
-                if before != after:
-                    log.info(
-                        "case_sources.dashboard: trimmed %s: %d → %d rows "
-                        "(dropped %d rows on/after %s to make room for "
-                        "refetch)",
-                        ext_path.name,
-                        before,
-                        after,
-                        before - after,
-                        from_date,
-                    )
-            self._download_chunked(from_date, to_date)
-        # Collapse every dashboard_*.xlsx into one deduped snapshot so the
-        # parse step can never double-count across overlapping fetches. See
-        # _consolidate_staged for the failure modes this prevents.
-        self._consolidate_staged()
-        # Return every xlsx now on disk — both dashboard_*.xlsx (our own writes)
-        # and any operator-provided external xlsx that survived trimming.
-        # parse_case_data reads them all; older files stay untouched.
-        owned = [p.name for _, _, p in _scan_staged_files(self.staging_dir)]
+                self._staged_paths = self._collect_staged_paths()
+                return self._staged_paths
+        else:
+            # First-ever run: full-history seed.
+            cutoff = start_d
+
+        log.info(
+            "case_sources.dashboard: refresh window %s → %s (backfill_days=%d, "
+            "%d shard(s) already on disk)",
+            cutoff.isoformat(),
+            end_d.isoformat(),
+            self.backfill_days,
+            len(existing_shards),
+        )
+        fresh = self._download_fresh(cutoff.isoformat(), end_d.isoformat())
+        self._merge_fresh_into_shards(fresh, cutoff=cutoff)
+
+        self._staged_paths = self._collect_staged_paths()
+        return self._staged_paths
+
+    def _collect_staged_paths(self) -> list[str]:
+        """List every file the parser should read: year shards + any
+        operator-provided external xlsx files that survived migration."""
+        owned = [p.name for _y, p in _scan_year_shards(self.staging_dir)]
+        legacy = [p.name for _s, _e, p in _scan_staged_files(self.staging_dir)]
         external = [
             p.name
             for _, p in _scan_external_xlsx_max_dates(
                 self.staging_dir, date_cols=self.date_cols
             )
         ]
-        self._staged_paths = sorted(owned + external)
-        return self._staged_paths
+        return sorted(set(owned + legacy + external))
 
     def list_objects(self, prefix: str = "") -> list[str]:
         return [p for p in self._ensure_staged() if p.startswith(prefix)]
