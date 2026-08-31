@@ -180,13 +180,17 @@ def test_dashboard_source_logs_in_and_stages_xlsx(tmp_path: Path) -> None:
         "password": "hunter2",
     }
 
-    # /api/cases/export/stream called with bearer + from/to + stream=True
-    get_call = mock_get.call_args
-    assert get_call.args[0].endswith("/api/cases/export/stream")
-    assert get_call.kwargs["headers"]["Authorization"] == "Bearer T0K3N"
-    assert get_call.kwargs["params"]["from"] == "2026-01-01"
-    assert get_call.kwargs["params"]["to"] == "2026-06-30"
-    assert get_call.kwargs["stream"] is True
+    # /api/cases/export/stream called with bearer + stream=True. With
+    # chunk_days=90 (default), a 6-month fetch splits into multiple sub-
+    # windows — assert the FIRST call covers the requested start date and
+    # the LAST covers the requested end date.
+    first_call = mock_get.call_args_list[0]
+    last_call = mock_get.call_args_list[-1]
+    assert first_call.args[0].endswith("/api/cases/export/stream")
+    assert first_call.kwargs["headers"]["Authorization"] == "Bearer T0K3N"
+    assert first_call.kwargs["params"]["from"] == "2026-01-01"
+    assert last_call.kwargs["params"]["to"] == "2026-06-30"
+    assert first_call.kwargs["stream"] is True
 
 
 @patch.dict("os.environ", {}, clear=True)
@@ -263,9 +267,14 @@ def test_dashboard_first_run_fetches_full_range(tmp_path: Path) -> None:
         )
         source.list_objects()
 
-    get_params = mock_get.call_args.kwargs["params"]
-    assert get_params["from"] == "2026-01-01"
-    assert get_params["to"] == "2026-06-30"
+    # Full-range first-run: first HTTP call starts at date_start, last
+    # call ends at date_end. (Range may split into multiple chunk_days
+    # sub-windows — default 90 — so assert the range endpoints, not one
+    # single call.)
+    first_call = mock_get.call_args_list[0]
+    last_call = mock_get.call_args_list[-1]
+    assert first_call.kwargs["params"]["from"] == "2026-01-01"
+    assert last_call.kwargs["params"]["to"] == "2026-06-30"
 
 
 @patch.dict("os.environ", _DASHBOARD_ENV, clear=False)

@@ -35,7 +35,7 @@ YAML (data.case_download):
     date_end:      ""                            # empty → today; sent as `?to=`
     backfill_days: 30                            # on repeat runs, re-fetch last N days
     disease:       "Dengue"                      # optional filter passed through
-    chunk_days:    365                           # split fetch window into N-day chunks to avoid 504s
+    chunk_days:    90                            # split fetch window into N-day chunks; caps per-HTTP RAM
 
 Environment variables:
     DASHBOARD_URL           — base URL (fallback if base_url not in YAML)
@@ -296,7 +296,7 @@ class Source(CaseSource):
         disease: str | None = None,
         selected_region_id: str | None = None,
         date_cols: tuple[str, ...] = _DEFAULT_DATE_CANDIDATE_COLS,
-        chunk_days: int = 365,
+        chunk_days: int = 90,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.client_id = client_id
@@ -386,8 +386,18 @@ class Source(CaseSource):
                 or None
             ),
             date_cols=tuple(config.get("date_column") or _DEFAULT_DATE_CANDIDATE_COLS),
+            # Default 90 days per HTTP fetch (was 365). ``_download_xlsx``
+            # accumulates the full chunk's records in a Python list before
+            # yielding a DataFrame, so peak RAM scales linearly with
+            # chunk_days × records/day. A 365-day chunk during a peak-season
+            # year (e.g. KA 2023: ~134k rows) allocated ~500-700 MB, pushing
+            # t3.micro (1 GB) into swap and making SSH unresponsive
+            # (2026-08-31 ka-district-prep). 90-day chunks cap allocation at
+            # ~60-80 MB — safe on t3.micro. Trade-off: ~4x more HTTP round
+            # trips during a full-history seed (~30-60 s added). Configs and
+            # DASHBOARD_CHUNK_DAYS still override.
             chunk_days=int(
-                config.get("chunk_days") or os.getenv("DASHBOARD_CHUNK_DAYS") or 365
+                config.get("chunk_days") or os.getenv("DASHBOARD_CHUNK_DAYS") or 90
             ),
         )
 
