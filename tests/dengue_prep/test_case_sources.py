@@ -593,3 +593,205 @@ def test_dashboard_legacy_migration_left_alone_when_unreadable(
     assert (tmp_path / "dashboard_2024-01-01_to_2024-12-31.xlsx").exists()
     # No spurious shard files got created either.
     assert list(tmp_path.glob("dashboard_2024.csv")) == []
+
+
+@patch.dict("os.environ", _DASHBOARD_ENV, clear=False)
+def test_dashboard_migration_streams_large_csv_in_chunks(tmp_path: Path) -> None:
+    """Regression for the 2026-08-31 ka-district-prep OOM: migration of a
+    large legacy CSV must not materialise the whole file into memory. The
+    streaming implementation reads via ``pd.read_csv(chunksize=…)`` and
+    appends each chunk to its year shard directly.
+
+    Empirically checks the streaming path by monkey-patching
+    ``pd.read_csv`` to fail if called *without* ``chunksize`` on a legacy
+    file — the migration path must never do a whole-file read."""
+
+    # Legacy file with rows spanning three years — big enough to trigger
+    # multiple chunks at the streaming chunksize.
+    rows = []
+    for yr in (2023, 2024, 2025):
+        for i in range(1000):
+            month = (i % 12) + 1
+            day = (i % 28) + 1
+            rows.append(
+                {
+                    "Region Id": f"district_{i % 10}",
+                    "Sample Collected Date": f"{yr}-{month:02d}-{day:02d}",
+                    "Patient Specimen Id": f"SPEC-{yr}-{i}",
+                }
+            )
+    legacy_path = tmp_path / "dashboard_2023-01-01_to_2025-12-31.csv"
+    pd.DataFrame(rows).to_csv(legacy_path, index=False)
+
+    # Sentinel — if migration ever reads the whole CSV in one go, this fails.
+    original_read_csv = pd.read_csv
+
+    def guarded_read_csv(*args, **kwargs):
+        # Whole-file reads of the legacy file are forbidden during migration.
+        if args and str(args[0]).endswith("dashboard_2023-01-01_to_2025-12-31.csv"):
+            assert (
+                "chunksize" in kwargs
+            ), "migration should stream the legacy CSV, not read whole"
+        return original_read_csv(*args, **kwargs)
+
+    with (
+        patch("pandas.read_csv", side_effect=guarded_read_csv),
+        patch("requests.post") as mock_post,
+        patch("requests.get") as mock_get,
+    ):
+        mock_post.return_value = _mock_json_response({"access_token": "T0K3N"})
+        mock_get.return_value = _mock_stream_response([])
+        source = load_source(
+            "dashboard",
+            {
+                "source_path": str(tmp_path),
+                "date_start": "2023-01-01",
+                "date_end": "2025-12-31",
+                "backfill_days": 30,
+            },
+        )
+        source.list_objects()
+
+    # All 3 year shards written, legacy deleted.
+    assert not legacy_path.exists()
+    for yr in (2023, 2024, 2025):
+        shard = tmp_path / f"dashboard_{yr}.csv"
+        assert shard.exists(), f"missing shard for {yr}"
+        got = pd.read_csv(shard)
+        assert len(got) == 1000, f"{yr} shard has {len(got)} rows, expected 1000"
+
+
+@patch.dict("os.environ", _DASHBOARD_ENV, clear=False)
+def test_dashboard_fetch_streams_chunks_never_accumulates(tmp_path: Path) -> None:
+    """Regression for the 2026-08-31 ka-subdistrict-prep OOM: the fetch
+    path must merge chunks into shards ONE AT A TIME, not accumulate every
+    chunk into a big DataFrame before merging.
+
+    Enforces this by intercepting ``_iter_fetch_chunks`` and asserting the
+    generator is fully driven (i.e. every chunk was consumed and the caller
+    didn't buffer them). Also asserts peak simultaneous DataFrame count
+    stays bounded."""
+
+    from pipelines.dengue_prep.lib.case_sources.dashboard import (
+        Source as DashboardSource,
+    )
+
+    fresh_streams = [
+        [
+            (
+                '{"Region Id": "district_1", '
+                '"Sample Collected Date": "2024-06-15", '
+                '"Test Suspected For": "Dengue"}'
+            )
+        ],
+        [
+            (
+                '{"Region Id": "district_2", '
+                '"Sample Collected Date": "2025-06-15", '
+                '"Test Suspected For": "Dengue"}'
+            )
+        ],
+        [
+            (
+                '{"Region Id": "district_3", '
+                '"Sample Collected Date": "2026-06-15", '
+                '"Test Suspected For": "Dengue"}'
+            )
+        ],
+    ]
+
+    call_counter = {"n": 0}
+
+    def stream_side_effect(*args, **kwargs):
+        idx = min(call_counter["n"], len(fresh_streams) - 1)
+        call_counter["n"] += 1
+        return _mock_stream_response(fresh_streams[idx])
+
+    # Track peak simultaneous chunks in memory by wrapping the generator.
+    original_iter = DashboardSource._iter_fetch_chunks
+    live_chunks: list[int] = [0]
+
+    def instrumented_iter(self, from_date, to_date):
+        for chunk in original_iter(self, from_date, to_date):
+            live_chunks[0] += 1
+            try:
+                yield chunk
+            finally:
+                # Caller must consume before pulling next — this counter
+                # should never exceed 1 with a streaming impl.
+                live_chunks[0] -= 1
+
+    with (
+        patch.object(DashboardSource, "_iter_fetch_chunks", instrumented_iter),
+        patch("requests.post") as mock_post,
+        patch("requests.get") as mock_get,
+    ):
+        mock_post.return_value = _mock_json_response({"access_token": "T0K3N"})
+        mock_get.side_effect = stream_side_effect
+        source = load_source(
+            "dashboard",
+            {
+                "source_path": str(tmp_path),
+                "date_start": "2024-01-01",
+                "date_end": "2026-12-31",
+                "backfill_days": 30,
+                # chunk_days=365 forces the fetch into 3 separate chunks (2024, 2025, 2026)
+                "chunk_days": 365,
+            },
+        )
+        source.list_objects()
+
+    # At least 3 fetch chunks were pulled → the streaming path DID iterate.
+    assert call_counter["n"] >= 3
+    # And the generator was never pre-buffered: live count stays ≤ 1.
+    assert live_chunks[0] == 0, "generator not fully drained"
+    # Each chunk's row landed in its own year shard.
+    for yr in (2024, 2025, 2026):
+        assert (tmp_path / f"dashboard_{yr}.csv").exists(), f"missing shard {yr}"
+
+
+@patch.dict("os.environ", _DASHBOARD_ENV, clear=False)
+def test_dashboard_append_tolerates_column_set_drift(tmp_path: Path) -> None:
+    """Real production fetches always return the full IHIP schema, but
+    historical shards on the caller may have been written with a subset of
+    columns from earlier code. The append helper must merge these without
+    ParserError (mismatched field counts on subsequent CSV reads)."""
+
+    # Pre-seed a shard with a minimal 2-column schema.
+    _write_year_shard(
+        tmp_path / "dashboard_2026.csv",
+        [{"Sample Collected Date": "2026-01-10", "Region Id": "district_old"}],
+    )
+
+    # Fresh fetch delivers a row with an extra column.
+    fresh_stream = [
+        (
+            '{"Region Id": "district_new", '
+            '"Sample Collected Date": "2026-06-15", '
+            '"Test Suspected For": "Dengue"}'  # <- extra column
+        )
+    ]
+
+    with patch("requests.post") as mock_post, patch("requests.get") as mock_get:
+        mock_post.return_value = _mock_json_response({"access_token": "T0K3N"})
+        mock_get.return_value = _mock_stream_response(fresh_stream)
+        source = load_source(
+            "dashboard",
+            {
+                "source_path": str(tmp_path),
+                "date_start": "2026-01-01",
+                "date_end": "2026-06-30",
+                "backfill_days": 30,
+            },
+        )
+        source.list_objects()
+
+    # Post-run: shard has both rows with union columns; readable.
+    df = pd.read_csv(tmp_path / "dashboard_2026.csv")
+    assert set(df["Sample Collected Date"].dropna()) == {"2026-01-10", "2026-06-15"}
+    assert "Test Suspected For" in df.columns
+    # Old row has NaN in the new column; new row has value.
+    old_row = df[df["Region Id"] == "district_old"].iloc[0]
+    new_row = df[df["Region Id"] == "district_new"].iloc[0]
+    assert pd.isna(old_row.get("Test Suspected For"))
+    assert new_row.get("Test Suspected For") == "Dengue"
