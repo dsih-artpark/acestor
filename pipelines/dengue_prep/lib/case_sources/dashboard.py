@@ -559,15 +559,16 @@ class Source(CaseSource):
     # (~25-30 MB on disk → ~150 MB DataFrame) regardless of how many years
     # accumulate.
 
-    def _download_fresh(
-        self, from_date: str, to_date: str
-    ) -> "pd.DataFrame":  # noqa: F821
-        """Fetch ``[from_date, to_date]`` in ``chunk_days``-sized chunks and
-        return the concatenation as a single DataFrame.
+    def _iter_fetch_chunks(self, from_date: str, to_date: str):
+        """Generator: yield one ``pd.DataFrame`` per ``chunk_days``-sized
+        fetch chunk. Caller is expected to process each chunk immediately
+        (merge into shards, etc.) and let it be GC'd before pulling the next.
 
-        Chunking is retained purely to stay under the 60-second Cloudflare
-        ingress timeout on multi-year fetches during initial seeding; for
-        the typical 30-day backfill it's a single chunk.
+        This is the memory-critical replacement for the previous
+        ``_download_fresh`` which accumulated every chunk into a list and
+        returned the concat — that path OOM'd on multi-year seeds (~500k+
+        rows collapsed into one DataFrame ≈ 300-500 MB). Iterating instead
+        caps peak RAM at one chunk (typically 5-100 MB).
         """
         import io  # noqa: PLC0415
 
@@ -575,7 +576,6 @@ class Source(CaseSource):
 
         cur = _parse_date(from_date)
         end = _parse_date(to_date)
-        frames: list[pd.DataFrame] = []
         n_chunks = 0
         log.info(
             "case_sources.dashboard: fetching %s → %s (%d days, chunk_days=%d)",
@@ -622,12 +622,9 @@ class Source(CaseSource):
                     n_chunks,
                     len(df),
                 )
-                frames.append(df)
+                yield df
                 cur = chunk_end + timedelta(days=1)
                 break
-        if not frames:
-            return pd.DataFrame(columns=list(_IHIP_HEADERS))
-        return pd.concat(frames, ignore_index=True)
 
     def _pick_date_col(self, df: "pd.DataFrame") -> str | None:  # noqa: F821
         """Pick the first ``self.date_cols`` candidate that's populated in
@@ -638,17 +635,42 @@ class Source(CaseSource):
                 return col
         return None
 
+    # Streaming migration + streaming merge — memory bounded to one chunk.
+    #
+    # The naive versions (v1 of #159) OOM'd on t3.micro for two reasons:
+    #   1. Migration read the whole legacy file via ``pd.read_csv(path)`` →
+    #      a 88 MB CSV became a ~500 MB DataFrame, and per-year groups were
+    #      kept in memory until end of migration.
+    #   2. Fetch accumulated every ``chunk_days``-sized chunk into a list
+    #      and did ``pd.concat`` before merging — a 5-year seed at ~100k
+    #      rows/yr concat'd to ~300-500 MB DataFrame.
+    #
+    # Both paths now stream: CSV migration via ``pd.read_csv(chunksize=)``,
+    # fetch via ``_iter_fetch_chunks`` (generator). Each chunk is grouped
+    # by year and appended to its shard file, then dropped so the GC can
+    # reclaim it before the next chunk lands.
+
+    _CSV_STREAM_CHUNKSIZE = 20_000
+
     def _migrate_legacy_to_year_shards(self) -> None:
         """One-shot: convert any legacy ``dashboard_<from>_to_<to>.{csv,xlsx}``
         files present in the staging dir into ``dashboard_YYYY.csv`` shards.
 
+        Streaming implementation — CSV legacy files are read in chunks of
+        ``_CSV_STREAM_CHUNKSIZE`` rows so peak RAM stays at ~1 chunk (~5-10
+        MB DataFrame) regardless of legacy file size. XLSX legacy files must
+        be read whole because ``pd.read_excel`` has no ``chunksize`` support
+        (openpyxl builds the workbook in memory anyway); a warning is logged
+        so the operator can bump the instance size for that one-time
+        migration if the xlsx is huge.
+
+        Each year's shard is reset (deleted) on the first chunk that lands
+        in it during a given migration run — that way a mid-migration crash
+        followed by a retry produces a clean shard rather than doubled rows.
+
         Runs at the top of every ``_ensure_staged`` — is a no-op once
-        migration has happened. Deletes the legacy files after successful
-        write. Safe to interrupt: the shard write is atomic, and legacy
-        files are only deleted after all shards for the years they touched
-        are on disk.
+        migration has succeeded and legacy files have been deleted.
         """
-        import pandas as pd  # noqa: PLC0415
 
         legacy = [p for _s, _e, p in _scan_staged_files(self.staging_dir)]
         if not legacy:
@@ -656,60 +678,41 @@ class Source(CaseSource):
 
         log.info(
             "case_sources.dashboard: migrating %d legacy staged file(s) → "
-            "year shards",
+            "year shards (streaming, chunksize=%d)",
             len(legacy),
+            self._CSV_STREAM_CHUNKSIZE,
         )
-        # Read everything into a per-year map, streaming file-by-file so
-        # peak RAM is one file + accumulated-per-year.
-        by_year: dict[int, list[pd.DataFrame]] = {}
+
+        # Reset any shard the first time this migration writes to it, so a
+        # crashed previous attempt can't double-count. Set is per-invocation.
+        reset_years: set[int] = set()
+        rows_written_by_year: dict[int, int] = {}
+        ok_to_delete: list[Path] = []
+
         for path in legacy:
             try:
-                df = _read_staged_file(path)
+                self._stream_migrate_one_file(path, reset_years, rows_written_by_year)
             except Exception as exc:  # noqa: BLE001
                 log.warning(
-                    "case_sources.dashboard: migration skipped for %s (%s) — "
+                    "case_sources.dashboard: migration failed for %s (%s) — "
                     "leaving in place; will retry on next run",
                     path.name,
                     exc,
                 )
-                return
-            date_col = self._pick_date_col(df)
-            if date_col is None:
-                # File has no usable date — can't shard. Leave it alone
-                # (parse step's skip-unreadable-dates path will handle it).
-                log.warning(
-                    "case_sources.dashboard: legacy file %s has no populated "
-                    "date column; leaving in place",
-                    path.name,
-                )
+                # Don't delete this legacy file, but subsequent files can
+                # still be migrated (they're independent).
                 continue
-            years = pd.to_datetime(df[date_col], errors="coerce").dt.year
-            for year_value, group in df.groupby(years, dropna=True):
-                by_year.setdefault(int(year_value), []).append(group)
+            ok_to_delete.append(path)
 
-        if not by_year:
-            return
-
-        # Merge with any existing year shards (rare during migration, but
-        # covers the case where the first migration was interrupted after
-        # some shards were written).
-        for year, frames in by_year.items():
-            shard_path = self.staging_dir / f"dashboard_{year}.csv"
-            if shard_path.is_file():
-                try:
-                    frames.insert(0, pd.read_csv(shard_path))
-                except Exception:  # noqa: BLE001
-                    pass  # unreadable — overwrite with legacy data
-            merged = pd.concat(frames, ignore_index=True)
-            self._atomic_write_shard(shard_path, merged)
+        for year in sorted(rows_written_by_year):
             log.info(
-                "case_sources.dashboard: migrated → %s (%d rows)",
-                shard_path.name,
-                len(merged),
+                "case_sources.dashboard: migrated → dashboard_%d.csv (%d rows)",
+                year,
+                rows_written_by_year[year],
             )
 
-        # All shards written successfully; safe to delete legacy files.
-        for path in legacy:
+        # Delete only the legacy files that fully migrated.
+        for path in ok_to_delete:
             try:
                 path.unlink()
             except OSError as exc:
@@ -720,98 +723,232 @@ class Source(CaseSource):
                     exc,
                 )
 
+    def _stream_migrate_one_file(
+        self,
+        path: Path,
+        reset_years: set,
+        rows_written_by_year: dict,
+    ) -> None:
+        """Migrate one legacy file to year shards, chunk by chunk. Raises
+        if the file can't be read at all (caller decides what to do)."""
+        import pandas as pd  # noqa: PLC0415
+
+        suffix = path.suffix.lower()
+        if suffix == ".csv":
+            iterator = pd.read_csv(path, chunksize=self._CSV_STREAM_CHUNKSIZE)
+        elif suffix in (".xlsx", ".xls"):
+            log.warning(
+                "case_sources.dashboard: xlsx legacy file %s cannot be read "
+                "in chunks (openpyxl loads whole workbook in memory). Reading "
+                "whole file — bump the compute instance if this OOMs.",
+                path.name,
+            )
+            iterator = iter([_read_staged_file(path)])
+        else:
+            raise ValueError(f"unsupported legacy file suffix: {suffix!r}")
+
+        for chunk in iterator:
+            self._append_chunk_to_shards(chunk, reset_years, rows_written_by_year)
+
+    def _append_chunk_to_shards(
+        self,
+        chunk: "pd.DataFrame",  # noqa: F821
+        reset_years: set,
+        rows_written_by_year: dict,
+    ) -> None:
+        """Split one chunk into per-year groups and append to shard files.
+        Shards mentioned in ``reset_years`` for the first time are wiped
+        before their first write so a fresh migration run starts from
+        empty rather than doubling any leftover partial rows."""
+        import pandas as pd  # noqa: PLC0415
+
+        if chunk.empty:
+            return
+        date_col = self._pick_date_col(chunk)
+        if date_col is None:
+            log.warning(
+                "case_sources.dashboard: chunk of %d rows has no populated "
+                "date column — skipping (rows are unshardable)",
+                len(chunk),
+            )
+            return
+        years = pd.to_datetime(chunk[date_col], errors="coerce").dt.year
+        for year_value, group in chunk.groupby(years, dropna=True):
+            year = int(year_value)
+            shard_path = self.staging_dir / f"dashboard_{year}.csv"
+            if year not in reset_years:
+                shard_path.unlink(missing_ok=True)
+                reset_years.add(year)
+            self._append_group_to_shard(group, shard_path)
+            rows_written_by_year[year] = rows_written_by_year.get(year, 0) + len(group)
+
+    def _append_group_to_shard(
+        self,
+        group: "pd.DataFrame",  # noqa: F821
+        shard_path: Path,
+    ) -> None:
+        """Append ``group`` to ``shard_path`` (csv), tolerating column-set
+        drift between the existing shard and the new group.
+
+        Fast path (~99% of calls): shard exists and has matching columns →
+        one line-append, peak RAM = ``group`` size only.
+
+        Slow path (column-set mismatch on first append after a drop-stale,
+        or when a fetch chunk's schema differs from historical shard's):
+        full-rewrite with union columns. Peak RAM = ``shard`` + ``group``,
+        bounded by one year's size. Happens at most once per year per run.
+        """
+        import pandas as pd  # noqa: PLC0415
+
+        if not shard_path.exists() or shard_path.stat().st_size == 0:
+            # Fresh shard — write with header.
+            group.to_csv(shard_path, mode="w", header=True, index=False)
+            return
+
+        existing_cols = list(pd.read_csv(shard_path, nrows=0).columns)
+        chunk_cols = list(group.columns)
+        if existing_cols == chunk_cols:
+            # Fast path: identical column order + set.
+            group.to_csv(shard_path, mode="a", header=False, index=False)
+            return
+        if set(existing_cols) == set(chunk_cols):
+            # Same columns, different order — reindex the chunk cheaply.
+            group.reindex(columns=existing_cols).to_csv(
+                shard_path, mode="a", header=False, index=False
+            )
+            return
+
+        # Slow path: column set differs. Merge via union columns and rewrite.
+        existing = pd.read_csv(shard_path)
+        all_cols = list(dict.fromkeys(existing_cols + chunk_cols))
+        merged = pd.concat(
+            [existing.reindex(columns=all_cols), group.reindex(columns=all_cols)],
+            ignore_index=True,
+        )
+        self._atomic_write_shard(shard_path, merged)
+
     def _atomic_write_shard(self, path: Path, df: "pd.DataFrame") -> None:  # noqa: F821
         """Write ``df`` to ``path`` via ``.tmp`` + ``os.replace``. A crash
-        mid-write leaves the previous shard intact."""
+        mid-write leaves the previous shard intact.
+
+        Used by the drop-stale step of the daily refresh (peak memory ≈ one
+        year's shard). NOT used for chunk appends during migration or fetch
+        merge — those use append-mode writes to keep memory bounded.
+        """
         tmp = path.with_suffix(".csv.tmp")
         df.to_csv(tmp, index=False)
         os.replace(tmp, path)
 
-    def _merge_fresh_into_shards(
-        self, fresh: "pd.DataFrame", cutoff: date  # noqa: F821
-    ) -> None:
-        """Merge freshly-fetched rows into per-year shards.
+    def _drop_stale_from_shard(
+        self,
+        shard_path: Path,
+        cutoff: date,
+        date_col: str,
+    ) -> int:
+        """Read ``shard_path``, drop rows dated ``>= cutoff``, atomic-write
+        back. Returns the number of rows kept (the rest are dropped and
+        will be re-supplied by the fresh fetch).
 
-        For every year the fetch touched:
-          * Read the existing shard (if any) → drop rows dated ``>= cutoff``.
-          * Concat the fresh rows for that year.
-          * Atomic write.
-
-        No dedup logic beyond the delete-and-replace by date range: because
-        the fetch is the source of truth for ``[cutoff, today]``, and we've
-        dropped everything in that window from the existing shard, no row
-        can appear twice.
+        Peak memory ≈ one year's shard (~25-30 MB CSV → ~150 MB DataFrame
+        for a normal year at KA scale). This is bounded by year-size, not
+        cumulative history.
         """
         import pandas as pd  # noqa: PLC0415
 
-        if fresh.empty:
-            log.info("case_sources.dashboard: fresh fetch was empty — nothing to merge")
-            return
-
-        date_col = self._pick_date_col(fresh)
-        if date_col is None:
+        if not shard_path.is_file():
+            return 0
+        try:
+            df = pd.read_csv(shard_path)
+        except Exception as exc:  # noqa: BLE001
             log.warning(
-                "case_sources.dashboard: fresh fetch has no populated date "
-                "column; cannot shard by year — writing as a single dated "
-                "file to avoid data loss"
-            )
-            fallback = (
-                self.staging_dir / f"dashboard_{cutoff.isoformat()}_to_"
-                f"{_parse_date(self.date_end).isoformat()}.csv"
-            )
-            self._atomic_write_shard(fallback, fresh)
-            return
-
-        fresh_dates = pd.to_datetime(fresh[date_col], errors="coerce")
-        years = fresh_dates.dt.year
-        cutoff_ts = pd.Timestamp(cutoff)
-
-        # Distinct years the fetch touches. A daily 30-day fetch usually
-        # produces one year; a fetch spanning Dec/Jan produces two.
-        touched_years = sorted({int(y) for y in years.dropna().unique().tolist()})
-        log.info(
-            "case_sources.dashboard: merging fresh fetch into shards for "
-            "year(s) %s (cutoff %s)",
-            touched_years,
-            cutoff.isoformat(),
-        )
-        for year in touched_years:
-            shard_path = self.staging_dir / f"dashboard_{year}.csv"
-            fresh_slice = fresh[years == year]
-
-            if shard_path.is_file():
-                try:
-                    existing = pd.read_csv(shard_path)
-                except Exception as exc:  # noqa: BLE001
-                    log.warning(
-                        "case_sources.dashboard: existing shard %s unreadable "
-                        "(%s) — replacing with fresh data (may lose "
-                        "pre-cutoff rows if the file was actually valid)",
-                        shard_path.name,
-                        exc,
-                    )
-                    existing = pd.DataFrame(columns=fresh_slice.columns)
-                if date_col in existing.columns:
-                    existing_ts = pd.to_datetime(existing[date_col], errors="coerce")
-                    keep_mask = existing_ts.isna() | (existing_ts < cutoff_ts)
-                    keep = existing[keep_mask]
-                else:
-                    # Existing shard was written from a fetch whose date
-                    # column differed. Keep it all and let dedup fall out
-                    # of the concat (best effort).
-                    keep = existing
-            else:
-                keep = pd.DataFrame(columns=fresh_slice.columns)
-
-            merged = pd.concat([keep, fresh_slice], ignore_index=True)
-            self._atomic_write_shard(shard_path, merged)
-            log.info(
-                "case_sources.dashboard: %s → %d rows (%d kept pre-cutoff + "
-                "%d fresh)",
+                "case_sources.dashboard: shard %s unreadable (%s) — leaving "
+                "it in place; fresh fetch rows will be appended to it as-is",
                 shard_path.name,
-                len(merged),
-                len(keep),
-                len(fresh_slice),
+                exc,
+            )
+            return 0
+        if date_col not in df.columns:
+            # Shard doesn't have the date col we're filtering on — safest
+            # to keep everything.
+            return len(df)
+        parsed = pd.to_datetime(df[date_col], errors="coerce")
+        keep_mask = parsed.isna() | (parsed < pd.Timestamp(cutoff))
+        kept = df[keep_mask]
+        dropped = len(df) - len(kept)
+        if dropped == 0:
+            return len(df)
+        self._atomic_write_shard(shard_path, kept)
+        log.info(
+            "case_sources.dashboard: %s → dropped %d rows >= %s (kept %d)",
+            shard_path.name,
+            dropped,
+            cutoff.isoformat(),
+            len(kept),
+        )
+        return len(kept)
+
+    def _fetch_and_merge_streaming(
+        self, from_date: str, to_date: str, cutoff: date
+    ) -> None:
+        """Fetch ``[from_date, to_date]`` chunk-by-chunk and append each
+        chunk directly into per-year shard files.
+
+        The first chunk that lands in a given year triggers a one-time
+        ``_drop_stale_from_shard`` for that year (dropping rows dated
+        ``>= cutoff``). Subsequent chunks for the same year are just
+        appended. Never accumulates chunks in memory.
+
+        Peak RAM per chunk: ~5-100 MB depending on ``chunk_days``. Peak
+        RAM for a stale-drop: one year's shard (~150 MB DataFrame). Overall
+        cap: ~150-200 MB regardless of total data volume, fits on t3.micro.
+        """
+        import pandas as pd  # noqa: PLC0415
+
+        dropped_years: set[int] = set()
+        rows_appended_by_year: dict[int, int] = {}
+        chunk_count = 0
+
+        for chunk_df in self._iter_fetch_chunks(from_date, to_date):
+            chunk_count += 1
+            if chunk_df.empty:
+                continue
+            date_col = self._pick_date_col(chunk_df)
+            if date_col is None:
+                log.warning(
+                    "case_sources.dashboard: fetch chunk %d has no populated "
+                    "date column; skipping (%d rows)",
+                    chunk_count,
+                    len(chunk_df),
+                )
+                continue
+            years = pd.to_datetime(chunk_df[date_col], errors="coerce").dt.year
+            for year_value, group in chunk_df.groupby(years, dropna=True):
+                year = int(year_value)
+                shard_path = self.staging_dir / f"dashboard_{year}.csv"
+
+                # First chunk that touches this year — drop stale rows now
+                # so the append below can't produce duplicates in the
+                # [cutoff, today] window.
+                if year not in dropped_years:
+                    self._drop_stale_from_shard(shard_path, cutoff, date_col)
+                    dropped_years.add(year)
+
+                self._append_group_to_shard(group, shard_path)
+                rows_appended_by_year[year] = rows_appended_by_year.get(year, 0) + len(
+                    group
+                )
+
+        for year in sorted(rows_appended_by_year):
+            log.info(
+                "case_sources.dashboard: fetched → dashboard_%d.csv " "(+%d rows)",
+                year,
+                rows_appended_by_year[year],
+            )
+        if not rows_appended_by_year:
+            log.info(
+                "case_sources.dashboard: fetch produced no shard-able rows "
+                "(%d chunks, all empty or undated)",
+                chunk_count,
             )
 
     def _ensure_staged(self) -> list[str]:
@@ -870,8 +1007,9 @@ class Source(CaseSource):
             self.backfill_days,
             len(existing_shards),
         )
-        fresh = self._download_fresh(cutoff.isoformat(), end_d.isoformat())
-        self._merge_fresh_into_shards(fresh, cutoff=cutoff)
+        self._fetch_and_merge_streaming(
+            cutoff.isoformat(), end_d.isoformat(), cutoff=cutoff
+        )
 
         self._staged_paths = self._collect_staged_paths()
         return self._staged_paths
