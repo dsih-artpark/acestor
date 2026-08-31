@@ -144,12 +144,17 @@ STATES: dict[str, dict] = {
     "ka": {
         "cron": "0 2 * * *",  # 02:00 UTC daily
         "dag": [
-            Task("district-prep", _PREP, "configs/ka_district_prep.yaml", "t3.micro"),
+            # t3.small (not t3.micro) — the fetch step accumulates one full
+            # chunk_days-sized window as a Python records list before yielding
+            # a DataFrame. For KA at scale (~134k rows in a peak year) this
+            # exceeds 1 GB peak RAM on t3.micro during full-history seeds.
+            # See _download_xlsx streaming plan for the follow-up.
+            Task("district-prep", _PREP, "configs/ka_district_prep.yaml", "t3.small"),
             Task(
                 "subdistrict-prep",
                 _PREP,
                 "configs/ka_subdistrict_prep.yaml",
-                "t3.micro",
+                "t3.small",
             ),
             Task(
                 "forecast",
