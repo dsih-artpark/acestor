@@ -32,6 +32,7 @@ REGION_LABEL = {
 }
 MODEL_LABEL = {
     "negativeBinomialRegression": "Negative Binomial Regression",
+    "naivePersistence": "Naive Persistence",
     "ensembleModel": "Ensemble Model",
 }
 # Maps the short user-facing model name (used in configs as `report.primary`)
@@ -42,6 +43,7 @@ MODEL_FULL_NAME = {
     "rf": "randomForestRegression",
     "tse": "timeSeriesExtrapolation",
     "timesfm": "timesFoundationModel",
+    "naive": "naivePersistence",
     "ensemble": "ensembleModel",
 }
 THRESHOLD_LABEL = {
