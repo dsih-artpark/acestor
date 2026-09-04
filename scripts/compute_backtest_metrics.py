@@ -64,12 +64,13 @@ PREPARED_CASES_CSV = (
 )
 
 
-MODEL_KEYS = ["nbr", "rf", "xgb", "ensemble"]
+MODEL_KEYS = ["nbr", "rf", "xgb", "naive", "ensemble"]
 
 MODEL_LABELS = {
     "nbr": "Negative Binomial",
     "rf": "Random Forest",
     "xgb": "XGBoost",
+    "naive": "Naive Persistence",
     "ensemble": "Ensemble",
 }
 
@@ -515,7 +516,7 @@ def build_html_report(json_data: dict, actuals_date: str) -> str:
 <header>
   <h1>Dengue Forecast — Backtest Accuracy Report</h1>
   <p>Actuals through {actuals_date} &nbsp;·&nbsp; {len(runs)} run(s) evaluated
-     &nbsp;·&nbsp; Models: NBR, RF, XGB, Ensemble &nbsp;·&nbsp; Threshold: historical &amp; previousNweeks</p>
+     &nbsp;·&nbsp; Models: NBR, RF, XGB, Naive Persistence, Ensemble &nbsp;·&nbsp; Threshold: historical &amp; previousNweeks</p>
 </header>
 
 <div class="controls">
@@ -572,6 +573,7 @@ def build_html_report(json_data: dict, actuals_date: str) -> str:
         <option value="nbr">Negative Binomial (NBR)</option>
         <option value="rf">Random Forest</option>
         <option value="xgb">XGBoost</option>
+        <option value="naive">Naive Persistence</option>
         <option value="ensemble">Ensemble</option>
       </select></div>
   </div>
@@ -583,11 +585,12 @@ def build_html_report(json_data: dict, actuals_date: str) -> str:
 <script>
 const DATA = {data_json};
 
-const MODELS = ['nbr','rf','xgb','ensemble'];
+const MODELS = ['nbr','rf','xgb','naive','ensemble'];
 const MODEL_LABELS = {{
   nbr: 'Negative Binomial',
   rf: 'Random Forest',
   xgb: 'XGBoost',
+  naive: 'Naive Persistence',
   ensemble: 'Ensemble'
 }};
 const RUNS = Object.keys(DATA);
@@ -896,7 +899,7 @@ examples:
         nargs="+",
         metavar="MODEL",
         choices=list(MODEL_KEYS),
-        help="Models to evaluate: nbr rf xgb ensemble (default: all)",
+        help="Models to evaluate: nbr rf xgb naive ensemble (default: all)",
     )
     parser.add_argument(
         "--method",

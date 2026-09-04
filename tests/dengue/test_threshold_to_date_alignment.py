@@ -34,7 +34,7 @@ def _ctx(*, cutoff_case: str, pred_upto: str) -> ModelContext:
     )
 
 
-_MODELS = ["rf", "xgb", "nbr", "tse", "timesfm"]
+_MODELS = ["rf", "xgb", "nbr", "tse", "timesfm", "naive"]
 
 
 @pytest.mark.parametrize("model_name", _MODELS)
