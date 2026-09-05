@@ -142,7 +142,7 @@ _ROLLUP = "pipelines.dengue_rollup.pipeline:build_pipeline"
 # ── Per-state DAGs — edit below to add / remove pipelines ─────────────────────
 STATES: dict[str, dict] = {
     "ka": {
-        "cron": "0 2 * * *",  # 02:00 UTC daily
+        "cron": "0 2 * * 1",  # 02:00 UTC every Monday
         "dag": [
             # t3.small (not t3.micro) — the fetch step accumulates one full
             # chunk_days-sized window as a Python records list before yielding
@@ -174,7 +174,7 @@ STATES: dict[str, dict] = {
         ],
     },
     "gba": {
-        "cron": "30 2 * * *",  # 02:30 UTC daily
+        "cron": "30 2 * * 1",  # 02:30 UTC every Monday
         # Zone is the source-of-truth level for GBA:
         # * prep zone/corp/ward in parallel
         # * forecast at zone
@@ -209,7 +209,7 @@ STATES: dict[str, dict] = {
         ],
     },
     "od": {
-        "cron": "0 3 * * *",  # 03:00 UTC daily
+        "cron": "0 3 * * 1",  # 03:00 UTC every Monday
         # District is source-of-truth; block + ulb are parallel downscales,
         # ulb_ward hangs off ulb.
         "dag": [
