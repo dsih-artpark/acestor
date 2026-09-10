@@ -46,6 +46,8 @@
       {% set _ = acc.append(p) %}
       / <a href="{{ root }}/datasets/{{ acc | join('/') }}">{{ p }}</a>
     {% endfor %}
+    &nbsp;·&nbsp;
+    <a href="{{ root }}/datasets/{{ here }}?download=1" class="dl">[download this folder as .zip]</a>
   </p>
 {% endif %}
 
@@ -66,7 +68,7 @@
     </td>
     <td class="dim mono">{{ e.size_pretty }}{% if e.is_dir %} · {{ e.file_count }} file{% if e.file_count != 1 %}s{% endif %}{% endif %}</td>
     <td class="dim mono">{{ e.mtime }}</td>
-    <td>{% if not e.is_dir %}<a href="{{ root }}/datasets/{{ here }}/{{ e.name }}?download=1" class="dl">[download]</a>{% endif %}</td>
+    <td><a href="{{ root }}/datasets/{{ here }}/{{ e.name }}?download=1" class="dl">[download{% if e.is_dir %} .zip{% endif %}]</a></td>
     <td>
       <form method="post" action="{{ root }}/datasets-delete" style="display:inline"
             onsubmit="return confirm('Delete {{ e.name }}{% if e.is_dir %}/ and {{ e.file_count }} file{% if e.file_count != 1 %}s{% endif %} inside ({{ e.size_pretty }}){% endif %}?\n\nNo undo.');">

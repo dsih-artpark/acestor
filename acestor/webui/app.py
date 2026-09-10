@@ -44,6 +44,7 @@ from fastapi.responses import (
     HTMLResponse,
     PlainTextResponse,
     RedirectResponse,
+    StreamingResponse,
 )
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
@@ -916,6 +917,59 @@ def _state_prefix_of(rel: str) -> str:
     return ""
 
 
+# Refuse to zip up folders larger than this — better to fail loud than
+# spool 5 GB of ERA5 weather to /tmp and OOM the caller box. The typical
+# prep-output dir is a few MB; a whole state's raw/prepared/weather tree
+# can be hundreds of MB. 500 MB uncompressed is the ceiling we'll accept.
+_DATASETS_ZIP_MAX_UNCOMPRESSED_BYTES = 500 * 1024 * 1024
+
+
+def _stream_dir_as_zip(dir_path: Path) -> StreamingResponse:
+    """Zip every file under ``dir_path`` and stream the archive as a download.
+
+    Uses a spooled temp file so archives ≤100 MB stay in RAM but larger ones
+    spill to disk instead of blowing up the caller box's memory. Refuses to
+    build the archive at all if the uncompressed folder exceeds the ceiling
+    (returns HTTP 413) — the operator should download a subdirectory instead
+    of a whole state.
+    """
+    import zipfile
+    from tempfile import SpooledTemporaryFile
+
+    files: list[Path] = []
+    total_bytes = 0
+    for p in dir_path.rglob("*"):
+        if not p.is_file():
+            continue
+        try:
+            total_bytes += p.stat().st_size
+        except OSError:
+            continue
+        if total_bytes > _DATASETS_ZIP_MAX_UNCOMPRESSED_BYTES:
+            raise HTTPException(
+                413,
+                f"folder is larger than {_DATASETS_ZIP_MAX_UNCOMPRESSED_BYTES // (1024 * 1024)} MB "
+                f"uncompressed — download a subdirectory instead",
+            )
+        files.append(p)
+
+    tmp = SpooledTemporaryFile(max_size=100 * 1024 * 1024, mode="w+b")
+    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
+        for p in files:
+            try:
+                zf.write(p, arcname=p.relative_to(dir_path))
+            except OSError:
+                # File vanished between rglob and open — skip and keep going.
+                continue
+    tmp.seek(0)
+    filename = f"{dir_path.name or 'datasets'}.zip"
+    return StreamingResponse(
+        tmp,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 def _running_state_prefixes(region: str) -> set[str]:
     """Which state prefixes have a compute EC2 running right now.
 
@@ -984,6 +1038,8 @@ def datasets_browse(
             except Exception:
                 pass
         return FileResponse(full)
+    if full.is_dir() and download:
+        return _stream_dir_as_zip(full)
     # Directory — render browser
     project = _datasets_project_root().resolve()
     here = str(full.relative_to(project))
