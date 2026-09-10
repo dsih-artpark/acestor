@@ -74,7 +74,7 @@
     <td>{{ r.lifecycle or "-" }}</td>
     <td class="mono dim">{{ r.launched }}</td>
     <td>{{ r.age_min }}m</td>
-    <td>{% if r.log_relpath %}<a href="{{ root }}/log-view?path={{ r.log_relpath }}">📜 tail</a>{% else %}<span class="dim">-</span>{% endif %}</td>
+    <td>{% if r.log_relpath %}<a href="{{ root }}/log-view?path={{ r.log_relpath }}{% if r.run_id %}&run_id={{ r.run_id }}{% endif %}">📜 tail</a>{% else %}<span class="dim">-</span>{% endif %}</td>
     <td>
       {% if r.run_id %}
       <form method="post" action="{{ root }}/cancel-run" style="display:inline"
@@ -116,7 +116,7 @@
     <td>{% if r.instance_type %}{{ r.instance_type }} <span class="dim">{{ r.lifecycle }}</span>{% else %}<span class="dim">-</span>{% endif %}</td>
     <td>{{ r.wall_pretty or "-" }}</td>
     <td class="{% if r.exit_status == 'ok' %}ok{% elif r.exit_status == 'skip' %}skip{% elif r.exit_status %}fail{% else %}dim{% endif %}">{{ r.exit_status or "-" }}</td>
-    <td>{% if r.log_relpath %}<a href="{{ root }}/log-view?path={{ r.log_relpath }}">📜</a>{% else %}<span class="dim">-</span>{% endif %}</td>
+    <td>{% if r.log_relpath %}<a href="{{ root }}/log-view?path={{ r.log_relpath }}{% if r.run_id %}&run_id={{ r.run_id }}{% endif %}">📜</a>{% else %}<span class="dim">-</span>{% endif %}</td>
   </tr>
   {% endfor %}
 </table>

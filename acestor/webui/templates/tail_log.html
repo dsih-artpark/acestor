@@ -13,10 +13,32 @@
     @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.3 } }
     .toolbar { margin-bottom: 0.5em; font-size: 0.85em; color: #555; }
     .toolbar label { margin-right: 15px; cursor: pointer; }
+
+    /* Metrics strip — sits above the log tail when run_id is known and
+       metrics.jsonl exists in the run's artifacts dir. */
+    .metrics-strip {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-bottom: 0.75em;
+      padding: 10px 14px;
+      background: #f6f8fa;
+      border: 1px solid #e1e4e8;
+      border-radius: 4px;
+    }
+    .metric-card { display: flex; flex-direction: column; gap: 4px; }
+    .metric-title { font-size: 0.75em; color: #666; text-transform: uppercase; letter-spacing: 0.03em; }
+    .metric-value { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 1.1em; color: #24292e; }
+    .metric-value .hot { color: #c25a4a; font-weight: 600; }
+    .metric-value .warn { color: #b08800; }
+    .metric-detail { font-size: 0.72em; color: #888; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .spark { width: 100%; height: 32px; display: block; }
+    .metrics-updated { grid-column: 1 / -1; font-size: 0.7em; color: #999; text-align: right; margin-top: -4px; }
+
     pre#log {
       background: #1e1e1e; color: #d4d4d4; padding: 12px 16px; border-radius: 4px;
       font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 0.82em;
-      line-height: 1.4; overflow-x: auto; overflow-y: scroll; height: 75vh;
+      line-height: 1.4; overflow-x: auto; overflow-y: scroll; height: 70vh;
       white-space: pre; margin: 0;
     }
   </style>
@@ -34,6 +56,29 @@
 </header>
 <h1>{{ path }}</h1>
 
+{% if show_metrics %}
+<div class="metrics-strip" id="metrics-strip">
+  <div class="metric-card">
+    <div class="metric-title">CPU</div>
+    <svg class="spark" id="spark-cpu" viewBox="0 0 200 32" preserveAspectRatio="none"></svg>
+    <div class="metric-value" id="val-cpu">—</div>
+  </div>
+  <div class="metric-card">
+    <div class="metric-title">Memory</div>
+    <svg class="spark" id="spark-mem" viewBox="0 0 200 32" preserveAspectRatio="none"></svg>
+    <div class="metric-value" id="val-mem">—</div>
+    <div class="metric-detail" id="detail-mem"></div>
+  </div>
+  <div class="metric-card">
+    <div class="metric-title">Disk /</div>
+    <svg class="spark" id="spark-disk" viewBox="0 0 200 32" preserveAspectRatio="none"></svg>
+    <div class="metric-value" id="val-disk">—</div>
+    <div class="metric-detail" id="detail-disk"></div>
+  </div>
+  <div class="metrics-updated" id="metrics-updated">no samples yet</div>
+</div>
+{% endif %}
+
 <div class="toolbar">
   <label><input type="checkbox" id="autoscroll" checked> auto-scroll to bottom</label>
   <label><input type="checkbox" id="polling" checked> live-refresh every 2s</label>
@@ -44,6 +89,8 @@
 
 <script>
 const path = {{ path | tojson }};
+const runId = {{ run_id | tojson }};
+const showMetrics = {{ show_metrics | tojson }};
 const $log = document.getElementById("log");
 const $status = document.getElementById("status");
 const $autoscroll = document.getElementById("autoscroll");
@@ -71,6 +118,67 @@ async function fetchTail() {
 
 fetchTail();
 setInterval(() => { if ($polling.checked) fetchTail(); }, 2000);
+
+// ── Metrics strip ────────────────────────────────────────────────────
+// Polls /metrics-raw and renders three sparklines. Thresholded colours
+// (>=80% "hot", >=60% "warn") so the operator can eyeball resource
+// pressure without reading numbers.
+if (showMetrics && runId) {
+  const $valCpu = document.getElementById("val-cpu");
+  const $valMem = document.getElementById("val-mem");
+  const $valDisk = document.getElementById("val-disk");
+  const $detailMem = document.getElementById("detail-mem");
+  const $detailDisk = document.getElementById("detail-disk");
+  const $updated = document.getElementById("metrics-updated");
+
+  function classify(pct) {
+    if (pct >= 80) return "hot";
+    if (pct >= 60) return "warn";
+    return "";
+  }
+
+  function renderSpark(svgId, values, colour) {
+    const svg = document.getElementById(svgId);
+    if (!values.length) return;
+    const W = 200, H = 32;
+    // Y-axis: fixed 0..100 so cross-metric comparison is honest.
+    const step = W / Math.max(1, values.length - 1);
+    const pts = values.map((v, i) => `${(i * step).toFixed(1)},${(H - (v / 100) * H).toFixed(1)}`).join(" ");
+    const area = `M0,${H} L${pts.split(" ").join(" L")} L${W},${H} Z`;
+    svg.innerHTML =
+      `<path d="${area}" fill="${colour}" opacity="0.15"/>` +
+      `<polyline points="${pts}" fill="none" stroke="${colour}" stroke-width="1.5"/>`;
+  }
+
+  async function fetchMetrics() {
+    try {
+      const r = await fetch(`{{ root }}/metrics-raw?run_id=${encodeURIComponent(runId)}`, {cache: "no-store"});
+      if (!r.ok) return;
+      const data = await r.json();
+      const samples = data.samples || [];
+      if (!samples.length) return;
+      const last = samples[samples.length - 1];
+      const cpus  = samples.map(s => s.cpu_pct ?? 0);
+      const mems  = samples.map(s => s.mem_pct ?? 0);
+      const disks = samples.map(s => s.disk_pct ?? 0);
+      renderSpark("spark-cpu",  cpus,  "#3D6FBF");
+      renderSpark("spark-mem",  mems,  "#C25A4A");
+      renderSpark("spark-disk", disks, "#B08800");
+      $valCpu.innerHTML  = `<span class="${classify(last.cpu_pct ?? 0)}">${(last.cpu_pct ?? 0).toFixed(1)}%</span>`;
+      $valMem.innerHTML  = `<span class="${classify(last.mem_pct ?? 0)}">${(last.mem_pct ?? 0).toFixed(1)}%</span>`;
+      $valDisk.innerHTML = `<span class="${classify(last.disk_pct ?? 0)}">${(last.disk_pct ?? 0).toFixed(1)}%</span>`;
+      $detailMem.textContent  = `${last.mem_used_mb ?? 0} / ${last.mem_total_mb ?? 0} MB`;
+      $detailDisk.textContent = `${last.disk_used_gb ?? 0} / ${last.disk_total_gb ?? 0} GB`;
+      const age = Math.max(0, (Date.now() / 1000) - (last.ts ?? 0));
+      $updated.textContent = `${samples.length} samples · last ${age.toFixed(0)}s ago`;
+    } catch (e) {
+      // Silent — metrics are best-effort, don't spam the log tail's status.
+    }
+  }
+
+  fetchMetrics();
+  setInterval(() => { if ($polling.checked) fetchMetrics(); }, 5000);
+}
 </script>
 
 </body>
