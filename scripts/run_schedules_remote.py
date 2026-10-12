@@ -132,12 +132,24 @@ class Task:
     lifecycle: str = "spot"  # or "on-demand"
     needs: list[str] = field(default_factory=list)
     source_of: str | None = None
+    # Auto-push the task's predictions.csv to the prod dashboard once
+    # the task finishes OK. When set, the scheduler synthesises a sibling
+    # "<name>-push" task that runs locally on the caller (no EC2 spawn)
+    # and depends on this task. The push task fails if the dashboard
+    # upload fails, which blocks any downstream task that depends on it.
+    # Opt-in per task. Not applied to UI-triggered runs.
+    # Shape: {"scope_id": "karnataka"}
+    auto_push: dict | None = None
 
 
 _PREP = "pipelines.dengue_prep.pipeline:build_pipeline"
 _FORECAST = "pipelines.dengue.pipeline:build_pipeline"
 _DOWNSCALE = "pipelines.dengue_downscale.pipeline:build_pipeline"
 _ROLLUP = "pipelines.dengue_rollup.pipeline:build_pipeline"
+# Pseudo-pipeline marker for synthesised push tasks (see Task.auto_push).
+# Tasks with pipeline == _PUSH run locally on the caller via
+# _execute_push_locally instead of acestor.remote.
+_PUSH = "local:push_predictions"
 
 # ── Per-state DAGs — edit below to add / remove pipelines ─────────────────────
 STATES: dict[str, dict] = {
@@ -162,6 +174,7 @@ STATES: dict[str, dict] = {
                 "configs/ka_district.yaml",
                 "c7i.4xlarge",
                 needs=["district-prep"],
+                auto_push={"scope_id": "karnataka"},
             ),
             Task(
                 "subdistrict-downscale",
@@ -170,6 +183,7 @@ STATES: dict[str, dict] = {
                 "t3.micro",
                 needs=["forecast", "subdistrict-prep"],
                 source_of="forecast",
+                auto_push={"scope_id": "karnataka"},
             ),
         ],
     },
@@ -189,6 +203,7 @@ STATES: dict[str, dict] = {
                 "configs/gba_zone.yaml",
                 "c7i.4xlarge",
                 needs=["zone-prep"],
+                auto_push={"scope_id": "gulb_gba"},
             ),
             Task(
                 "corp-rollup",
@@ -197,6 +212,7 @@ STATES: dict[str, dict] = {
                 "t3.nano",
                 needs=["zone-forecast", "corp-prep"],
                 source_of="zone-forecast",
+                auto_push={"scope_id": "gulb_gba"},
             ),
             Task(
                 "ward-downscale",
@@ -205,6 +221,7 @@ STATES: dict[str, dict] = {
                 "t3.micro",
                 needs=["zone-forecast", "ward-prep"],
                 source_of="zone-forecast",
+                auto_push={"scope_id": "gulb_gba"},
             ),
         ],
     },
@@ -228,6 +245,7 @@ STATES: dict[str, dict] = {
                 "configs/od_district.yaml",
                 "c7i.4xlarge",
                 needs=["district-prep"],
+                auto_push={"scope_id": "odisha"},
             ),
             Task(
                 "block-downscale",
@@ -236,6 +254,7 @@ STATES: dict[str, dict] = {
                 "t3.micro",
                 needs=["district-forecast", "block-prep"],
                 source_of="district-forecast",
+                auto_push={"scope_id": "odisha"},
             ),
             Task(
                 "ulb-downscale",
@@ -244,6 +263,7 @@ STATES: dict[str, dict] = {
                 "t3.micro",
                 needs=["district-forecast", "ulb-prep"],
                 source_of="district-forecast",
+                auto_push={"scope_id": "odisha"},
             ),
             Task(
                 "ulb-ward-downscale",
@@ -252,6 +272,7 @@ STATES: dict[str, dict] = {
                 "t3.micro",
                 needs=["ulb-downscale", "ulb-ward-prep"],
                 source_of="ulb-downscale",
+                auto_push={"scope_id": "odisha"},
             ),
         ],
     },
@@ -387,6 +408,202 @@ def _classify_exit(exit_code: int, timed_out: bool) -> str:
     return "fail"
 
 
+def _expand_dag_with_pushes(dag: list[Task]) -> list[Task]:
+    """Insert a synthetic '<name>-push' task after every task with
+    ``auto_push`` set. The push task runs locally on the caller (no EC2
+    spawn), depends on the parent task completing OK, and uploads the
+    parent's ``predictions.csv`` to the prod dashboard.
+
+    Called once per DAG trigger. Returns a new list; does not mutate.
+    """
+    out: list[Task] = []
+    for t in dag:
+        out.append(t)
+        if t.auto_push:
+            scope_id = t.auto_push.get("scope_id", "")
+            if not scope_id:
+                raise ValueError(
+                    f"{t.name}: auto_push requires 'scope_id', got {t.auto_push!r}"
+                )
+            out.append(
+                Task(
+                    name=f"{t.name}-push",
+                    pipeline=_PUSH,
+                    config="",  # unused for local push
+                    instance="local",
+                    needs=[t.name],
+                    # Carry the push target forward via auto_push so the
+                    # executor can read it. The push task itself has no
+                    # further auto_push (no recursion).
+                    auto_push={"scope_id": scope_id, "parent": t.name},
+                )
+            )
+    return out
+
+
+def _execute_push_locally(
+    state: str, task: Task, run_stamp: str, attempt: int
+) -> tuple[int, str, float]:
+    """Push the parent task's predictions.csv to the dashboard.
+
+    Runs in the scheduler's thread pool on the caller — no EC2 spawn, no
+    SSH. Finds predictions.csv under
+    ``artifacts/<state>/<parent_run_id>/outputs/predictions.csv``, renames
+    camelCase min/max columns to snake_case, POSTs multipart to
+    ``$DASHBOARD_URL/api/admin/predictions/upload``. Exit 0 on 2xx, 1 on
+    anything else. Failure here fails the push task, which blocks any
+    downstream task that depends on it.
+    """
+    suffix = "" if attempt == 1 else f"_r{attempt - 1}"
+    run_id = f"{state}-{task.name}_{run_stamp}{suffix}"
+    log_path = LOGS_DIR / f"{state}-{task.name}" / run_stamp[:10] / f"{run_id}.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    tag = f"{state}/{task.name}" + (f" [attempt {attempt}]" if attempt > 1 else "")
+    started = time.monotonic()
+
+    parent_name = (task.auto_push or {}).get("parent", "")
+    scope_id = (task.auto_push or {}).get("scope_id", "")
+    # Parent task's run_id has the same stamp (same DAG tick) — no retry
+    # suffix because the push only fires once the parent is OK.
+    parent_run_id = f"{state}-{parent_name}_{run_stamp}"
+    # Reference date for the upload is the stamp's date portion.
+    reference_date = run_stamp[:10]
+
+    with open(log_path, "w") as log:
+
+        def _log(msg: str) -> None:
+            line = f"[{datetime.utcnow().isoformat()}Z] push: {msg}\n"
+            log.write(line)
+            log.flush()
+
+        _log(f"start tag={tag} parent={parent_run_id} scope_id={scope_id}")
+        try:
+            exit_code = _do_push(
+                state=state,
+                parent_run_id=parent_run_id,
+                scope_id=scope_id,
+                reference_date=reference_date,
+                log=_log,
+            )
+        except Exception as exc:
+            _log(f"FAILED unexpected: {type(exc).__name__}: {exc}")
+            exit_code = 1
+
+    wall_s = time.monotonic() - started
+    classification = "ok" if exit_code == 0 else "fail"
+    _record_attempt(
+        state, run_stamp, task.name, attempt, classification, exit_code, wall_s
+    )
+    _print(
+        f"{'OK' if classification == 'ok' else 'FAIL'}    {tag}: push {classification} "
+        f"in {wall_s:.1f}s → {log_path}"
+    )
+    return exit_code, classification, wall_s
+
+
+def _do_push(
+    state: str,
+    parent_run_id: str,
+    scope_id: str,
+    reference_date: str,
+    log,
+) -> int:
+    """Core push HTTP flow. Returns 0 on success, 1 on any failure."""
+    import tempfile
+    import urllib.error
+    import urllib.request
+
+    dash_url = os.environ.get("DASHBOARD_URL", "").rstrip("/")
+    client_id = os.environ.get("DASHBOARD_CLIENT_ID", "")
+    client_secret = os.environ.get("DASHBOARD_CLIENT_SECRET", "")
+    if not (dash_url and client_id and client_secret):
+        log(
+            "missing DASHBOARD_URL / DASHBOARD_CLIENT_ID / DASHBOARD_CLIENT_SECRET on caller"
+        )
+        return 1
+
+    # Resolve predictions.csv path. The artifacts root for the parent task
+    # is under artifacts/<state>/<parent_run_id>/outputs/predictions.csv.
+    # Some pipelines use <state>_<region_type> (e.g. gba_zone) as the group;
+    # try the obvious first then fall back to a glob.
+    candidates = list(ROOT.glob(f"artifacts/*/{parent_run_id}/outputs/predictions.csv"))
+    if not candidates:
+        log(f"no predictions.csv found for parent run_id={parent_run_id}")
+        return 1
+    src = candidates[0]
+    log(f"found predictions.csv at {src}")
+
+    # Rename camelCase → snake_case for min/max at the boundary.
+    with (
+        open(src) as fin,
+        tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as fout,
+    ):
+        header = fin.readline()
+        header = header.replace("predictionMin", "prediction_min").replace(
+            "predictionMax", "prediction_max"
+        )
+        fout.write(header)
+        for line in fin:
+            fout.write(line)
+        renamed_path = fout.name
+
+    # Auth
+    try:
+        auth_req = urllib.request.Request(
+            f"{dash_url}/api/auth/login",
+            data=json.dumps({"email": client_id, "password": client_secret}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(auth_req, timeout=20) as resp:
+            token = json.loads(resp.read()).get("access_token", "")
+    except (urllib.error.URLError, json.JSONDecodeError) as exc:
+        log(f"auth failed: {exc}")
+        return 1
+    if not token:
+        log("auth returned empty access_token")
+        return 1
+    log("auth OK, uploading…")
+
+    # Upload — curl handles multipart cleanly
+    try:
+        out = subprocess.run(
+            [
+                "curl",
+                "-sS",
+                "-w",
+                "\nHTTP %{http_code}",
+                "-X",
+                "POST",
+                f"{dash_url}/api/admin/predictions/upload",
+                "-H",
+                f"Authorization: Bearer {token}",
+                "-F",
+                f"file=@{renamed_path}",
+                "-F",
+                f"scope_id={scope_id}",
+                "-F",
+                f"reference_date={reference_date}",
+                "-F",
+                "disease=Dengue",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except subprocess.TimeoutExpired:
+        log("upload curl timed out after 120s")
+        return 1
+    body = out.stdout + ("\n" + out.stderr if out.stderr else "")
+    log(f"upload response:\n{body.rstrip()}")
+    # curl -w prints the HTTP code on its own line at the end
+    last_line = (out.stdout.strip().splitlines() or [""])[-1]
+    if last_line.startswith("HTTP ") and last_line.split()[1].startswith("2"):
+        log(f"upload OK ({last_line})")
+        return 0
+    log(f"upload FAILED ({last_line or 'no response'})")
+    return 1
+
+
 def _execute_task(
     state: str, task: Task, run_stamp: str, attempt: int
 ) -> tuple[int, str, float]:
@@ -395,7 +612,12 @@ def _execute_task(
     Enforces a hard MAX_TASK_MINUTES timeout via subprocess.run — anything
     slower than that is presumed hung, subprocess is killed, and the compute
     EC2 will be reaped by reap_orphan_compute.sh on its cron cycle.
+
+    Local tasks (pipeline == _PUSH) are dispatched to _execute_push_locally
+    which runs on the caller with no EC2 spawn.
     """
+    if task.pipeline == _PUSH:
+        return _execute_push_locally(state, task, run_stamp, attempt)
     suffix = "" if attempt == 1 else f"_r{attempt - 1}"
     run_id = f"{state}-{task.name}_{run_stamp}{suffix}"
     log_path = LOGS_DIR / f"{state}-{task.name}" / run_stamp[:10] / f"{run_id}.log"
@@ -435,7 +657,12 @@ def _run_dag(state: str, dag: list[Task]) -> None:
     A task is submitted the moment all its ``needs`` have completed OK.
     Failed / skipped tasks poison their transitive dependents (skipped,
     not retried within this cron tick).
+
+    Any task with ``auto_push`` set is followed by a synthesised local
+    push task that uploads its predictions.csv to the prod dashboard.
+    See _expand_dag_with_pushes.
     """
+    dag = _expand_dag_with_pushes(dag)
     _validate_dag(state, dag)
 
     status: dict[str, str] = {}  # name → "ok" | "fail" | "skip"
