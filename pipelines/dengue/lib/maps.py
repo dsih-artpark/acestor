@@ -32,6 +32,7 @@ REGION_LABEL = {
 }
 MODEL_LABEL = {
     "negativeBinomialRegression": "Negative Binomial Regression",
+    "negativeBinomialRegressionRegularised": "Regularised Negative Binomial Regression",
     "naivePersistence": "Naive Persistence",
     "ensembleModel": "Ensemble Model",
 }
@@ -39,6 +40,7 @@ MODEL_LABEL = {
 # to the full string that appears in the predictions CSV's `model` column.
 MODEL_FULL_NAME = {
     "nbr": "negativeBinomialRegression",
+    "nbr_regularised": "negativeBinomialRegressionRegularised",
     "xgb": "xgboostRegression",
     "rf": "randomForestRegression",
     "tse": "timeSeriesExtrapolation",

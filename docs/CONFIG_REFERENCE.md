@@ -202,7 +202,7 @@ Early abort when the parsed case data is too thin to model.
 | key                        | type          | default        | why                                                                                                                                                                                                    |
 | -------------------------- | ------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `spatial_res`              | str           | `zone`         | Region tier the models train and predict on.                                                                                                                                                           |
-| `models`                   | list\[str]    | `["tse"]`      | Subset of `nbr`, `tse`, `rf`, `xgb`, `timesfm`. `nbr` was retired from the default set (issue #63) but is still opt-in via `models: [nbr, ...]`.                                                       |
+| `models`                   | list\[str]    | `["tse"]`      | Subset of `nbr`, `nbr_regularised`, `tse`, `rf`, `xgb`, `timesfm`. Both NBR variants are opt-in.                                                                                                      |
 | `ensemble`                 | str           | `mean`         | Registered ensemble strategy or `none`. `none` is incompatible with `output=ensemble`.                                                                                                                 |
 | `output`                   | str           | `ensemble`     | `ensemble`, `per_model`, or `both`.                                                                                                                                                                    |
 | `tune`                     | bool \| str   | `false`        | `true` → always Optuna-retune. `false` → use cache when fingerprint matches, otherwise retune. `"never"` → trust cache regardless (hindcast / production reuse); fails loud on cache miss.             |
@@ -220,7 +220,41 @@ Early abort when the parsed case data is too thin to model.
 
 ### `model_configs.<model>`
 
-Per-model overrides. Keys mirror the `model` block: `data_features`, `years_to_exclude`, `years_to_include`, `tune`, `n_trials`, `debug`, `clip_multiplier`, `freeze_weather_at_origin`, and the `lag.*` sub-keys. Unspecified keys inherit from `model`. Any key not listed in `model.models` is rejected at build time (fail-fast; the error message names both the YAML fix and the `--set` CLI trap that re-creates a removed key).
+Per-model overrides. Common keys mirror the `model` block: `data_features`, `years_to_exclude`, `years_to_include`, `tune`, `n_trials`, `debug`, `clip_multiplier`, `freeze_weather_at_origin`, and the `lag.*` sub-keys. `nbr_regularised` also accepts `regularization` and `tuning` blocks below. Unspecified common keys inherit from `model`. Any key not listed in `model.models` is rejected at build time.
+
+#### `model_configs.nbr_regularised`
+
+The regularised Negative Binomial model is opt-in. It uses the configured case, temperature, rainfall, and humidity lags; case lags are `log1p` transformed and weather lags are standardised. Forecasts recurse through predicted case lags and keep weather lags fixed at the forecast origin.
+
+```yaml
+model:
+  models: [rf, nbr_regularised]
+  ensemble: mean
+  output: both
+
+model_configs:
+  nbr_regularised:
+    lag:
+      lag_cases: [1, 2, 3, 4, 5]
+      lag_temp: [1, 2, 3, 4, 5]
+      lag_rainfall: [1, 2, 3, 4]
+      lag_humidity: [1, 2, 3, 4]
+    regularization:
+      use_reg: true
+      reg_method: l1
+      reg_alpha: 0.01
+      maxiter: 1000
+      trim_mode: size
+      qc_tol: 0.05
+      penalize_intercept: false
+      penalize_alpha: false
+    tuning:
+      reg_alpha_low: 0.0001
+      reg_alpha_high: 1.0
+      reg_alpha_log: true
+```
+
+`tune` and `n_trials` use the standard model settings. The tuned `reg_alpha` is cached under `hp/nbr_regularised_<region>_best_params.json`. The defaults for case lags are `[1, 2, 3, 4, 5]`; weather lag lists inherit from `model` unless set here.
 
 #### `model_configs.timesfm`
 
