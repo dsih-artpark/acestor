@@ -1,0 +1,159 @@
+state: "AP"
+
+pipeline:
+  name: dengue
+  title: "Dengue Early Warning System — Andhra Pradesh"
+
+run:
+  run_date: "2026-03-10"   # leave blank to use today's date
+
+data:
+  prepared_data:
+    base_dir: "ap_datasets/prepared_data"
+    region_type: "district"
+
+  case_parse:
+    region_types:
+      - "district"
+    date_start: "2021-09-01"
+    date_end: ""
+
+  case_sufficiency:
+    enabled: true
+    min_total_rows: 30
+    min_distinct_regions: 2
+    min_date_span_days: 14
+
+  geojson:
+    base_path: "ap_datasets/geojsons/geojsons_AP"
+
+  weather_parse:
+    region_type: "district"
+    weather_variables:
+      - "2mTemperature"
+      - "totalPrecipitation"
+      - "2mDewpointTemperature"
+    rolling_n_days: 7
+    rolling_agg:
+      - {name: "2mTemperature",         op: "mean"}
+      - {name: "2mDewpointTemperature", op: "mean"}
+      - {name: "totalPrecipitation",    op: "sum"}
+    sampling_rate: 7
+    intermediate_col_rename:
+      "2mTemperature_max": "t2m_max"
+      "2mTemperature_min": "t2m_min"
+      "2mTemperature": "t2m_mean"
+      "2mDewpointTemperature": "d2m_mean"
+      "totalPrecipitation": "tp_sum"
+
+cutoff:
+  case_min_regions: 2
+  weather_min_regions: 5
+
+thresholds:
+  region_type: "district"
+  list_alpha: [1.0, 2.0]             # risk zone bands: T = Mean + alpha*StdDev
+  methods: [historical, prev_nweeks, weighted_baseline]   # remove a method to disable it entirely
+  classification_method: icmr          # icmr | who — icmr (cross-sectional quartiles) chosen for AP; robust to sparse history at mandal scale
+  method_configs:
+    prev_nweeks:
+      n_weeks: 4
+    historical:
+      historical_n_years: 4
+      excluded_years: []    # overrides code default [2020, 2021]
+      included_years: []
+
+model:
+  spatial_res: "district"
+  models: [rf, xgb, timesfm, tse, nbr_regularised]   # opt-in NBR regularised example
+  ensemble: mean               # mean | none
+  output: both                 # ensemble | per_model | both
+  debug: false                 # true → saves X_train, X_test+predictions, feature_importance to artifacts/debug/
+
+# Per-model config. Each model owns its own lag, year filters, and tuning settings.
+model_configs:
+  rf:
+    lag:
+      # Weather lags must be >= max horizon (4) so every lag points at an
+      # OBSERVED week for all 4 forecast weeks — weather is not extended past the
+      # run date, so shorter lags would fall in the unobserved future. Case lags
+      # may be short: the recursive rollout fills future ones from predictions.
+      lag_temp: [4, 5, 6, 7, 8, 9, 10, 11, 12]
+      lag_rainfall: [4]
+      lag_humidity: [4]
+      lag_cases: [1, 2, 3, 4, 5]
+    years_to_exclude: []
+    years_to_include: []
+    tune: false       # true → retune and overwrite artifacts/ap/hp/rf_best_params.json
+    n_trials: 100
+
+  xgb:
+    lag:
+      # Weather lags must be >= max horizon (4) so every lag points at an
+      # OBSERVED week for all 4 forecast weeks — weather is not extended past the
+      # run date, so shorter lags would fall in the unobserved future. Case lags
+      # may be short: the recursive rollout fills future ones from predictions.
+      lag_temp: [4, 5, 6, 7, 8, 9, 10, 11, 12]
+      lag_rainfall: [4]
+      lag_humidity: [4]
+      lag_cases: [1, 2, 3, 4, 5]
+    years_to_exclude: []
+    years_to_include: []
+    tune: false       # true → retune and overwrite artifacts/ap/hp/xgb_best_params.json
+    n_trials: 100
+
+  nbr_regularised:
+    lag:
+      # Reference NBR regularised realtime feature windows.
+      lag_cases: [1, 2, 3, 4, 5]
+      lag_temp: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+      lag_rainfall: [1, 2, 3, 4]
+      lag_humidity: [1, 2, 3, 4]
+    years_to_exclude: []
+    years_to_include: []
+    tune: false
+    n_trials: 100
+    regularization:
+      use_reg: true
+      reg_method: l1
+      reg_alpha: 0.01
+      maxiter: 1000
+      trim_mode: size
+      qc_tol: 0.03
+      penalize_intercept: false
+      penalize_alpha: false
+    tuning:
+      reg_alpha_low: 0.0001
+      reg_alpha_high: 1.0
+      reg_alpha_log: true
+
+assess:
+  total_district_regions: 26
+
+maps:
+  output_dir: "outputs/maps"
+  figure_title: "Andhra Pradesh Dengue Risk Map"
+
+report:
+  output_dir: "outputs/report"
+
+report_distribution:
+  system_name: "Dengue Early Warning System"
+  organization: "ARTPARK, IISc Bengaluru"
+  state: "Andhra Pradesh"
+  region: "Andhra Pradesh (26 Districts)"
+  department: "Directorate of Public Health & Family Welfare, GoAP"
+  contact_email: ""
+  footer_note: ""
+
+logging:
+  level: INFO
+
+email:
+  enabled: false
+
+storages:
+  artifacts:
+    kind: filesystem
+    filesystem:
+      base_path: "./artifacts/ap"

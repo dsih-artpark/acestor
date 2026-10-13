@@ -8,11 +8,12 @@ The runtime wiring lives in `pipelines/dengue/steps/train_and_predict.py`. That 
 
 ## Registry and short-name → full-name mapping
 
-Models register themselves via `@register("<short>")` in `pipelines/dengue/lib/models/__init__.py`. The short name is what you put in YAML (`model.models: [nbr, rf, xgb, tse, timesfm]`). Predictions land in `predictions.csv` with the model's **full string** in the `model` column, mapped by `pipelines/dengue/lib/maps.py::MODEL_FULL_NAME`:
+Models register themselves via `@register("<short>")` in `pipelines/dengue/lib/models/__init__.py`. The short name is what you put in YAML (`model.models: [nbr, nbr_regularised, rf, xgb, tse, timesfm]`). Predictions land in `predictions.csv` with the model's **full string** in the `model` column, mapped by `pipelines/dengue/lib/maps.py::MODEL_FULL_NAME`:
 
 | Short (`model.models`, `report.primary`) | `model` column value              |
 | ---------------------------------------- | --------------------------------- |
 | `nbr`                                    | `negativeBinomialRegression`      |
+| `nbr_regularised`                        | `negativeBinomialRegressionRegularised` |
 | `rf`                                     | `randomForestRegression`          |
 | `xgb`                                    | `xgboostRegression`               |
 | `tse`                                    | `timeSeriesExtrapolation`         |
@@ -62,6 +63,20 @@ A minimal sample row (KA district, ensemble, previousNweeks method):
 - Regions with any NaN lag feature across all four prediction weeks are dropped with a warning (weather coverage gaps). They render white/hatched on maps.
 - If every region has NaN lags, `predict()` returns an empty DataFrame and `train_and_predict` raises `RuntimeError` for the whole run (issue #65 — partial dropout no longer silently succeeds).
 - `MinMaxScaler` will crash on a region where all lag features are NaN; the pre-drop above prevents this.
+
+---
+
+## `nbr_regularised` — Regularised Negative Binomial Regression
+
+**Intent.** Port of the reference `dengue-models/pipeline/nbr_regularised_realtime` model into the Acestor ensemble. Fits statsmodels' discrete Negative Binomial model with optional L1 regularisation and tunes `reg_alpha` with expanding time folds when the tuning cache is absent or stale.
+
+**Features consumed.** Configured case lags plus temperature (`t2m_mean`), rainfall (`tp_sum`), and humidity (`d2m_mean`) lags. Case lags are transformed with `log1p`; weather lags use a `StandardScaler` fit on training rows.
+
+**Horizon handling.** Recursive, using the shared forecast engine. Predicted case counts feed later case lags; weather lags remain fixed at the forecast origin, matching the reference realtime predictor.
+
+**Configuration.** Add `nbr_regularised` to `model.models` and configure `model_configs.nbr_regularised.lag`. Optional `regularization` and `tuning` settings are documented in [the configuration reference](CONFIG_REFERENCE.md#model_configsnbr_regularised). `configs/ap_district_v3_nbr_regularised.yaml` is a runnable opt-in example; existing configs are unchanged.
+
+**Tuneable?** Yes. Uses the standard `model.tune` modes and caches `reg_alpha` by model and region type. A tuning fold is usable only when statsmodels explicitly reports `converged=True`; false or missing status rejects the trial. If no trial has confirmed-converged folds with finite predictions, tuning fails. A final fit without confirmed convergence is excluded from forecasts. Statsmodels L1 QC convergence warnings are logged separately and do not by themselves reject a fit.
 
 ---
 
