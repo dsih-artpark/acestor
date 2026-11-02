@@ -94,10 +94,29 @@ def _sh_quote(s: str) -> str:
 _SYSTEM_BOOTSTRAP = r"""set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
-# Give cloud-init a moment to release the apt lock on a freshly-booted image
-for i in 1 2 3 4 5; do
-  if sudo -n fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; then
-    echo "bootstrap: waiting for apt lock ($i/5)"; sleep 5
+# Freshly-booted Ubuntu AMIs start `unattended-upgrades` at boot. It
+# grabs /var/lib/dpkg/lock-frontend for anywhere from 10s to 3+ min
+# while applying security patches. If our apt-get runs during that
+# window it fails with exit 100 "could not acquire lock" and the whole
+# task fails (observed 2026-11-02 gba-ward-prep).
+#
+# Spot compute boxes live 20-40 min then get terminated. Patching their
+# OS is pointless. Stop the service, mask it so cloud-init cannot
+# restart it, and wait on the dpkg lock long enough to cover an
+# in-flight apply.
+sudo systemctl stop unattended-upgrades 2>/dev/null || true
+sudo systemctl mask unattended-upgrades 2>/dev/null || true
+sudo systemctl stop apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
+sudo systemctl mask apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
+
+# Wait up to 5 min for any in-flight apt / dpkg process to release its
+# lock. Covers unattended-upgrades mid-apply even after `stop`, and
+# cloud-init's own apt invocations.
+for i in $(seq 1 60); do
+  if sudo -n fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock >/dev/null 2>&1; then
+    holder=$(sudo -n fuser /var/lib/dpkg/lock-frontend 2>/dev/null | awk '{print $NF}')
+    echo "bootstrap: waiting for apt/dpkg lock ($i/60) — held by pid $holder"
+    sleep 5
   else
     break
   fi

@@ -21,8 +21,18 @@ def test_system_bootstrap_installs_deps_and_uv():
     assert "command -v uv" in s
     # Non-interactive apt
     assert "DEBIAN_FRONTEND=noninteractive" in s
-    # apt lock wait loop
-    assert "waiting for apt lock" in s
+    # Lock-wait loop guards against unattended-upgrades holding dpkg
+    # (observed 2026-11-02 gba-ward-prep). See bootstrap.py docstring.
+    assert "waiting for apt/dpkg lock" in s
+    # Service must be stopped AND masked so cloud-init cannot restart it
+    # mid-bootstrap.
+    assert "systemctl stop unattended-upgrades" in s
+    assert "systemctl mask unattended-upgrades" in s
+    # Also disable the apt-daily timers that would otherwise retrigger it.
+    assert "apt-daily.timer" in s
+    # Wait up to 5 min (60 iterations × 5 s) for an in-flight unattended
+    # apply to release the lock.
+    assert "seq 1 60" in s
 
 
 def test_uv_sync_all_extras_by_default():
