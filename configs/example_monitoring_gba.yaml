@@ -1,0 +1,49 @@
+# Consolidated archive test: edit period dates and file paths below.
+# Dates select target-window END dates inclusively, not forecast issue dates.
+# Native prediction-count columns plus explicit issue_date and lead are required.
+# No per-window directories or run list are needed.
+# The files contain imported evaluation forecasts; no retraining is performed.
+pipeline:
+  name: dengue_monitoring
+logging:
+  level: INFO
+storages:
+  artifacts:
+    kind: filesystem
+    filesystem:
+      base_path: /home/user/ARTPARK/acestor/artifacts/monitoring
+monitoring:
+  as_of: "2026-09-27"  # last supplied actuals week-end; change when adding data
+  mode: monitor
+  baseline:
+    directory: /home/user/ARTPARK/acestor/artifacts/monitoring_baselines
+    name: gba_zone_2024_2025
+    # id: <optional full SHA-256 to pin a particular baseline>
+  scopes:
+    - name: gba_zone_imported_reference
+      spatial_scale: zone
+      derivation: native
+      models: [rf, xgb, timesfm, naive]
+      leads: [1, 2, 3, 4]
+      target_label: end
+      historical:
+        refresh_actuals: false  # supplied file; its producer refreshes it
+        actuals:
+          frequency: weekly
+          path: /home/user/ARTPARK/acestor/monitoring_artefacts/consolidated_inputs/actuals_weekly.csv
+        start: "2024-01-01"
+        end: "2025-12-31"
+        predictions_file: /home/user/ARTPARK/acestor/monitoring_artefacts/consolidated_inputs/historical_predictions.csv
+      current:
+        refresh_actuals: false  # supplied file; its producer refreshes it
+        actuals:
+          frequency: weekly
+          path: /home/user/ARTPARK/acestor/monitoring_artefacts/consolidated_inputs/actuals_weekly.csv
+        start: "2026-01-01"
+        end: "2026-09-27"
+        predictions_file: /home/user/ARTPARK/acestor/monitoring_artefacts/consolidated_inputs/current_predictions.csv
+# NBR and ensemble are excluded: they lack matching data in the other period.
+# First explicitly build the frozen historical reference (repeat only to recalibrate):
+# uv run python -m acestor.run --pipeline pipelines.dengue_monitoring.pipeline:build_pipeline --config configs/monitoring.gba_archives.yaml --set monitoring.mode=build_baseline
+# Routine evaluation (automatically generates a unique run ID):
+# uv run python -m acestor.run --pipeline pipelines.dengue_monitoring.pipeline:build_pipeline --config configs/monitoring.gba_archives.yaml
