@@ -120,6 +120,12 @@ def main(argv: list[str] | None = None) -> int:
     builder = _load_builder(args.pipeline)
     dag = builder(config)
 
+    # Reject protected runs before context creation can delete their artifacts.
+    for step in dag.steps:
+        preflight = getattr(step.impl, "preflight_run", None)
+        if preflight is not None:
+            preflight(config, run_id, clean=args.clean)
+
     context = PipelineContext.from_config(config, run_id=run_id, clean=args.clean)
 
     runner = PipelineRunner(dag=dag, context=context)
