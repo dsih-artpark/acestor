@@ -10,6 +10,15 @@
 
 All three are driven from YAML config files and can be run independently or chained together.
 
+The pipelines use the following data:
+
+| Data | Status | Notes |
+|---|---|---|
+| Dengue case data | Required | Case-level line list, or counts by administrative unit and date |
+| Administrative boundaries | Required | GeoJSON per administrative level |
+| Weather | Fetched by `dengue_prep` when enabled | ERA5 temperature, dewpoint and rainfall, for example through Open-Meteo |
+| Entomological data | Not currently used | Evaluated as a model input; not part of the current production pipeline |
+
 ---
 
 <p align="center">
