@@ -183,7 +183,7 @@ weather_parse:
 |---|---|---|
 | `region_id` | string | e.g. `district_502`, `ward_gba-63` |
 | `date` | YYYY-MM-DD | Reporting date (resolved via `date_column` candidate list) |
-| `case` | int | Daily confirmed case count |
+| `case_count` | int | Daily confirmed case count |
 
 Only `(region_id, date)` pairs with ≥1 case are stored. A missing row means
 zero cases, not missing data. Region IDs are always inside the allowlist
@@ -195,9 +195,12 @@ derived from the geojson layer.
 |---|---|---|
 | `region_id` | string | Admin region identifier |
 | `date` | YYYY-MM-DD | Date |
-| `2mTemperature_mean` | float | Daily mean (Kelvin) |
-| `2mDewpointTemperature_mean` | float | Daily mean (Kelvin) |
-| `totalPrecipitation_sum` | float | Daily total (metres) |
+| `2mTemperature` | float | Daily mean (Kelvin) |
+| `2mDewpointTemperature` | float | Daily mean (Kelvin) |
+| `totalPrecipitation` | float | Daily total (metres) |
+| `name` | string | Region name (from geojson) |
+| `parent` | string | Parent region identifier (from geojson) |
+| `parent_name` | string | Parent region name (from geojson) |
 
 Column names use ERA5 conventions so the `dengue` pipeline can apply rolling
 transforms uniformly regardless of which source produced the data. **Units on
