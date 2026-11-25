@@ -114,7 +114,7 @@ sudo systemctl mask apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
 # cloud-init's own apt invocations.
 for i in $(seq 1 60); do
   if sudo -n fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock >/dev/null 2>&1; then
-    holder=$(sudo -n fuser /var/lib/dpkg/lock-frontend 2>/dev/null | awk '{print $NF}')
+    holder=$(sudo -n fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock 2>/dev/null | awk '{print $NF}' || true)
     echo "bootstrap: waiting for apt/dpkg lock ($i/60) — held by pid $holder"
     sleep 5
   else
