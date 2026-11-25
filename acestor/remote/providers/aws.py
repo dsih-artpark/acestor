@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import os
 import socket
 import time
 from dataclasses import dataclass, field
@@ -119,6 +120,7 @@ class AWSProvider(CloudProvider):
         tags = [
             {"Key": "acestor:remote-runner", "Value": "true"},
             {"Key": "acestor:lifecycle", "Value": lifecycle},
+            {"Key": "Env", "Value": os.environ.get("ACESTOR_ENV", "prod")},
         ]
         if run_id:
             tags.append({"Key": "acestor:run-id", "Value": run_id})
