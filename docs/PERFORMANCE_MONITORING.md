@@ -155,7 +155,7 @@ Rebuild the baseline to include new regions.
 ## CLI recipes
 
 Run these commands from the repository root.
-The example configuration is [monitoring.gba_archives.yaml](../configs/monitoring.gba_archives.yaml).
+The example configuration is [example_monitoring_gba.yaml](../configs/example_monitoring_gba.yaml).
 
 | Example setting | Value |
 |---|---|
@@ -172,7 +172,7 @@ Run again only to replace the historical error distribution and its thresholds.
 ```bash
 uv run python -m acestor.run \
   --pipeline pipelines.dengue_monitoring.pipeline:build_pipeline \
-  --config configs/monitoring.gba_archives.yaml \
+  --config configs/example_monitoring_gba.yaml \
   --set monitoring.mode=build_baseline
 ```
 
@@ -183,7 +183,7 @@ Update the prediction and actuals files, `current.end`, and `monitoring.as_of` b
 ```bash
 uv run python -m acestor.run \
   --pipeline pipelines.dengue_monitoring.pipeline:build_pipeline \
-  --config configs/monitoring.gba_archives.yaml
+  --config configs/example_monitoring_gba.yaml
 ```
 
 The CLI generates a unique run ID when `--run-id` is omitted.

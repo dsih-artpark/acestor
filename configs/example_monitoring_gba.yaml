@@ -44,6 +44,6 @@ monitoring:
         predictions_file: /home/user/ARTPARK/acestor/monitoring_artefacts/consolidated_inputs/current_predictions.csv
 # NBR and ensemble are excluded: they lack matching data in the other period.
 # First explicitly build the frozen historical reference (repeat only to recalibrate):
-# uv run python -m acestor.run --pipeline pipelines.dengue_monitoring.pipeline:build_pipeline --config configs/monitoring.gba_archives.yaml --set monitoring.mode=build_baseline
+# uv run python -m acestor.run --pipeline pipelines.dengue_monitoring.pipeline:build_pipeline --config configs/example_monitoring_gba.yaml --set monitoring.mode=build_baseline
 # Routine evaluation (automatically generates a unique run ID):
-# uv run python -m acestor.run --pipeline pipelines.dengue_monitoring.pipeline:build_pipeline --config configs/monitoring.gba_archives.yaml
+# uv run python -m acestor.run --pipeline pipelines.dengue_monitoring.pipeline:build_pipeline --config configs/example_monitoring_gba.yaml
