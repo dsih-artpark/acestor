@@ -178,12 +178,20 @@ def _emit_summary(
 
 def _build_threshold_contexts(
     raw_thresholds: dict,
-) -> tuple[list[float], str, dict[str, ThresholdContext], list[float]]:
+) -> tuple[
+    list[float],
+    str,
+    dict[str, ThresholdContext],
+    list[float],
+    int | None,
+    tuple[int, int] | None,
+    float | None,
+    float | None,
+]:
     """Parse the downscale config's `thresholds:` block into the same shape the
     dengue pipeline uses, so child zones are derived with matching settings.
 
-    Returns (list_alpha, classification_method, {method: ThresholdContext},
-    percentile_cutoffs).
+    Returns the threshold-generation and percentile-classification settings.
     """
     cfg = ThresholdsConfig.from_raw(raw_thresholds)
     raw_method_configs = dict(raw_thresholds.get("method_configs") or {})
@@ -205,6 +213,10 @@ def _build_threshold_contexts(
         cfg.classification_method,
         ctx_by_method,
         cfg.percentile_cutoffs,
+        cfg.percentile_week_pool,
+        cfg.percentile_year_range,
+        cfg.percentile_low_season_floor,
+        cfg.percentile_low_season_critical,
     )
 
 
@@ -276,6 +288,10 @@ class DownscalePredictionsStep(BaseStep[DownscalePredictionsInputs, DownscaleRes
             classification_method,
             ctx_by_method,
             percentile_cutoffs,
+            percentile_week_pool,
+            percentile_year_range,
+            percentile_low_season_floor,
+            percentile_low_season_critical,
         ) = _build_threshold_contexts(_section(context.config, "thresholds"))
         context.log.info(
             "downscale_predictions: zone re-derivation — classification=%s, list_alpha=%s, "
@@ -295,6 +311,10 @@ class DownscalePredictionsStep(BaseStep[DownscalePredictionsInputs, DownscaleRes
             classification_method=classification_method,
             ctx_by_method=ctx_by_method,
             percentile_cutoffs=percentile_cutoffs,
+            percentile_week_pool=percentile_week_pool,
+            percentile_year_range=percentile_year_range,
+            percentile_low_season_floor=percentile_low_season_floor,
+            percentile_low_season_critical=percentile_low_season_critical,
             on_missing_parents=cfg.on_missing_parents,
             historical_fallback_weeks=cfg.historical_fallback_weeks,
         )

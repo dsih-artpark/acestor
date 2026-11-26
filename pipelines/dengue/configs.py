@@ -7,6 +7,7 @@ defaults, so the step's ``run()`` never touches raw dicts.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 import os
 from typing import Any, Mapping
 
@@ -449,6 +450,12 @@ class ThresholdsConfig:
     # N+1 bands; default [25, 50, 75] gives 4 bands matching the WHO/ICMR
     # convention.
     percentile_cutoffs: list[float] = field(default_factory=lambda: [25.0, 50.0, 75.0])
+    # Optional endemic-channel mode. When configured, percentile cutoffs are
+    # computed per ISO week from nearby weeks in an explicit ISO-year range.
+    percentile_week_pool: int | None = None
+    percentile_year_range: tuple[int, int] | None = None
+    percentile_low_season_floor: float | None = None
+    percentile_low_season_critical: float | None = None
     # weighted_baseline knobs
     recent_weeks: int = 4
     sd_window_weeks: int = 8
@@ -469,6 +476,74 @@ class ThresholdsConfig:
                 f"(Until 2026 unknown values silently produced WHO output — "
                 f"issue #62.)"
             )
+        percentile_cutoffs = [
+            float(p) for p in raw.get("percentile_cutoffs", [25.0, 50.0, 75.0])
+        ]
+        if (
+            not percentile_cutoffs
+            or any(not math.isfinite(p) or p < 0 or p > 100 for p in percentile_cutoffs)
+            or len(set(percentile_cutoffs)) != len(percentile_cutoffs)
+        ):
+            raise ValueError(
+                "thresholds.percentile_cutoffs must be unique finite percentiles in [0, 100]."
+            )
+        raw_year_range = raw.get("percentile_year_range")
+        percentile_year_range = None
+        if raw_year_range is not None:
+            if not isinstance(raw_year_range, (list, tuple)) or len(raw_year_range) != 2:
+                raise ValueError(
+                    "thresholds.percentile_year_range must contain [start_year, end_year]."
+                )
+            percentile_year_range = (int(raw_year_range[0]), int(raw_year_range[1]))
+            if percentile_year_range[0] > percentile_year_range[1]:
+                raise ValueError(
+                    "thresholds.percentile_year_range start must be <= end."
+                )
+        raw_week_pool = raw.get("percentile_week_pool")
+        percentile_week_pool = (
+            int(raw_week_pool) if raw_week_pool is not None else None
+        )
+        if percentile_week_pool is not None and percentile_week_pool < 0:
+            raise ValueError("thresholds.percentile_week_pool must be >= 0.")
+        if (percentile_year_range is None) != (percentile_week_pool is None):
+            raise ValueError(
+                "thresholds.percentile_year_range and percentile_week_pool "
+                "must be configured together."
+            )
+        raw_low_season_floor = raw.get("percentile_low_season_floor")
+        raw_low_season_critical = raw.get("percentile_low_season_critical")
+        percentile_low_season_floor = (
+            float(raw_low_season_floor)
+            if raw_low_season_floor is not None
+            else None
+        )
+        percentile_low_season_critical = (
+            float(raw_low_season_critical)
+            if raw_low_season_critical is not None
+            else None
+        )
+        if (percentile_low_season_floor is None) != (
+            percentile_low_season_critical is None
+        ):
+            raise ValueError(
+                "thresholds.percentile_low_season_floor and "
+                "percentile_low_season_critical must be configured together."
+            )
+        if percentile_low_season_floor is not None:
+            if (
+                not math.isfinite(percentile_low_season_floor)
+                or not math.isfinite(percentile_low_season_critical)
+                or percentile_low_season_floor < 0
+                or percentile_low_season_critical <= percentile_low_season_floor
+            ):
+                raise ValueError(
+                    "Percentile low-season thresholds must be finite, non-negative, "
+                    "and critical must exceed floor."
+                )
+        if percentile_low_season_floor is not None and percentile_year_range is None:
+            raise ValueError(
+                "Percentile low-season thresholds require seasonal percentile settings."
+            )
         return cls(
             region_type=raw.get("region_type", "zone"),
             n_weeks=int(raw.get("n_weeks", 4)),
@@ -478,9 +553,11 @@ class ThresholdsConfig:
             list_alpha=[float(a) for a in raw.get("list_alpha", [1.0, 2.0])],
             methods=list(raw.get("methods", ["historical", "prev_nweeks"])),
             classification_method=classification_method,
-            percentile_cutoffs=[
-                float(p) for p in raw.get("percentile_cutoffs", [25.0, 50.0, 75.0])
-            ],
+            percentile_cutoffs=percentile_cutoffs,
+            percentile_week_pool=percentile_week_pool,
+            percentile_year_range=percentile_year_range,
+            percentile_low_season_floor=percentile_low_season_floor,
+            percentile_low_season_critical=percentile_low_season_critical,
             recent_weeks=int(raw.get("recent_weeks", 4)),
             sd_window_weeks=int(raw.get("sd_window_weeks", 8)),
             weight_recent=float(raw.get("weight_recent", 0.7)),
@@ -504,6 +581,11 @@ def resolve_threshold_config(
         region_type=base.region_type,
         methods=base.methods,
         classification_method=base.classification_method,
+        percentile_cutoffs=base.percentile_cutoffs,
+        percentile_week_pool=base.percentile_week_pool,
+        percentile_year_range=base.percentile_year_range,
+        percentile_low_season_floor=base.percentile_low_season_floor,
+        percentile_low_season_critical=base.percentile_low_season_critical,
         n_weeks=_override("n_weeks", int, base.n_weeks),
         historical_n_years=_override(
             "historical_n_years",

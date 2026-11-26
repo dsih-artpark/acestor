@@ -536,8 +536,21 @@ Early abort when the parsed case data is too thin to model.
      - list[float]
      - ``[25.0, 50.0, 75.0]``
      - For ``classification_method: percentile`` only. N cutoffs → N+1 bands,
-       computed per region against its own weekly history. Common override:
-       ``[50, 75, 90]``.
+       computed per region against weekly history. When the seasonal settings
+       below are present, history is limited to nearby ISO weeks and the
+       configured year range. Common override: ``[50, 75, 90]``.
+   * - ``percentile_week_pool``
+     - int or null
+     - ``null``
+     - With ``percentile_year_range``, pool this ISO week ± N weeks for seasonal percentiles.
+   * - ``percentile_year_range``
+     - list[int] or null
+     - ``null``
+     - Inclusive ISO-year range for seasonal percentiles, e.g. ``[2022, 2025]``.
+   * - ``percentile_low_season_floor`` / ``percentile_low_season_critical``
+     - float or null
+     - ``null``
+     - Paired absolute cutoffs used when pooled P75 is below the low-season floor.
    * - ``n_weeks``
      - int
      - ``4``

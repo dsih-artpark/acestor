@@ -207,6 +207,13 @@ This is now baked into `percentile_historical_zones` — you don't need
 to think about it, but if you're reading old code and wondering why
 p50 cuts look strange, that's the reason.
 
+For GBA, `percentile_year_range` and `percentile_week_pool` enable the
+seasonal endemic-channel variant: cutoffs are computed separately for each
+region and forecast ISO week from that week and two weeks either side, using
+the configured years. Other configs that omit those keys retain the existing
+whole-history percentile distribution. Missing weeks are not synthesized;
+explicit zero-valued weekly rows are included.
+
 ---
 
 ## Part 7 — when thresholds go bad

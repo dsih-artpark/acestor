@@ -298,6 +298,10 @@ def assign_child_zones(
     classification_method: str,
     ctx_by_method: dict,
     percentile_cutoffs: list[float] | None = None,
+    percentile_week_pool: int | None = None,
+    percentile_year_range: tuple[int, int] | None = None,
+    percentile_low_season_floor: float | None = None,
+    percentile_low_season_critical: float | None = None,
 ) -> pd.Series:
     """Re-derive each child's risk zone from child-level data, never inherited.
 
@@ -305,8 +309,8 @@ def assign_child_zones(
       - "who": per-region threshold bands T_α = Mean + α·StdDev, using the parent
         row's thresholdMethod and the per-method context from config.
       - "icmr": cross-sectional quartile strata across all children per predicted week.
-      - "percentile": per-region historical-percentile bands cut at
-        ``percentile_cutoffs`` of each child's own case history.
+      - "percentile": per-region historical-percentile bands, optionally
+        using seasonal week pooling when the percentile settings specify it.
 
     Returns a Series of zones aligned to ``child_preds.index``.
     """
@@ -342,6 +346,10 @@ def assign_child_zones(
             cases_for_pct,
             spatial_col="region_id",
             percentile_cutoffs=cuts,
+            percentile_week_pool=percentile_week_pool,
+            percentile_year_range=percentile_year_range,
+            low_season_floor=percentile_low_season_floor,
+            low_season_critical=percentile_low_season_critical,
         )
         zones = pd.to_numeric(
             classified.sort_index()["predictionZone"], errors="coerce"
@@ -546,6 +554,10 @@ def downscale_predictions(
     classification_method: str,
     ctx_by_method: dict,
     percentile_cutoffs: list[float] | None = None,
+    percentile_week_pool: int | None = None,
+    percentile_year_range: tuple[int, int] | None = None,
+    percentile_low_season_floor: float | None = None,
+    percentile_low_season_critical: float | None = None,
     on_missing_parents: str = "error",
     historical_fallback_weeks: int | None = None,
 ) -> pd.DataFrame:
@@ -676,6 +688,10 @@ def downscale_predictions(
         classification_method=classification_method,
         ctx_by_method=ctx_by_method,
         percentile_cutoffs=percentile_cutoffs,
+        percentile_week_pool=percentile_week_pool,
+        percentile_year_range=percentile_year_range,
+        percentile_low_season_floor=percentile_low_season_floor,
+        percentile_low_season_critical=percentile_low_season_critical,
     )
     child_preds["predictionInt"] = _apportion_children(
         child_preds, child_mapping, recent_cases_by_child

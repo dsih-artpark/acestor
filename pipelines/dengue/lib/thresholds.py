@@ -369,22 +369,44 @@ def _aggregate_cases_to_weekly(
     spatial_col: str,
     case_col: str,
 ) -> pd.DataFrame:
-    """Sum cases per (region, ISO week). Missing weeks are NOT zero-filled —
-    the caller uses ``.dropna()`` on the case series, so zero-fill would just
-    add ``0`` rows that swing the p50 down. Keeping only weeks with observed
-    cases matches prod's ``date_trunc('week', date_of_onset)`` semantics."""
-    if "date" not in case_data.columns:
-        return case_data
-    df = case_data[[spatial_col, "date", case_col]].copy()
-    df["date"] = pd.to_datetime(df["date"])
-    # ISO week: Mon-anchored. `W-SUN` = weeks ending Sunday = Mon..Sun bins.
-    df["week"] = df["date"].dt.to_period("W-SUN").dt.start_time
-    weekly = (
-        df.groupby([spatial_col, "week"], as_index=False)[case_col]
-        .sum()
-        .rename(columns={"week": "date"})
+    """Aggregate dated rows to region × ISO year × ISO week.
+
+    Missing weeks remain absent, matching the original endemic-channel code.
+    Zero-case weeks are retained when the input explicitly contains a zero row.
+    """
+    date_col = next(
+        (
+            column
+            for column in ("date", "recordDate", "metadata.primaryDate")
+            if column in case_data
+        ),
+        None,
     )
-    return weekly
+    if date_col is None:
+        if {"iso_year", "iso_week"}.issubset(case_data.columns):
+            df = case_data[[spatial_col, "iso_year", "iso_week", case_col]].copy()
+            df["iso_year"] = pd.to_numeric(df["iso_year"], errors="coerce")
+            df["iso_week"] = pd.to_numeric(df["iso_week"], errors="coerce")
+            df[case_col] = pd.to_numeric(df[case_col], errors="coerce")
+            return (
+                df.dropna(subset=["iso_year", "iso_week"])
+                .groupby([spatial_col, "iso_year", "iso_week"], as_index=False)[case_col]
+                .sum(min_count=1)
+            )
+        return case_data
+
+    df = case_data[[spatial_col, date_col, case_col]].copy()
+    dates = pd.to_datetime(df[date_col], errors="coerce")
+    valid = dates.notna()
+    df = df.loc[valid].copy()
+    iso = dates.loc[valid].dt.isocalendar()
+    df["iso_year"] = iso.year.astype(int).to_numpy()
+    df["iso_week"] = iso.week.astype(int).to_numpy()
+    df[case_col] = pd.to_numeric(df[case_col], errors="coerce")
+    return (
+        df.groupby([spatial_col, "iso_year", "iso_week"], as_index=False)[case_col]
+        .sum(min_count=1)
+    )
 
 
 def percentile_historical_zones(
@@ -395,23 +417,22 @@ def percentile_historical_zones(
     percentile_cutoffs: list[float],
     prediction_col: str = "prediction",
     case_col: str = "case",
+    percentile_week_pool: int | None = None,
+    percentile_year_range: tuple[int, int] | None = None,
+    low_season_floor: float | None = None,
+    low_season_critical: float | None = None,
 ) -> pd.DataFrame:
     """Assign per-region historical-percentile bands as ``predictionZone``.
 
-    For each region, the cutoff values come from ``case_data[case_col]`` at
-    the requested percentiles of that region's own history. A prediction is
-    placed into band ``i + 1`` where ``i`` is the count of cutoffs the
-    prediction strictly exceeds — so ``N`` cutoffs yield ``N + 1`` bands,
-    band 1 = lowest, band ``N+1`` = highest. Regions with no history get
-    ``predictionZone = pd.NA``.
+    By default, cutoffs come from each region's whole history. When both
+    ``percentile_week_pool`` and ``percentile_year_range`` are supplied, use
+    the seasonal endemic-channel method: for a forecast ISO week, pool that
+    week and its neighboring weeks from the configured ISO-year range.
+    ``N`` cutoffs yield ``N + 1`` bands, numbered from 1 (lowest).
 
-    Predictions are weekly totals, so cutoffs are computed on **weekly** case
-    aggregates per region — not on raw daily rows. ``cases_daily.csv`` is
-    sparse (rows exist only where ``case_count > 0``); computing percentiles
-    over those raw rows is a conditional-on-hot-days statistic and inflates
-    band assignments. If ``case_data`` has a ``date`` column, rows are summed
-    per (region, ISO week) before percentile computation. Without a ``date``
-    column the input is treated as already at the target granularity.
+    Predictions are weekly totals. Dated cases are aggregated by region, ISO
+    year, and ISO week before computing cutoffs. Missing weeks are not
+    synthesized; explicit zero rows remain in the distribution.
 
     Differs fundamentally from :func:`icmr_quartile_zones`:
       * ICMR cuts cross-sectionally per date (across all regions).
@@ -424,11 +445,193 @@ def percentile_historical_zones(
     out["predictionZone"] = pd.NA
 
     cutoffs_sorted = sorted(percentile_cutoffs)
+    if (
+        not cutoffs_sorted
+        or any(not np.isfinite(cutoff) or cutoff < 0 or cutoff > 100 for cutoff in cutoffs_sorted)
+        or len(set(cutoffs_sorted)) != len(cutoffs_sorted)
+    ):
+        raise ValueError("percentile_cutoffs must be unique finite percentiles in [0, 100].")
     n_bands = len(cutoffs_sorted) + 1
+    seasonal = percentile_week_pool is not None or percentile_year_range is not None
+    if seasonal and (percentile_week_pool is None or percentile_year_range is None):
+        raise ValueError(
+            "percentile_week_pool and percentile_year_range must be supplied together."
+        )
+    if seasonal and percentile_week_pool < 0:
+        raise ValueError("percentile_week_pool must be >= 0.")
+    if (low_season_floor is None) != (low_season_critical is None):
+        raise ValueError("low_season_floor and low_season_critical must be supplied together.")
+    if low_season_floor is not None:
+        if not seasonal:
+            raise ValueError("Low-season thresholds require seasonal percentile settings.")
+        if (
+            not np.isfinite(low_season_floor)
+            or not np.isfinite(low_season_critical)
+            or low_season_floor < 0
+            or low_season_critical <= low_season_floor
+        ):
+            raise ValueError(
+                "Low-season thresholds must be finite; critical must exceed floor."
+            )
+        if cutoffs_sorted != [50.0, 75.0, 90.0]:
+            raise ValueError(
+                "Low-season bands require percentile_cutoffs [50, 75, 90]."
+            )
 
     history_source = _aggregate_cases_to_weekly(
         case_data, spatial_col=spatial_col, case_col=case_col
     )
+
+    if seasonal:
+        if not {"iso_year", "iso_week"}.issubset(history_source.columns):
+            raise ValueError(
+                "Seasonal percentile classification requires dated cases or "
+                "iso_year/iso_week columns."
+            )
+        pred_date_col = next(
+            (
+                column
+                for column in ("startDatePredictedWeek", "target_week", "recordDate")
+                if column in out.columns
+            ),
+            None,
+        )
+        if pred_date_col is None:
+            raise ValueError(
+                "Seasonal percentile classification requires a forecast date column."
+            )
+        week_text = out[pred_date_col].astype("string").str.extract(
+            r"^(\d{4})-W(\d{1,2})$"
+        )
+        target_week = pd.Series(pd.NA, index=out.index, dtype="Int64")
+        target_year = pd.Series(pd.NA, index=out.index, dtype="Int64")
+        is_iso_label = week_text[1].notna()
+        target_week.loc[is_iso_label] = pd.to_numeric(
+            week_text.loc[is_iso_label, 1], errors="coerce"
+        ).astype("Int64")
+        target_year.loc[is_iso_label] = pd.to_numeric(
+            week_text.loc[is_iso_label, 0], errors="coerce"
+        ).astype("Int64")
+        pred_dates = pd.to_datetime(out[pred_date_col], errors="coerce")
+        pred_iso = pred_dates.dt.isocalendar()
+        target_week.loc[~is_iso_label] = pred_iso.loc[~is_iso_label, "week"].astype(
+            "Int64"
+        )
+        target_year.loc[~is_iso_label] = pred_iso.loc[~is_iso_label, "year"].astype(
+            "Int64"
+        )
+        out["_percentile_target_iso_week"] = target_week
+        out["_percentile_target_iso_year"] = target_year
+
+        start_year, end_year = percentile_year_range
+        if start_year > end_year:
+            raise ValueError("percentile_year_range start must be <= end.")
+        historical = history_source.loc[
+            history_source["iso_year"].between(start_year, end_year)
+        ].copy()
+        if historical.empty:
+            return out.drop(
+                columns=["_percentile_target_iso_week", "_percentile_target_iso_year"]
+            )
+
+        cached_cuts: dict[
+            tuple[object, int, int], tuple[np.ndarray, float | None, float | None]
+        ] = {}
+        for region, region_preds in out.groupby(spatial_col, sort=False):
+            region_hist = historical.loc[historical[spatial_col] == region]
+            if region_hist.empty:
+                continue
+            for idx, row in region_preds.iterrows():
+                target_week = row["_percentile_target_iso_week"]
+                target_year = row["_percentile_target_iso_year"]
+                raw_value = pd.to_numeric(
+                    pd.Series([row[prediction_col]]), errors="coerce"
+                ).iloc[0]
+                if (
+                    pd.isna(target_week)
+                    or pd.isna(target_year)
+                    or pd.isna(raw_value)
+                ):
+                    continue
+                value = float(raw_value)
+                if not np.isfinite(value):
+                    continue
+                target_week = int(target_week)
+                target_year = int(target_year)
+                if not 1 <= target_week <= 53:
+                    raise ValueError(
+                        f"Forecast ISO week must be between 1 and 53, got {target_week}."
+                    )
+                cache_key = (region, target_year, target_week)
+                if cache_key not in cached_cuts:
+                    # Never include the target ISO year or later, even when
+                    # the configured range overlaps a historical evaluation.
+                    prior_years = region_hist.loc[
+                        region_hist["iso_year"] < target_year
+                    ]
+                    if prior_years.empty:
+                        cached_cuts[cache_key] = (np.array([]), None, None)
+                        continue
+                    n_weeks = max(
+                        [52, target_week]
+                        + [
+                            int(pd.Timestamp(year=int(year), month=12, day=28).isocalendar().week)
+                            for year in prior_years["iso_year"].unique()
+                        ]
+                    )
+                    offsets = {
+                        ((target_week - 1 + delta) % n_weeks) + 1
+                        for delta in range(
+                            -percentile_week_pool, percentile_week_pool + 1
+                        )
+                    }
+                    pool = prior_years.loc[
+                        prior_years["iso_week"].isin(offsets), case_col
+                    ].dropna()
+                    if pool.empty:
+                        cached_cuts[cache_key] = (np.array([]), None, None)
+                        continue
+                    values = pool.to_numpy(dtype=float)
+                    values = values[np.isfinite(values)]
+                    if values.size == 0:
+                        cached_cuts[cache_key] = (np.array([]), None, None)
+                        continue
+                    cuts = np.percentile(values, cutoffs_sorted)
+                    p50, p75 = (
+                        np.percentile(values, [50.0, 75.0])
+                        if low_season_floor is not None
+                        else (None, None)
+                    )
+                    cached_cuts[cache_key] = (
+                        cuts,
+                        float(p50) if p50 is not None else None,
+                        float(p75) if p75 is not None else None,
+                    )
+                cuts, p50, p75 = cached_cuts[cache_key]
+                if len(cuts) == 0:
+                    continue
+                if value <= 0:
+                    out.at[idx, "predictionZone"] = 1
+                    continue
+                band = int(np.searchsorted(cuts, value, side="right")) + 1
+                if (
+                    low_season_floor is not None
+                    and p75 is not None
+                    and p75 <= low_season_floor
+                ):
+                    if value >= low_season_critical:
+                        band = 4
+                    elif value >= low_season_floor:
+                        band = 3
+                    elif value >= max(float(p50), 1.0):
+                        band = 2
+                    else:
+                        band = 1
+                out.at[idx, "predictionZone"] = min(max(band, 1), n_bands)
+
+        return out.drop(
+            columns=["_percentile_target_iso_week", "_percentile_target_iso_year"]
+        )
 
     for region, region_preds in out.groupby(spatial_col, sort=False):
         history = history_source.loc[
