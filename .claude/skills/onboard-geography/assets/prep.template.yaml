@@ -1,0 +1,47 @@
+pipeline:
+  name: dengue_prep
+  title: ""
+
+run:
+  run_date: ""
+
+data:
+  region_type: "district"
+
+  prepared_data:
+    base_dir: ""
+
+  date_range:
+    start: ""
+
+  geojson:
+    base_path: ""
+
+  # Aggregated counts are placed directly as cases_daily.csv, so the case
+  # branch stays off. The configs command turns it on for a line list.
+  case_download:
+    enabled: false
+
+  weather_download:
+    enabled: true
+    source_mode: "openmeteo"
+    parsed_output_path: ""
+    temperature_unit: "celsius"
+    precipitation_unit: "mm"
+
+  weather_parse:
+    region_type: "district"
+    weather_variables: ["2mTemperature", "totalPrecipitation", "2mDewpointTemperature"]
+    daily_agg:
+      - {name: "2mTemperature", op: "mean"}
+      - {name: "2mDewpointTemperature", op: "mean"}
+      - {name: "totalPrecipitation", op: "sum"}
+
+logging:
+  level: INFO
+
+storages:
+  artifacts:
+    kind: filesystem
+    filesystem:
+      base_path: ""
