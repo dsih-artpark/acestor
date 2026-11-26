@@ -24,10 +24,13 @@ thresholds:
   region_type: ward
   list_alpha: [1.0, 2.0]
   classification_method: percentile
-  # Per-region historical percentile cutoffs (issue #62): the current week's
-  # forecast is placed in one of 4 bands relative to the region's own history.
-  # Cutoffs 50/75/90 → 4 bands: ≤p50, (p50,p75], (p75,p90], >p90.
+  # Seasonal endemic channel: pool this ISO week ±2 weeks across 2022–2025.
+  # W1–17 P75 range is 0–6; use a 1-case floor and 6-case critical cutoff.
   percentile_cutoffs: [50.0, 75.0, 90.0]
+  percentile_week_pool: 2
+  percentile_year_range: [2022, 2025]
+  percentile_low_season_floor: 1.0
+  percentile_low_season_critical: 6.0
   methods: [historical, prev_nweeks, weighted_baseline]
   method_configs:
     prev_nweeks:

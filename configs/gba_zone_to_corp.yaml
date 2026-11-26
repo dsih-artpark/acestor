@@ -29,8 +29,13 @@ thresholds:
   region_type: corp
   list_alpha: [1.0, 2.0]
   classification_method: percentile
-  # Per-region historical percentile cutoffs (issue #62): 50/75/90 → 4 bands.
+  # Seasonal endemic channel: this ISO week ±2 weeks across 2022–2025;
+  # W1–17 P75 range is 6–31 cases; use its min/max as floor/critical.
   percentile_cutoffs: [50.0, 75.0, 90.0]
+  percentile_week_pool: 2
+  percentile_year_range: [2022, 2025]
+  percentile_low_season_floor: 6.0
+  percentile_low_season_critical: 31.0
   methods: [historical, prev_nweeks, weighted_baseline]
   method_configs:
     prev_nweeks:

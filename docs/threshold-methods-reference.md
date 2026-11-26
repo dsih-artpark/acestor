@@ -206,17 +206,33 @@ highest risk *right now* relative to the others?"
 ### Percentile
 
 `pipelines/dengue/lib/thresholds.py::percentile_historical_zones`
-(PR #73, issue #62). Per-region, using the region's own weekly-aggregated
-case history:
+(PR #73, issue #62). The default mode computes cutoffs per region from its
+whole weekly history. When `percentile_year_range` and `percentile_week_pool`
+are configured, it instead uses a seasonal endemic channel. For each forecast
+ISO week, it pools that week and the configured number of neighboring weeks on
+either side, across the inclusive ISO-year range. GBA configures `[2022, 2025]`
+and a pool of two weeks on each side:
 
 ```
-cuts_r = np.percentile(weekly_cases_r, percentile_cutoffs)
-band(pred) = 1 + searchsorted(cuts_r, pred, side='right')
+pool = cases[iso_year in year_range & iso_week in target_week ± week_pool]
+cuts = np.percentile(pool, percentile_cutoffs)
+band(pred) = 1 + searchsorted(cuts, pred, side='right')
 ```
 
 `N` percentile cutoffs produce `N + 1` bands. The default `[50, 75, 90]`
-gives four bands: `≤ p50`, `(p50, p75]`, `(p75, p90]`, `> p90`. Regions
-with no history → `NA`.
+gives four bands: `< p50`, `p50–<p75`, `p75–<p90`, `≥ p90`. A value exactly
+equal to a cutoff goes into the higher band. Missing ISO weeks are not filled;
+only rows present in the configured historical range contribute. The target
+ISO year and later years are excluded from the pool to prevent leakage in
+historical evaluations. Regions/weeks with no usable pool or missing forecasts
+remain `NA`.
+
+When the pooled P75 is below `percentile_low_season_floor`, the configured
+absolute floor and critical forecast thresholds override the percentile bands.
+GBA cutoffs are configurable by spatial level. Based on the observed W1–17
+P75 range, corporation configs use 6/31 cases, zone configs use 2/20.5, and
+ward configs use a 1-case floor and 6-case critical cutoff (the observed ward
+P75 minimum was zero).
 
 Weekly aggregation is not optional — see PR #98 in
 `thresholds-explained.md`.

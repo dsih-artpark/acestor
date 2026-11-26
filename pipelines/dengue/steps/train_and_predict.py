@@ -374,6 +374,10 @@ class TrainAndPredictStep(BaseStep[TrainAndPredictInputs, PredictionResult]):
                 case_df,
                 spatial_col=cfg.spatial_res,
                 percentile_cutoffs=thresh_cfg.percentile_cutoffs,
+                percentile_week_pool=thresh_cfg.percentile_week_pool,
+                percentile_year_range=thresh_cfg.percentile_year_range,
+                low_season_floor=thresh_cfg.percentile_low_season_floor,
+                low_season_critical=thresh_cfg.percentile_low_season_critical,
             )
             classified["percentileZone"] = percentile_classified["predictionZone"]
 

@@ -30,7 +30,16 @@ from pipelines.dengue_rollup.results import (
 
 def _build_threshold_contexts(
     raw_thresholds: dict,
-) -> tuple[list[float], str, dict[str, ThresholdContext], list[float]]:
+) -> tuple[
+    list[float],
+    str,
+    dict[str, ThresholdContext],
+    list[float],
+    int | None,
+    tuple[int, int] | None,
+    float | None,
+    float | None,
+]:
     """Parse the rollup config's `thresholds:` block into the shape the
     zone-assignment code expects."""
     cfg = ThresholdsConfig.from_raw(raw_thresholds)
@@ -53,6 +62,10 @@ def _build_threshold_contexts(
         cfg.classification_method,
         ctx_by_method,
         cfg.percentile_cutoffs,
+        cfg.percentile_week_pool,
+        cfg.percentile_year_range,
+        cfg.percentile_low_season_floor,
+        cfg.percentile_low_season_critical,
     )
 
 
@@ -144,6 +157,10 @@ class RollupPredictionsStep(BaseStep[RollupPredictionsInputs, RollupResult]):
             classification_method,
             ctx_by_method,
             percentile_cutoffs,
+            percentile_week_pool,
+            percentile_year_range,
+            percentile_low_season_floor,
+            percentile_low_season_critical,
         ) = _build_threshold_contexts(thresh_section)
         context.log.info(
             "rollup_predictions: zone re-derivation — classification=%s, "
@@ -165,6 +182,10 @@ class RollupPredictionsStep(BaseStep[RollupPredictionsInputs, RollupResult]):
             classification_method=classification_method,
             ctx_by_method=ctx_by_method,
             percentile_cutoffs=percentile_cutoffs,
+            percentile_week_pool=percentile_week_pool,
+            percentile_year_range=percentile_year_range,
+            percentile_low_season_floor=percentile_low_season_floor,
+            percentile_low_season_critical=percentile_low_season_critical,
         )
 
         # Swap the columns back to the canonical CSV boundary schema:
