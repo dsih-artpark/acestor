@@ -286,12 +286,15 @@ def detect_kind(table: pd.DataFrame, unit_col: str, date_col: str,
     A line list has one row per case. Aggregated data has a count per unit and
     date, sometimes split into several rows by age group, sex or facility.
     """
-    counts = pd.to_numeric(table[count_col], errors="coerce") if count_col else None
-    if counts is None or counts.notna().mean() < 0.95 or counts.max() <= 1:
-        note = (f"Column {count_col!r} is always 1, so each row is one case."
-                if counts is not None and counts.notna().mean() >= 0.95
-                else "No count column, so each row is one case.")
-        return LINE_LIST, [Check("kind_clear", PASS, note)]
+    if count_col is None:
+        return LINE_LIST, [Check("kind_clear", PASS,
+                                 "No count column, so each row is one case.")]
+    counts = pd.to_numeric(table[count_col], errors="coerce")
+    if (counts == 1).all():
+        return LINE_LIST, [Check("kind_clear", PASS,
+                                 f"Column {count_col!r} is always 1, so each row is one case.")]
+    # Anything else in a named count column is treated as counts, so that blank
+    # and non-numeric values are judged as counts and never read as cases.
 
     others = [c for c in table.columns if c not in (unit_col, date_col, count_col)]
     repeats = float(table.duplicated([unit_col, date_col]).mean())

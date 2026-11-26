@@ -28,11 +28,22 @@ def unit_ids(base: Path, region_type: str) -> set[str]:
     return set()
 
 
+BOUNDARY_TYPES = (".geojson", ".shp")
+
+
+def source_files(path: Path) -> list[Path]:
+    """A boundary file, or every GeoJSON and shapefile in a folder."""
+    if path.is_dir():
+        return sorted(f for f in path.iterdir() if f.suffix.lower() in BOUNDARY_TYPES)
+    return [path]
+
+
 def read_boundaries(path: Path) -> gpd.GeoDataFrame:
-    """One boundary file, or every GeoJSON in a folder put together."""
-    if not path.is_dir():
-        return gpd.read_file(path)
-    parts = [gpd.read_file(file) for file in sorted(path.glob("*.geojson"))]
+    """One boundary file, or every boundary file in a folder put together."""
+    files = source_files(path)
+    if not files:
+        raise FileNotFoundError(f"No {' or '.join(BOUNDARY_TYPES)} file in {path}.")
+    parts = [gpd.read_file(file) for file in files]
     target = parts[0].crs
     return gpd.GeoDataFrame(pd.concat([part.to_crs(target) for part in parts],
                                       ignore_index=True), crs=target)

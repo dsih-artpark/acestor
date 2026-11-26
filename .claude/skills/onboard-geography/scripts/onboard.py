@@ -84,14 +84,15 @@ def run_boundaries(args: argparse.Namespace) -> dict:
     info, checks = boundaries.prepare(
         Path(args.input), args.code_col, args.name_col, args.region_type,
         args.parent_id, args.parent_name, _workdir(args) / "geojsons")
-    return _finish(args, "boundaries", info, checks, [Path(args.input)])
+    return _finish(args, "boundaries", info, checks,
+                   boundaries.source_files(Path(args.input)))
 
 
 def run_cases(args: argparse.Namespace) -> dict:
     info, checks = cases.standardise(
         Path(args.input), args.date_col, args.unit_col, args.count_col, args.region_type,
         _boundary_units(args) or set(), _workdir(args) / "prepared_data",
-        args.sum_breakdowns, args.blank_as_zero)
+        args.sum_breakdowns, args.blank_as_zero, cases.parse_filters(args.filter))
     return _finish(args, "cases", info, checks, cases.source_files(Path(args.input)))
 
 
@@ -198,6 +199,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--count-col", required=True)
     p.add_argument("--blank-as-zero", action="store_true",
                    help="read blank counts as zero, once the user confirms that")
+    p.add_argument("--filter", action="append",
+                   help="the filters given to inspect, so the same rows are written")
     p.add_argument("--sum-breakdowns", action="store_true",
                    help="add together rows that split one unit and date into groups")
 

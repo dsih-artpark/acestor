@@ -66,6 +66,8 @@ def prepared_cases(path: Path, boundary_units: set[str], expected_total: int | N
     if "case" in table.columns and "case_count" not in table.columns:
         table = table.rename(columns={"case": "case_count"})
     checks = validate(table, PREPARED_CASES)
+    if checks[0].status == FAIL:
+        return {}, checks
     total = int(pd.to_numeric(table.case_count, errors="coerce").sum())
     stray = sorted(set(table.region_id) - boundary_units)
     checks.append(Check("prepared_units_known", FAIL if stray else PASS,
@@ -89,13 +91,16 @@ def prepared_weather(path: Path, boundary_units: set[str], start: str,
         return [Check("weather_present", FAIL, f"Missing {path}.")]
     table = pd.read_csv(path, dtype={"region_id": str})
     checks = validate(table, PREPARED_WEATHER)
+    if checks[0].status == FAIL:
+        return checks
     missing = sorted(boundary_units - set(table.region_id))
     checks.append(Check("weather_all_units", FAIL if missing else PASS,
                         f"No weather for units: {missing}." if missing
                         else "Weather present for every unit."))
     dates = pd.to_datetime(table.date, errors="coerce")
     expected = len(pd.date_range(start, end))
-    days = table[dates.between(start, end)].groupby("region_id").date.nunique()
+    days = (table[dates.between(start, end)].groupby("region_id").date.nunique()
+            .reindex(sorted(boundary_units), fill_value=0))  # a unit with no day in range counts
     short = sorted(days.index[days < expected])
     checks.append(Check("weather_all_days", FAIL if short else PASS,
                         f"Units missing days between {start} and {end}: {short}."
@@ -139,6 +144,9 @@ def predictions(path: Path, boundary_units: set[str],
     checks = validate(table, PREDICTIONS)
     if checks[0].status == FAIL:
         return {}, checks
+    if table.empty:
+        return {}, [*checks, Check("predictions_not_empty", FAIL,
+                                   "The predictions file has no rows.")]
     missing = sorted(boundary_units - set(table.regionID))
     checks.append(Check("forecast_all_units", WARN if missing else PASS,
                         f"{len(missing)} units have no forecast, usually from too "

@@ -171,6 +171,9 @@ def inspect(path: Path, date_col: str, unit_col: str, count_col: str | None,
                *qc.check_unit_coverage(series.unit, series.date, kind),
                qc.check_concentration(series.unit, series.cases)]
     used = {qc.region_id(region_type, unit) for unit in units.unique()}
+    if boundary_units is not None:
+        in_boundary = [qc.region_id(region_type, u) in boundary_units for u in series.unit]
+        info["cases_in_boundary_units"] = int(series.cases[in_boundary].sum())
     checks += qc.check_unit_match(used, boundary_units, region_type)
     expected = series.assign(region_id=[qc.region_id(region_type, u) for u in series.unit],
                              date=series.date.dt.strftime("%Y-%m-%d"))
@@ -182,7 +185,7 @@ def inspect(path: Path, date_col: str, unit_col: str, count_col: str | None,
 def standardise(path: Path, date_col: str, unit_col: str, count_col: str,
                 region_type: str, boundary_units: set[str], out_base: Path,
                 sum_breakdowns: bool, blank_as_zero: bool = False,
-                ) -> tuple[dict, list[Check]]:
+                filters: Filters = ()) -> tuple[dict, list[Check]]:
     """Aggregated counts -> cases_daily.csv, with every case accounted for.
 
     Cases in the source equal cases written plus cases set aside, overall and
@@ -190,12 +193,15 @@ def standardise(path: Path, date_col: str, unit_col: str, count_col: str,
     silently. Rows that split one unit and date into groups are added together
     only when the caller says so. Nothing is written unless every check passes.
     """
-    table = read_table(path)
+    table, filter_checks = apply_filters(read_table(path), filters)
+    if failed(filter_checks):
+        return {}, filter_checks
     dates, date_check = qc.parse_dates(table[date_col])
     units = table[unit_col].astype(str).str.strip()
     raw_counts, blank_checks = blank_counts(table[count_col], blank_as_zero)
     standard = pd.DataFrame({"unit": units, "date": dates, "cases": raw_counts})
-    checks = [date_check, qc.check_rows_have_dates(table[date_col]), *blank_checks]
+    checks = [*filter_checks, date_check, qc.check_rows_have_dates(table[date_col]),
+              *blank_checks]
     if date_check.status == FAIL:
         return {}, checks
     undated_total = int(pd.to_numeric(standard.cases[dates.isna()], errors="coerce").sum())

@@ -127,6 +127,7 @@ The two kinds of file take different routes. Follow the `kind` from stage 2.
   --date-col <col> --unit-col <col> --count-col <col>
 ```
 
+Pass any `--filter` used in stage 2 again here, so the same rows are written.
 Add `--sum-breakdowns` only after the user confirms that rows splitting one
 unit and date are separate groups, and `--blank-as-zero` only after they
 confirm that a blank count means zero. The report reconciles the totals:
@@ -176,8 +177,9 @@ uv run python -m acestor.run --pipeline pipelines.dengue_prep.pipeline:build_pip
   --date-start <first data date> --weather-end <run date> --expect-cases <total>
 ```
 
-`--expect-cases` is `written_cases` from stage 3, or `total_cases` from stage
-2 for a line list. `verify-prep` checks the prepared files against their
+`--expect-cases` is `written_cases` from stage 3, or `cases_in_boundary_units`
+from stage 2 for a line list (the total without any unit the user agreed to
+leave out). `verify-prep` checks the prepared files against their
 schema contracts, compares the prepared cases with what `inspect` read for
 every unit and date (which catches a day/month swap that a total would miss),
 and checks that every unit has weather for every day.

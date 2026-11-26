@@ -640,6 +640,66 @@ def test_a_rerun_keeps_the_earlier_report(tmp_path):
     assert (kept["ready"], latest["ready"]) == (False, True)
 
 
+def test_filters_apply_to_the_prepared_counts_too(tmp_path, layout):
+    table = pd.concat([weekly_counts().assign(disease="dengue"),
+                       weekly_counts().assign(disease="malaria")])
+    path = save(table, tmp_path / "two.csv")
+    info, checks = cases.standardise(path, "date", "unit", "cases", "district", KNOWN,
+                                     layout / "prepared_data", False,
+                                     filters=cases.parse_filters(["disease=dengue"]))
+    assert not failed(checks) and info["written_cases"] == weekly_counts().cases.sum()
+
+
+@pytest.mark.parametrize("values, kind", [
+    ([1, 1, 1], qc.LINE_LIST), ([1, 0, 1], qc.AGGREGATED),
+    ([1, None, 1], qc.AGGREGATED), (["x", "y", "z"], qc.AGGREGATED)])
+def test_only_a_count_column_of_ones_is_read_as_a_line_list(values, kind):
+    table = pd.DataFrame({"unit": ["A1", "A2", "A3"], "date": "2024-01-07", "n": values})
+    assert qc.detect_kind(table, "unit", "date", "n")[0] == kind
+
+
+def test_inspect_reports_the_total_for_units_with_a_boundary(tmp_path):
+    table = pd.concat([weekly_counts(), pd.DataFrame(
+        {"date": [WEEKS[-1]], "unit": ["Z9"], "cases": [10]})])
+    info, _, _ = run_inspect(save(table, tmp_path / "extra.csv"))
+    assert info["total_cases"] - info["cases_in_boundary_units"] == 10
+
+
+def test_prepared_files_missing_a_column_fail_without_crashing(tmp_path):
+    pd.DataFrame({"region_id": ["district_A1"], "date": ["2024-01-07"]}).to_csv(
+        tmp_path / "cases.csv", index=False)
+    pd.DataFrame({"date": ["2024-01-07"]}).to_csv(tmp_path / "weather.csv", index=False)
+    assert failed(verify.prepared_cases(tmp_path / "cases.csv", KNOWN, None)[1])
+    assert failed(verify.prepared_weather(tmp_path / "weather.csv", KNOWN,
+                                          "2024-01-01", "2024-01-07"))
+
+
+def test_a_unit_with_weather_only_outside_the_range_fails(tmp_path):
+    days = pd.date_range("2024-01-01", "2024-01-07").strftime("%Y-%m-%d")
+    rows = [("district_A1", d) for d in days] + [("district_A2", "2023-06-01")]
+    table = pd.DataFrame(rows, columns=["region_id", "date"]).assign(**{
+        "2mTemperature": 295.0, "2mDewpointTemperature": 290.0, "totalPrecipitation": 0.001,
+        "name": "n", "parent": "", "parent_name": ""})
+    table.to_csv(tmp_path / "weather.csv", index=False)
+    checks = verify.prepared_weather(tmp_path / "weather.csv",
+                                     {"district_A1", "district_A2"}, "2024-01-01", "2024-01-07")
+    assert status(checks, "weather_all_units") == PASS
+    assert status(checks, "weather_all_days") == FAIL
+
+
+def test_an_empty_predictions_file_fails(tmp_path):
+    columns = ["regionID", "startDatePredictedWeek", "dateOfComputingPrediction", "model",
+               "thresholdMethod", "predictionRaw", "prediction"]
+    pd.DataFrame(columns=columns).to_csv(tmp_path / "predictions.csv", index=False)
+    _, checks = verify.predictions(tmp_path / "predictions.csv", KNOWN)
+    assert status(checks, "predictions_not_empty") == FAIL
+
+
+def test_boundary_report_hashes_every_file_in_a_folder(layout):
+    files = boundaries.source_files(layout / "geojsons" / "districts")
+    assert len(files) == 3 and all(f.suffix == ".geojson" for f in files)
+
+
 def test_tuned_hyperparameters_are_read_from_beside_the_run(tmp_path):
     (tmp_path / "hp").mkdir()
     (tmp_path / "hp" / "rf_district_best_params.json").write_text(
