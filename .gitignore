@@ -42,7 +42,10 @@ datasets/
 ap_datasets
 *_datasets/
 cache/
-.claude/
+.claude/*
+!.claude/skills/
+!.claude/skills/**/SKILL.md
+.claude/skills/*-workspace/
 metrics_output/
 
 # Internal / local-only (not published)

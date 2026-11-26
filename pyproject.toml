@@ -77,7 +77,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", ".claude/skills/onboard-geography/tests"]
 addopts = "--cov=acestor --cov=pipelines/dengue/lib --cov-report=term-missing --cov-report=html"
 
 [tool.coverage.run]

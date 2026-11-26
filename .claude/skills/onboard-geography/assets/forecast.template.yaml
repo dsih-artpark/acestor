@@ -1,0 +1,121 @@
+state: ""
+
+pipeline:
+  name: dengue
+  title: ""
+
+run:
+  run_date: ""
+
+data:
+  prepared_data:
+    base_dir: ""
+    region_type: "district"
+
+  case_parse:
+    region_types: ["district"]
+    date_start: ""
+    date_end: ""
+
+  case_sufficiency:
+    enabled: true
+    min_total_rows: 30
+    min_distinct_regions: 2
+    min_date_span_days: 14
+
+  geojson:
+    base_path: ""
+
+  weather_parse:
+    region_type: "district"
+    weather_variables:
+      - "2mTemperature"
+      - "totalPrecipitation"
+      - "2mDewpointTemperature"
+    rolling_n_days: 7
+    rolling_agg:
+      - {name: "2mTemperature", op: "mean"}
+      - {name: "2mDewpointTemperature", op: "mean"}
+      - {name: "totalPrecipitation", op: "sum"}
+    sampling_rate: 7
+    intermediate_col_rename:
+      "2mTemperature_max": "t2m_max"
+      "2mTemperature_min": "t2m_min"
+      "2mTemperature": "t2m_mean"
+      "2mDewpointTemperature": "d2m_mean"
+      "totalPrecipitation": "tp_sum"
+
+cutoff:
+  case_min_regions: 2
+  weather_min_regions: 2
+
+thresholds:
+  region_type: "district"
+  n_weeks: 4
+  historical_n_years: 3
+  excluded_years: []
+  included_years: []
+
+model:
+  spatial_res: "district"
+  models: [rf]
+  ensemble: mean
+  output: both
+  data_features:
+    - "case"
+    - "recordDate"
+    - "recordYear"
+    - "recordMonth"
+    - "ISOWeek"
+    - "t2m_mean"
+    - "tp_sum"
+    - "d2m_mean"
+  lag:
+    lag_temp: [12]
+    lag_rainfall: [4]
+    lag_humidity: [4]
+  years_to_exclude: []
+  years_to_include: []
+  list_alpha: [1.0, 2.0]
+
+model_configs:
+  rf:
+    lag:
+      lag_temp: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+      lag_rainfall: [1, 2, 3, 4]
+      lag_humidity: [1, 2, 3, 4]
+      lag_cases: [1, 2, 3, 4, 5]
+    years_to_exclude: []
+    years_to_include: []
+    tune: false
+
+assess: {}
+
+maps:
+  output_dir: "outputs/maps"
+  figure_title: ""
+
+report:
+  output_dir: "outputs/report"
+  static_charts: false
+
+report_distribution:
+  system_name: "Dengue Early Warning System"
+  organization: ""
+  state: ""
+  region: ""
+  department: ""
+  contact_email: ""
+  footer_note: ""
+
+logging:
+  level: INFO
+
+email:
+  enabled: false
+
+storages:
+  artifacts:
+    kind: filesystem
+    filesystem:
+      base_path: ""
