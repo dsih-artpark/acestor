@@ -1,0 +1,93 @@
+name: Deploy acestor-caller (staging)
+
+# Mirror of deploy-caller.yml for the staging caller EC2.
+#
+# Differences from prod:
+#   * Triggers on push to the `staging` branch
+#   * Uses the `staging` GitHub Environment (scoped secrets + variables)
+#   * Defaults ref to `staging`
+#   * ACESTOR_ENV=staging — gates the scheduler off by default on the
+#     staging caller, tags spot workers with Env=staging
+
+on:
+  push:
+    branches: [staging]
+    paths:
+      - "scripts/run_schedules_remote.py"
+      - "scripts/deploy_caller.sh"
+      - ".github/workflows/deploy-caller-staging.yml"
+      - "acestor/**"
+      - "pipelines/**"
+      - "configs/**"
+      - "pyproject.toml"
+      - "uv.lock"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to deploy on the staging caller (defaults to staging)"
+        required: false
+        default: "staging"
+
+concurrency:
+  group: deploy-caller-staging
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Preflight — required Secrets & Variables
+        env:
+          AWS_DEPLOY_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
+          DASHBOARD_CLIENT_ID: ${{ secrets.DASHBOARD_CLIENT_ID }}
+          DASHBOARD_CLIENT_SECRET: ${{ secrets.DASHBOARD_CLIENT_SECRET }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          CALLER_INSTANCE_TAG_NAME: ${{ vars.CALLER_INSTANCE_TAG_NAME }}
+        run: |
+          missing=()
+          for v in AWS_DEPLOY_ROLE_ARN DASHBOARD_URL DASHBOARD_CLIENT_ID \
+                   DASHBOARD_CLIENT_SECRET AWS_REGION CALLER_INSTANCE_TAG_NAME; do
+            if [[ -z "${!v}" ]]; then
+              missing+=("$v")
+            fi
+          done
+          if (( ${#missing[@]} )); then
+            echo "::error::Missing required GitHub Secrets/Variables (staging env): ${missing[*]}"
+            exit 1
+          fi
+          echo "All required Secrets/Variables present."
+
+      - name: Assume AWS role via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: gha-deploy-caller-staging-${{ github.run_id }}
+
+      - name: Verify identity
+        run: aws sts get-caller-identity
+
+      - name: Run deploy_caller.sh (SSM SendCommand → staging caller)
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          CALLER_INSTANCE_TAG_NAME: ${{ vars.CALLER_INSTANCE_TAG_NAME }}
+          ACESTOR_REPO_URL: https://github.com/${{ github.repository }}.git
+          ACESTOR_REPO_REF: ${{ inputs.ref || 'staging' }}
+          ACESTOR_AWS_KEY_NAME: ${{ vars.ACESTOR_AWS_KEY_NAME }}
+          ACESTOR_AWS_AMI: ${{ vars.ACESTOR_AWS_AMI }}
+          DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
+          DASHBOARD_CLIENT_ID: ${{ secrets.DASHBOARD_CLIENT_ID }}
+          DASHBOARD_CLIENT_SECRET: ${{ secrets.DASHBOARD_CLIENT_SECRET }}
+          WEB_UI_USERNAME: ${{ secrets.WEB_UI_USERNAME }}
+          WEB_UI_PASSWORD: ${{ secrets.WEB_UI_PASSWORD }}
+          ACESTOR_ENV: ${{ vars.ACESTOR_ENV || 'staging' }}
+        run: bash scripts/deploy_caller.sh

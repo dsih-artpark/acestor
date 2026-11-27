@@ -799,6 +799,20 @@ def main() -> None:
     if not STATES:
         raise SystemExit("STATES is empty — nothing to schedule.")
 
+    # Staging caller boxes run the same code as prod but should not fire the
+    # scheduler by default — otherwise every Monday they'd spawn a parallel
+    # set of spot workers and push to the staging dashboard without anyone
+    # asking. Operators flip STAGING_SCHEDULER_ENABLED=1 to turn it on for
+    # a specific test window.
+    env = os.environ.get("ACESTOR_ENV", "prod")
+    if env == "staging" and os.environ.get("STAGING_SCHEDULER_ENABLED", "") != "1":
+        print(
+            "ACESTOR_ENV=staging and STAGING_SCHEDULER_ENABLED != 1 — "
+            "scheduler disabled. Set STAGING_SCHEDULER_ENABLED=1 in ~/.env "
+            "and restart acestor-scheduler to enable."
+        )
+        return
+
     # Fail fast on bad DAG shapes before starting the scheduler loop.
     for state, spec in STATES.items():
         _validate_dag(state, spec["dag"])

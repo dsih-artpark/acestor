@@ -23,6 +23,9 @@
 #   DASHBOARD_CLIENT_SECRET   (required)
 #   WEB_UI_USERNAME           (optional; if both set, webui requires HTTP Basic auth)
 #   WEB_UI_PASSWORD           (optional; if unset, webui is unauthenticated)
+#   ACESTOR_ENV               (optional; prod | staging. Default prod. Propagates
+#                              to spot worker Env= tags and gates the staging
+#                              scheduler off by default.)
 #
 # What runs on the caller:
 #   1. git clone (first-time) or git pull (subsequent) ~/acestor-work
@@ -105,6 +108,7 @@ cat > "\$HOME/.env" <<ENV
 DASHBOARD_URL=${DASHBOARD_URL}
 DASHBOARD_CLIENT_ID=${DASHBOARD_CLIENT_ID}
 DASHBOARD_CLIENT_SECRET=${DASHBOARD_CLIENT_SECRET}
+ACESTOR_ENV=${ACESTOR_ENV:-prod}
 ENV
 
 echo "== Install systemd unit"

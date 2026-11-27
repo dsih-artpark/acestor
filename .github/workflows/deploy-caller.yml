@@ -110,4 +110,5 @@ jobs:
           DASHBOARD_CLIENT_SECRET: ${{ secrets.DASHBOARD_CLIENT_SECRET }}
           WEB_UI_USERNAME: ${{ secrets.WEB_UI_USERNAME }}
           WEB_UI_PASSWORD: ${{ secrets.WEB_UI_PASSWORD }}
+          ACESTOR_ENV: ${{ vars.ACESTOR_ENV || 'prod' }}
         run: bash scripts/deploy_caller.sh
